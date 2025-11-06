@@ -1,0 +1,123 @@
+import React, { useState } from "react";
+
+const SignInOut = () => {
+  const [isSignIn, setIsSignIn] = useState(false);
+
+  const handleToggle = (e) => {
+    e.preventDefault();
+    setIsSignIn(!isSignIn);
+  };
+
+  return (
+    <div className="flex justify-center items-center min-h-screen bg-blue-300 ">
+      <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] w-[90%] md:w-[85%] bg-slate-800 rounded-2xl overflow-hidden">
+        {/* Left Section */}
+        <div className="p-10 text-gray-100">
+          {/* Left content */}
+          Left content
+        </div>
+
+        {/* Right Section */}
+        <div className="p-8 md:p-10 bg-gradient-to-br from-[#223b42] to-[#1b2e33] text-gray-100 shadow-lg">
+          <form className="w-full max-w-sm space-y-4 ">
+            {/* Header */}
+            <div className="text-center md:text-left">
+              <h1 className="text-3xl font-bold text-emerald-400">
+                {isSignIn ? "Welcome Back" : "Tap Into Flow"}
+              </h1>
+              <p className="mt-1 text-slate-400 text-sm">
+                {isSignIn
+                  ? "Log in to access your personalized insights."
+                  : "Find focus worth your time."}
+              </p>
+            </div>
+
+            {/* Full Name (Sign Up only) */}
+            {!isSignIn && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-200">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter your full name"
+                  className="w-full mt-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
+                />
+              </div>
+            )}
+
+            {/* Email */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-200">
+                Email
+              </label>
+              <input
+                type="email"
+                placeholder="you@example.com"
+                className="w-full mt-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
+              />
+            </div>
+
+            {/* Password */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-200">
+                Password
+              </label>
+              <input
+                type="password"
+                placeholder="••••••••"
+                className="w-full rounded-xl mt-1 bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
+              />
+            </div>
+
+            {/* Submit Button */}
+            <button
+              className="w-full rounded-xl px-4 py-2 font-semibold bg-gradient-to-r from-emerald-600 to-emerald-700 
+       hover:from-emerald-500 hover:to-emerald-500  transition-all duration-200 shadow-md cursor-pointer"
+            >
+              {isSignIn ? "LogIn -> " : "Discover the State  ->"}
+            </button>
+
+            {/* Toggle Button */}
+            <button
+              onClick={handleToggle}
+              type="button"
+              className="w-full text-sm text-emerald-300 hover:text-emerald-200 hover:underline transition-all duration-200"
+            >
+              {isSignIn
+                ? "Need an account? Sign Up"
+                : "Already have an account? Log In"}
+            </button>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-slate-700" />
+              <span className="text-xs text-slate-400">OR</span>
+              <div className="h-px flex-1 bg-slate-700" />
+            </div>
+
+            {/* Google Button */}
+            <button
+              type="button"
+              className="w-full rounded-xl px-4 py-2 font-medium bg-slate-800 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 flex items-center justify-center gap-2 shadow-sm hover:shadow-md transition-all duration-200"
+            >
+              <img
+                src="https://www.svgrepo.com/show/475656/google-color.svg"
+                alt="Google"
+                className="w-5 h-5"
+              />
+              Continue with Google
+            </button>
+
+            {/* Privacy Text */}
+            <p className="text-xs text-slate-500 text-center">
+              Your privacy matters. We don’t share your personal data.
+            </p>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SignInOut;
