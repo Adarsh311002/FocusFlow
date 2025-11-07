@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 .bg-grid {
-  background-color: rgb(36, 47, 58);
+  background-color: #1d4a34;
   background-image: linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
                     linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px);
   background-size: 40px 40px; /* adjust for bigger/smaller boxes */

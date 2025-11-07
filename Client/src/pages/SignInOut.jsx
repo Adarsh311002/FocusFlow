@@ -9,10 +9,10 @@ const SignInOut = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-grid  ">
+    <div className="flex justify-center items-center min-h-screen bg-gradient-to-br from-[#6194d2] to-[#2ed97b]  ">
       <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] w-[90%] md:w-[80%] bg-slate-800 rounded-2xl overflow-hidden">
         {/* Left Section */}
-           
+
         <div className="relative overflow-hidden p-10 text-gray-100">
           {/* Left content */}
           <img
@@ -23,17 +23,17 @@ const SignInOut = () => {
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
           <div className="relative z-10 max-w-md space-y-2">
-            <h1 className="text-4xl md:text-5xl font-bold leading-tight text-emerald-300">
-              Empower Your Flow
+            <h1 className="text-4xl md:text-5xl font-bold leading-tight text-[#282a2d]">
+              Empower Yourself
             </h1>
-            <p className="text-slate-200 text-md">
+            <p className="text-[#1d1e1eeb] text-md">
               AI-driven insights that help you focus, learn, and grow faster.
             </p>
           </div>
         </div>
 
         {/* Right Section */}
-        <div className="p-8 md:p-10 bg-gradient-to-br from-[#223b42] to-[#1b2e33] flex items-center justify-center text-gray-100 shadow-lg">
+        <div className="p-8 md:p-10 bg-grid flex items-center justify-center text-gray-100 shadow-lg">
           <form className="w-full max-w-sm space-y-4 ">
             {/* Header */}
             <div className="text-center md:text-left">
