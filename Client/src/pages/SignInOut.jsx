@@ -9,21 +9,36 @@ const SignInOut = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-blue-300 ">
-      <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] w-[90%] md:w-[85%] bg-slate-800 rounded-2xl overflow-hidden">
+    <div className="flex justify-center items-center min-h-screen bg-grid  ">
+      <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] w-[90%] md:w-[80%] bg-slate-800 rounded-2xl overflow-hidden">
         {/* Left Section */}
-        <div className="p-10 text-gray-100">
+           
+        <div className="relative overflow-hidden p-10 text-gray-100">
           {/* Left content */}
-          Left content
+          <img
+            className=" absolute inset-0 w-full h-full object-cover opacity-80 mix-blend-lighten brightness-90"
+            src="./robo2.png"
+            alt="MvpImage"
+          />
+
+          <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+          <div className="relative z-10 max-w-md space-y-2">
+            <h1 className="text-4xl md:text-5xl font-bold leading-tight text-emerald-300">
+              Empower Your Flow
+            </h1>
+            <p className="text-slate-200 text-md">
+              AI-driven insights that help you focus, learn, and grow faster.
+            </p>
+          </div>
         </div>
 
         {/* Right Section */}
-        <div className="p-8 md:p-10 bg-gradient-to-br from-[#223b42] to-[#1b2e33] text-gray-100 shadow-lg">
+        <div className="p-8 md:p-10 bg-gradient-to-br from-[#223b42] to-[#1b2e33] flex items-center justify-center text-gray-100 shadow-lg">
           <form className="w-full max-w-sm space-y-4 ">
             {/* Header */}
             <div className="text-center md:text-left">
               <h1 className="text-3xl font-bold text-emerald-400">
-                {isSignIn ? "Welcome Back" : "Tap Into Flow"}
+                {isSignIn ? "Welcome Back" : "Go Into Flow"}
               </h1>
               <p className="mt-1 text-slate-400 text-sm">
                 {isSignIn
