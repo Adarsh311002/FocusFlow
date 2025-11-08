@@ -4,9 +4,23 @@ import { User } from "../models/user.models.js"
 
 const generateAccessRefreshToken = async (userId) => {
     try {
-        
+        const user = await User.findById(userId);
+
+        if(!user){
+           throw new Error("User not find while generating tokens")
+        }
+
+        const accessToken = user.generateAccessToken();
+        const refreshToken = user.generateRefreshToken();
+
+        user.refreshToken = refreshToken;
+        await user.save({validateBeforeSave: false})
+
+        return {accessToken,refreshToken}
+
     } catch (error) {
-        
+        console.error("Error generating tokens:", error.message);
+        throw new Error("Failed to generate access and refresh tokens");
     }
 }
 
@@ -30,39 +44,61 @@ const userSignup = async (req,res) => {
     });
   }
 
-  const existedUser = await User.find({
+  const existedUser = await User.findOne({
     $or : [{fullname},{email}]
   })
 
   if(existedUser){
-    return res.status(401).json({
+    return res.status(409).json({
         message:"User already exists"
     })
   }
 
   try {
-    const user = new User({
+    const user = await User.create({
         fullname,
         email,
         password
     })
 
-    const createdUser = User.findById(user._id).select("-password")
+    const {accessToken,refreshToken} = await generateAccessRefreshToken(user._id);
 
-    if(!createdUser){
-        return res.status(403).json({
-            message: "Something went wrong while registering user."
-        })
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    };
+
+    const createdUser = await User.findById(user._id).select("-password -refreshToken");
+
+    if (!createdUser) {
+      return res.status(500).json({
+        message: "Something went wrong while registering user.",
+      });
     }
 
-    return res.status(200).json({
-        message:"User created successfully!"
+
+    return res
+    .status(201)
+    .cookie("refreshToken", refreshToken,options)
+       .json({
+        message:"User created successfully!",
+        user: createdUser,
+        accessToken,
+       
     })
 
 
   } catch (error) {
-    
+    console.error("Signup error:",error.message);
+    return res.status(500).json({
+        message: "Server error while signing up user",
+        error: error.message,
+    })
   }
 
 
 }
+
+export {userSignup}
