@@ -195,4 +195,35 @@ const refreshToken = async (req, res) => {
   }
 };
 
-export { userSignup, userLogin, refreshToken };
+const userLogout = async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $set: {
+          refreshToken: null,
+        },
+      },
+      { new: true }
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+    };
+
+    return res
+      .status(200)
+      .clearCookie("refreshToken", options)
+      .clearCookie("accessToken", options)
+      .json({ message: "User logged out successfully" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    return res.status(500).json({
+      message: "Failed to logout user",
+      error: error.message,
+    });
+  }
+};
+
+export { userSignup, userLogin, refreshToken, userLogout };
