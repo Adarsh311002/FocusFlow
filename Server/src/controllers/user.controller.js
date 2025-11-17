@@ -126,7 +126,7 @@ const userLogin = async (req, res) => {
     }
 
     const { accessToken, refreshToken } = await generateAccessRefreshToken(
-      userExists._id
+      user._id
     );
 
     const options = {
