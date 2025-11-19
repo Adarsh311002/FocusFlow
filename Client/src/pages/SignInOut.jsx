@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { api } from "../utils/api.js";
+import { useNavigate } from "react-router-dom";
 
 const SignInOut = () => {
   const [isSignIn, setIsSignIn] = useState(false);
@@ -9,6 +10,8 @@ const SignInOut = () => {
   const [accessToken, setAccessToken] = useState(null);
   const [user, setUser] = useState(null);
   const [error, setError] = useState("");
+
+  const navigate = useNavigate();
 
   const handleToggle = (e) => {
     e.preventDefault();
@@ -35,6 +38,8 @@ const SignInOut = () => {
       console.log(res.data.accessToken);
       setAccessToken(res.data.accessToken);
       setUser(res.data.user);
+      navigate("/dashboard");
+
 
       console.log("SignUp success", res.data);
     } catch (error) {
