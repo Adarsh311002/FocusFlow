@@ -38,10 +38,11 @@ const SignInOut = () => {
       console.log(res.data.accessToken);
       setAccessToken(res.data.accessToken);
       setUser(res.data.user);
+      localStorage.setItem("accessToken", res.data.accessToken);
       navigate("/dashboard");
 
+      console.log(isSignIn ? "Login success" : "Signup success", res.data);
 
-      console.log("SignUp success", res.data);
     } catch (error) {
       console.log(error);
       setError(error.response?.data?.message || "Signup failed");

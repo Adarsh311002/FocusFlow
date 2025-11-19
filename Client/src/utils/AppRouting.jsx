@@ -1,7 +1,8 @@
 import React from 'react'
 import { createBrowserRouter , RouterProvider } from 'react-router-dom'
 import SignInOut from '../pages/SignInOut'
-import Dashboard from '../pages/Dashboard';
+import Dashboard from '../pages/Dashboard.jsx';
+import ProtectedRoute from '../components/ProtectedRoute';
 
 const AppRouting = () => {
 
@@ -16,7 +17,11 @@ const AppRouting = () => {
       },
       {
         path: "/dashboard",
-        element: <Dashboard />,
+        element: (
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        ),
       },
     ]);
 
