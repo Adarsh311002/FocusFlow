@@ -1,11 +1,46 @@
 import React, { useState } from "react";
+import { api } from "../utils/api.js";
 
 const SignInOut = () => {
   const [isSignIn, setIsSignIn] = useState(false);
+  const [fullname, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [accessToken, setAccessToken] = useState(null);
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState("");
 
   const handleToggle = (e) => {
     e.preventDefault();
     setIsSignIn(!isSignIn);
+    setError("");
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    const endpoint = isSignIn ? "/users/login" : "/users/signup";
+    const payload = isSignIn
+      ? { email, password }
+      : { fullname, email, password };
+
+    try {
+      const res = await api.post(
+        endpoint,
+        payload,
+        { withCredentials: true }
+      );
+
+      console.log(res.data.accessToken);
+      setAccessToken(res.data.accessToken);
+      setUser(res.data.user);
+
+      console.log("SignUp success", res.data);
+    } catch (error) {
+      console.log(error);
+      setError(error.response?.data?.message || "Signup failed");
+    }
   };
 
   return (
@@ -34,7 +69,7 @@ const SignInOut = () => {
 
         {/* Right Section */}
         <div className="p-8 md:p-10 bg-grid flex items-center justify-center text-gray-100 shadow-lg">
-          <form className="w-full max-w-sm space-y-4 ">
+          <form className="w-full max-w-sm space-y-4 " onSubmit={handleSignUp}>
             {/* Header */}
             <div className="text-center md:text-left">
               <h1 className="text-3xl font-bold text-emerald-400">
@@ -55,6 +90,8 @@ const SignInOut = () => {
                 </label>
                 <input
                   type="text"
+                  value={fullname}
+                  onChange={(e) => setFullName(e.target.value)}
                   placeholder="Enter your full name"
                   className="w-full mt-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
                 />
@@ -68,6 +105,8 @@ const SignInOut = () => {
               </label>
               <input
                 type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 className="w-full mt-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
               />
@@ -80,6 +119,8 @@ const SignInOut = () => {
               </label>
               <input
                 type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full rounded-xl mt-1 bg-slate-900 border border-slate-700 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:scale-[1.01] transition-all duration-200"
               />
@@ -87,11 +128,14 @@ const SignInOut = () => {
 
             {/* Submit Button */}
             <button
+              type="submit"
               className="w-full rounded-xl px-4 py-2 font-semibold bg-gradient-to-r from-emerald-600 to-emerald-700 
        hover:from-emerald-500 hover:to-emerald-500  transition-all duration-200 shadow-md cursor-pointer"
             >
               {isSignIn ? "LogIn -> " : "Discover the State  ->"}
             </button>
+
+            {error && <p className="text-red-400">{error}</p>}
 
             {/* Toggle Button */}
             <button
@@ -136,5 +180,3 @@ const SignInOut = () => {
 };
 
 export default SignInOut;
-
-
