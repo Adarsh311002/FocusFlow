@@ -24,10 +24,10 @@ const jwtVerify = async (req, res, next) => {
       return res.status(401).json({ message: "Unauthorised!" });
     }
 
-    req.user = { id: user._id, email: user.email, role: user.role };
+    req.user = user;
     next();
   } catch (error) {
-    console.error("JWT verify error:", err.message);
+    console.error("JWT verify error:", error.message);
     return res.status(401).json({
       message: "Invalid or Expired Access Token",
     });
