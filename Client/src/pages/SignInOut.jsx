@@ -35,10 +35,12 @@ const SignInOut = () => {
         { withCredentials: true }
       );
 
-      console.log(res.data.accessToken);
-      setAccessToken(res.data.accessToken);
+      const { accessToken, user, refreshToken } = res.data;
+
+      console.log(accessToken);
+      setAccessToken(accessToken);
       setUser(res.data.user);
-      localStorage.setItem("accessToken", res.data.accessToken);
+      localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("refreshToken", refreshToken); 
       localStorage.setItem("user", JSON.stringify(user));
       navigate("/dashboard");
