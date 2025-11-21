@@ -9,7 +9,7 @@ const userSchema = new Schema(
       required: function () {
         return !this.googleId; // not needed for google signin
       },
-      unique: true,
+      // unique: true, fullname should be unique , agar yeh username hota toh consider it
       minLength: 2,
       lowercase: true,
       trim: true,
@@ -51,7 +51,7 @@ const userSchema = new Schema(
 
     createdAt: {
       type: Date,
-      default: Date.now(),
+      default: Date.now,
     },
   },
   { timestamps: true }
