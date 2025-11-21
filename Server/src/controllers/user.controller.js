@@ -1,5 +1,6 @@
 import zod from "zod";
 import { User } from "../models/user.models.js";
+import jwt from "jsonwebtoken";
 
 const generateAccessRefreshToken = async (userId) => {
   try {
@@ -82,6 +83,7 @@ const userSignup = async (req, res) => {
       message: "User created successfully!",
       user: createdUser,
       accessToken,
+      refreshToken
     });
   } catch (error) {
     console.error("Signup error:", error.message);
@@ -143,6 +145,7 @@ const userLogin = async (req, res) => {
       .json({
         message: "Login Successful",
         accessToken,
+        refreshToken,
         user: await User.findById(user._id).select("-password -refreshToken"),
       });
   } catch (error) {
@@ -156,7 +159,7 @@ const userLogin = async (req, res) => {
 
 const refreshToken = async (req, res) => {
   try {
-    const token = req.cookies?.refreshToken;
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
 
     if (!token) {
       return res.status(401).json({

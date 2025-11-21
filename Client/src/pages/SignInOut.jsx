@@ -39,6 +39,8 @@ const SignInOut = () => {
       setAccessToken(res.data.accessToken);
       setUser(res.data.user);
       localStorage.setItem("accessToken", res.data.accessToken);
+      localStorage.setItem("refreshToken", refreshToken); 
+      localStorage.setItem("user", JSON.stringify(user));
       navigate("/dashboard");
 
       console.log(isSignIn ? "Login success" : "Signup success", res.data);
