@@ -1,17 +1,17 @@
 import React, { useState } from "react";
 import { api } from "../utils/api.js";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const SignInOut = () => {
   const [isSignIn, setIsSignIn] = useState(false);
   const [fullname, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [accessToken, setAccessToken] = useState(null);
-  const [user, setUser] = useState(null);
   const [error, setError] = useState("");
 
   const navigate = useNavigate();
+  const {login} = useAuth();
 
   const handleToggle = (e) => {
     e.preventDefault();
@@ -37,12 +37,7 @@ const SignInOut = () => {
 
       const { accessToken, user, refreshToken } = res.data;
 
-      console.log(accessToken);
-      setAccessToken(accessToken);
-      setUser(res.data.user);
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken); 
-      localStorage.setItem("user", JSON.stringify(user));
+      login(user,accessToken,refreshToken);
       navigate("/dashboard");
 
       console.log(isSignIn ? "Login success" : "Signup success", res.data);
