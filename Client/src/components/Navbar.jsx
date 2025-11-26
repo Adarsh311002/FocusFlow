@@ -20,7 +20,6 @@ const Navbar = () => {
 
 export default Navbar;
 
-
 function Dock({ className }) {
   let mouseX = useMotionValue(Infinity);
 
@@ -29,8 +28,8 @@ function Dock({ className }) {
       onMouseMove={(e) => mouseX.set(e.pageX)}
       onMouseLeave={() => mouseX.set(Infinity)}
       className={`
-        mx-auto flex h-16 items-start gap-4 rounded-2xl bg-white/70 px-4 pt-3 
-        backdrop-blur-2xl border border-white/40 shadow-2xl shadow-slate-500/20
+        mx-auto flex h-16 items-start gap-4 rounded-2xl bg-blue/90 px-4 pt-3 
+        backdrop-blur-2xl border border-green/40 shadow-2xl shadow-slate-500/20
         ${className}
       `}
     >
@@ -74,7 +73,7 @@ function DockIcon({ mouseX, title, icon: Icon, href }) {
 
 const navItems = [
   { title: "Home", icon: Home, href: "#" },
-  { title: "Dashboard", icon: LayoutGrid, href: "#" },
+  { title: "Dashboard", icon: LayoutGrid, href: "/dashboard" },
   { title: "Analytics", icon: LineChart, href: "#" },
   { title: "Alerts", icon: Bell, href: "#" },
   { title: "Features", icon: Zap, href: "#" },

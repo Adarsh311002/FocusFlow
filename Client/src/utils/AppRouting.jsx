@@ -10,6 +10,10 @@ const AppRouting = () => {
 
     const appRouter = createBrowserRouter([
       {
+        path: "/",
+        element: <LandingPage />,
+      },
+      {
         path: "/signup",
         element: <SignInOut />,
       },
