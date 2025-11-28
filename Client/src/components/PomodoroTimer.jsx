@@ -1,88 +1,223 @@
-import React,{useState,useEffect,useRef} from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { Settings, X, RotateCcw } from "lucide-react";
 
 const PomodoroTimer = () => {
 
-    const MODES ={
-        pomodoro : {label : "pomodoro", time:25,},
-        short : {label: "Short Break", time:5 },
-        long: {label:"Long Break ", time:15}
+  const [customTimes, setCustomTimes] = useState({
+    pomodoro: 25,
+    short: 5,
+    long: 15,
+  });
+
+
+  const [mode, setMode] = useState("pomodoro"); 
+  const [timeLeft, setTimeLeft] = useState(customTimes.pomodoro * 60);
+  const [isActive, setIsActive] = useState(false);
+  const [showSettings, setShowSettings] = useState(false); 
+
+  const timerRef = useRef(null);
+
+ 
+  const getThemeColor = () => {
+    switch (mode) {
+      case "pomodoro":
+        return "bg-[#ba4949]"; 
+      case "short":
+        return "bg-[#38858a]"; 
+      case "long":
+        return "bg-[#397097]"; 
+      default:
+        return "bg-[#ba4949]";
     }
+  };
 
-    const [mode,setMode] = useState("pomodoro");
-    const [timeLeft, setTimeLeft] = useState(MODES.pomodoro.time * 60);
-    const [isActive , setIsActive] = useState(false);
-    const timerRef = useRef(null);
-
-    const playSound = () => {
+  
+  useEffect(() => {
+    if (isActive && timeLeft > 0) {
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => prev - 1);
+      }, 1000);
+    } else if (timeLeft === 0) {
+      clearInterval(timerRef.current);
+      setIsActive(false);
       const audio = new Audio(
         "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
       );
       audio.play();
     }
+    return () => clearInterval(timerRef.current);
+  }, [isActive, timeLeft]);
 
-    const switchMode = (newMode) => {
-        setMode(newMode);
-        setTimeLeft(MODES[newMode].time * 60);
-        setIsActive(false);
+  const switchMode = (newMode) => {
+    setMode(newMode);
+    setTimeLeft(customTimes[newMode] * 60);
+    setIsActive(false);
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
+  };
+
+  const toggleTimer = () => setIsActive(!isActive);
+
+  const handleTimeChange = (e) => {
+    const { name, value } = e.target;
+    const intValue = parseInt(value);
+    if (value !== '' && (isNaN(intValue) || intValue > 100)) {
+       return; 
     }
+    setCustomTimes((prev) => ({
+      ...prev,
+      [name]: parseInt(value) || 0, 
+    }));
+  };
 
-    const formatTime = (seconds) => {
-      const mins = Math.floor(seconds/ 60);
-      const secs = seconds % 60;
-      return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  const saveSettings = () => {
+    setShowSettings(false);
+    if (!isActive) {
+      setTimeLeft(customTimes[mode] * 60);
     }
+  };
 
-    const toggleTimer = () => {
-      setIsActive(!isActive);
-    }
-
-    
-
-    useEffect(() => {
-      if(isActive && timeLeft > 0){
-        timerRef.current = setInterval(() => {
-          setTimeLeft((prev) => prev-1);
-        },1000);
-      } else if(timeLeft === 0 ){
-        clearInterval(timerRef.current);
-        setIsActive(false);
-        playSound();
-      }
-
-      return () => clearInterval(timerRef.current);
-
-    },[isActive, timeLeft])
-
-    
   return (
-    <div className="bg-white w-[500px] h-[500px] ">
-      <div className="flex justify-center gap-2 mb-10 ">
-        {Object.keys(MODES).map((key) => (
-          <button
-            onClick={() => switchMode(key)}
-            className={`
-              px-4 py-1 rounded-full text-sm font-medium text-black transition-all
-              ${
-                mode === key
-                  ? "bg-black text-white font-bold"
-                  : "bg-transparent hover:bg-black/10"
-              }
-            `}
-            key={key}
-          >
-            {MODES[key].label}
-          </button>
-        ))}
+    <div
+      className={`relative w-full max-w-lg mx-auto rounded-3xl p-8 transition-colors duration-500 ease-in-out shadow-xl ${getThemeColor()}`}
+    >
+      <div className="flex justify-between items-center mb-12">
+        <div className="flex gap-2">
+          {["pomodoro", "short", "long"].map((key) => (
+            <button
+              key={key}
+              onClick={() => switchMode(key)}
+              className={`
+                px-4 py-1 rounded-full text-sm font-medium text-white transition-all capitalize
+                ${
+                  mode === key
+                    ? "bg-black/20 font-bold"
+                    : "bg-transparent hover:bg-black/10"
+                }
+              `}
+            >
+              {key === "short"
+                ? "Short Break"
+                : key === "long"
+                ? "Long Break"
+                : key}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => setShowSettings(true)}
+          className="p-2 bg-white/10 rounded-lg text-white hover:bg-white/20 transition-all"
+        >
+          <Settings size={20} />
+        </button>
       </div>
 
-      <div className="text-center mb-10">
-        <div className="text-[7rem] leading-none font-bold text-white tabular-nums tracking-tight drop-shadow-sm">
+      <div className="text-center mb-12">
+        <div className="text-[7.5rem] leading-none font-bold text-white tracking-tight drop-shadow-md">
           {formatTime(timeLeft)}
         </div>
       </div>
-      
+
+      <div className="flex justify-center h-24">
+        <button
+          onClick={toggleTimer}
+          className={`
+            uppercase font-bold text-2xl px-10 py-4 rounded-xl transition-all duration-100 w-48
+            bg-white
+            ${
+              isActive
+                ? "translate-y-[4px] shadow-none text-gray-400"
+                : "shadow-[0_6px_0_rgb(235,235,235)] hover:scale-[1.02] text-[#ba4949]"
+            }
+          `}
+          style={{
+            color:
+              mode === "pomodoro"
+                ? "#ba4949"
+                : mode === "short"
+                ? "#38858a"
+                : "#397097",
+          }}
+        >
+          {isActive ? "STOP" : "START"}
+        </button>
+      </div>
+
+      {showSettings && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm rounded-3xl">
+          <div className="bg-white text-slate-700 w-11/12 p-6 rounded-2xl shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+              <h3 className="text-lg font-bold text-slate-500 uppercase tracking-widest">
+                Settings
+              </h3>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <label className="block text-xs font-bold text-slate-400 uppercase">
+                Timer (minutes)
+              </label>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">
+                    Pomodoro
+                  </label>
+                  <input
+                    type="number"
+                    name="pomodoro"
+                    value={customTimes.pomodoro}
+                    onChange={handleTimeChange}
+                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">
+                    Short Break
+                  </label>
+                  <input
+                    type="number"
+                    name="short"
+                    value={customTimes.short}
+                    onChange={handleTimeChange}
+                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">
+                    Long Break
+                  </label>
+                  <input
+                    type="number"
+                    name="long"
+                    value={customTimes.long}
+                    onChange={handleTimeChange}
+                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={saveSettings}
+              className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-900 transition-colors"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};
 
-export default PomodoroTimer
+export default PomodoroTimer;
