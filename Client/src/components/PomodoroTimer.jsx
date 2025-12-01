@@ -1,52 +1,89 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Settings, X, RotateCcw } from "lucide-react";
+import logCompletedSession from "../utils/sessionService.js";
+import {useAuth} from "../context/AuthContext.jsx"
+
+
 
 const PomodoroTimer = () => {
-
   const [customTimes, setCustomTimes] = useState({
     pomodoro: 25,
     short: 5,
     long: 15,
   });
 
+  const { user } = useAuth();
 
-  const [mode, setMode] = useState("pomodoro"); 
+  const [mode, setMode] = useState("pomodoro");
   const [timeLeft, setTimeLeft] = useState(customTimes.pomodoro * 60);
   const [isActive, setIsActive] = useState(false);
-  const [showSettings, setShowSettings] = useState(false); 
+  const [showSettings, setShowSettings] = useState(false);
 
   const timerRef = useRef(null);
 
- 
   const getThemeColor = () => {
     switch (mode) {
       case "pomodoro":
-        return "bg-[#ba4949]"; 
+        return "bg-[#ba4949]";
       case "short":
-        return "bg-[#38858a]"; 
+        return "bg-[#38858a]";
       case "long":
-        return "bg-[#397097]"; 
+        return "bg-[#397097]";
       default:
         return "bg-[#ba4949]";
     }
   };
 
-  
   useEffect(() => {
+    let interval = null;
+
     if (isActive && timeLeft > 0) {
-      timerRef.current = setInterval(() => {
+      interval = setInterval(() => {
         setTimeLeft((prev) => prev - 1);
       }, 1000);
-    } else if (timeLeft === 0) {
-      clearInterval(timerRef.current);
+    }
+    else if (timeLeft === 0 && isActive) {
       setIsActive(false);
+
       const audio = new Audio(
         "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
       );
-      audio.play();
+      audio.play().catch((e) => console.log("Audio play failed", e));
+
+      if (user && mode === "pomodoro") {
+        const durationInMinutes = customTimes[mode];
+        handleSaveSession(durationInMinutes, mode);
+      }
+
+      let nextMode = "pomodoro";
+      if (mode === "pomodoro") {
+        nextMode = "short"; 
+      } else {
+        nextMode = "pomodoro";
+      }
+
+      setMode(nextMode);
+      setTimeLeft(customTimes[nextMode] * 60);
     }
-    return () => clearInterval(timerRef.current);
-  }, [isActive, timeLeft]);
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isActive, timeLeft, mode, user, customTimes]); 
+
+
+  const handleSaveSession = async (duration, mode) => {
+    try {
+      console.log("Saving session...", { duration, mode });
+      await logCompletedSession({
+        duration: duration,
+        mode: mode,
+      });
+      console.log("Session saved successfully!");
+    } catch (error) {
+      console.error("Failed to save session:", error);
+    }
+  };
 
   const switchMode = (newMode) => {
     setMode(newMode);
@@ -60,17 +97,24 @@ const PomodoroTimer = () => {
     return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
   };
 
-  const toggleTimer = () => setIsActive(!isActive);
+  const toggleTimer = () => {
+    if(timeLeft === 0){
+      setTimeLeft(customTimes[mode]*60);
+      setIsActive(true);
+    } else {
+      setIsActive(!isActive);
+    }
+  }
 
   const handleTimeChange = (e) => {
     const { name, value } = e.target;
     const intValue = parseInt(value);
-    if (value !== '' && (isNaN(intValue) || intValue > 100)) {
-       return; 
+    if (value !== "" && (isNaN(intValue) || intValue > 100)) {
+      return;
     }
     setCustomTimes((prev) => ({
       ...prev,
-      [name]: parseInt(value) || 0, 
+      [name]: parseInt(value) || 0,
     }));
   };
 
