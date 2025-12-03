@@ -18,9 +18,14 @@ app.use(express.urlencoded({extended:true}))
 app.use(cookieParser());
 
 import userRoutes from "./routes/user.routes.js"
+import sessionRoutes from "./routes/session.routes.js"
+import taskRoutes from "./routes/task.routes.js"
 
 //user route
 app.use("/api/v1/users",userRoutes);
+app.use("/api/v1/sessions",sessionRoutes);
+app.use("/api/v1/tasks", taskRoutes );
+
 
 
 export {app};
