@@ -1,6 +1,94 @@
-import zod from "zod";
+import zod, { success } from "zod";
 import { User } from "../models/user.models.js";
 import jwt from "jsonwebtoken";
+import {OAuth2Client} from 'google-auth-library'
+
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+const googleLogin = async(req,res) => {
+  try {
+    const {idToken} = req.body;
+  
+    const ticket = await client.verifyIdToken({
+      idToken : idToken,
+      audience : process.env.GOOGLE_CLIENT_ID
+    });
+  
+    if(!ticket){
+      res.status(401).json({
+        message: "Invalid ticket"
+      })
+    }
+  
+    const {name,email,picture} = ticket.getPayload();
+  
+    const user = await User.findOne({email});
+  
+    if(user){
+      const {refreshToken,accessToken} = await user.generateAccessRefreshToken(user._id);
+  
+      user.refreshToken = refreshToken;
+      await user.save({
+        validateBeforeSave : false
+      });
+  
+      const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+      };
+  
+      return res
+      .status(200)
+      .cookie("accessToken",accessToken,options)
+      .cookie("refreshToken",refreshToken,options)
+      .json({
+        success:true,
+        user : user,
+        accessToken : accessToken,
+        refreshToken : refreshToken,
+        message : "Google Login Successfull"
+      })
+  
+  
+    } else {
+  
+      const randomPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
+  
+      user = await User.create({
+        name : name,
+        email : email,
+        password : randomPassword,
+        avatar : picture,
+        googleId
+      })
+  
+      const {accessToken,refreshToken}  = await user.generateAccessRefreshToken(user._id);
+      user.refreshToken = refreshToken;
+  
+      await user.save({validateBeforeSave : false});
+  
+       const options = {
+         httpOnly: true,
+         secure: process.env.NODE_ENV === "production",
+       };
+  
+      return res.status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json({
+          success: true,
+          user: { _id: user._id, name: user.name, email: user.email, avatar: user.avatar },
+          accessToken: accessToken,
+          refreshToken: refreshToken,
+          message: "User Registered via Google"
+        });
+    }
+  } catch (error) {
+    console.error("Google Auth Error:", error);
+    res.status(401).json({ success: false, message: "Invalid Google Token" });
+  }
+}
 
 const generateAccessRefreshToken = async (userId) => {
   try {
@@ -229,4 +317,4 @@ const userLogout = async (req, res) => {
   }
 };
 
-export { userSignup, userLogin, refreshToken, userLogout };
+export { userSignup, userLogin, refreshToken, userLogout, googleLogin };
