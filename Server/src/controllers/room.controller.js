@@ -43,3 +43,26 @@ const createRoom = async(req , res) => {
     }   
 }
 
+const getRooms = async(req,res) => {
+    try {
+        const rooms = await Room.find({isActive :true})
+        .populate("admin","name email")
+        .populate("members", "name")
+        .sort({createdAt : -1});
+
+        res.status(200).json({
+            success : true,
+            rooms
+        })
+        
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Server Error"
+        })
+        
+    }
+}
+
+
+
