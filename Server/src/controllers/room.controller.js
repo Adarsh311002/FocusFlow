@@ -65,4 +65,32 @@ const getRooms = async(req,res) => {
 }
 
 
+const joinRoom = async(req,res) => {
+   try {
+     const {roomId} = req.body;
+     const userId = req.user._id;
+ 
+     const room = await Room.findOne({roomId});
+     if(!room) return res.status(404).json({message:"Room not found"});
+ 
+     if(!room.members.includes(userId)){
+         room.members.push(userId);
+         await room.save();
+     }
+ 
+     res.status(200).json({
+         success: true,
+         room
+     })
+   } catch (error) {
+    res.status(500).json({
+        success: false,
+        message: "Server Error"
+    })    
+   }
+}
+
+export {createRoom, getRooms , joinRoom}
+
+
 
