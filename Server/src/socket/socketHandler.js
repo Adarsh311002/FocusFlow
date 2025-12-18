@@ -1,31 +1,54 @@
-import Room from "../models/room.models.js";
+import { Room } from "../models/room.models.js";
 
 const setupSocketEvents = (io) => {
-    io.on("coonection",(socket) => {
-        console.log(`connection established ${socket.id}`);
+  const roomUsers = new Map();
 
-        //join rom evnt
-        socket.on("join_room", async({ roomId, userId, userName}) => {
+  io.on("connection", (socket) => {
+    console.log(`⚡: Connection established ${socket.id}`);
 
-            socket.join(roomId);
-            console.log(`User ${userName} (${userId}) joined room: ${roomId}`);
-            
-            //other notified
-            socket.to(roomId).emit("user_joined",{
-                userId,
-                userName,
-                message: `${userName} has joined focus room`
-            })
-        });
-          //syncing timer
-        socket.on("timer_update", ({roomId, timerState}) => {
-            socket.to(roomId).emit("receive timer update", timerState);
-        });
-        
-        socket.on("disconnect", () => {
+    socket.on("join_room", ({ roomId, userId, userName }) => {
+      socket.join(roomId);
+      console.log(`User ${userName} (${userId}) joined room: ${roomId}`);
 
-        })
-    })
-}
+      if (!roomUsers.has(roomId)) {
+        roomUsers.set(roomId, new Set());
+      }
+
+      const userEntry = JSON.stringify({ userId, userName });
+      roomUsers.get(roomId).add(userEntry);
+
+      const currentUsers = Array.from(roomUsers.get(roomId)).map((u) =>
+        JSON.parse(u)
+      );
+
+      socket.emit("existing_users", currentUsers);
+      socket.to(roomId).emit("user_joined", { userId, userName });
+
+      console.log(
+        `User ${userName} joined ${roomId}. Total: ${currentUsers.length}`
+      );
+    });
+
+    socket.on("leave_room", ({ roomId, userId, userName }) => {
+      socket.leave(roomId);
+      console.log(`User ${userName} left room ${roomId}`);
+
+      if (roomUsers.has(roomId)) {
+        const userEntry = JSON.stringify({ userId, userName });
+        roomUsers.get(roomId).delete(userEntry);
+      }
+
+      socket.to(roomId).emit("user_left", { userName });
+    });
+
+    socket.on("timer_update", ({ roomId, timerState }) => {
+      socket.to(roomId).emit("receive_timer_update", timerState);
+    });
+
+    socket.on("disconnect", () => {
+      console.log("🔥: User disconnected");
+    });
+  });
+};
 
 export default setupSocketEvents;
