@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Settings, X, RotateCcw } from "lucide-react";
 import logCompletedSession from "../utils/sessionService.js";
-import {useAuth} from "../context/AuthContext.jsx"
+import {useAuth} from "../context/AuthContext.jsx";
+import api from "../utils/api.js";
+import { useSocket } from "../context/SocketContext.jsx";
+import { useParams } from "react-router-dom";
 
 
 
-const PomodoroTimer = () => {
+
+const PomodoroTimer = ({
+  isGroupMode = false,
+  isHost = false,
+  roomId = null,
+}) => {
   const [customTimes, setCustomTimes] = useState({
     pomodoro: 25,
     short: 5,
@@ -19,7 +27,7 @@ const PomodoroTimer = () => {
   const [isActive, setIsActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  const timerRef = useRef(null);
+  const intervalRef = useRef(null);
 
   const getThemeColor = () => {
     switch (mode) {
@@ -34,16 +42,26 @@ const PomodoroTimer = () => {
     }
   };
 
-  useEffect(() => {
-    let interval = null;
 
+
+  useEffect(() => {
     if (isActive && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
+      intervalRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
+          const newVal = prev - 1;
+
+          if (isGroupMode && isHost && socket && newVal % 5 === 0) {
+            socket.emit("timer_update", {
+              roomId,
+              timerState: { timeLeft: newVal, isActive: true, mode },
+            });
+          }
+          return newVal;
+        });
       }, 1000);
     }
-    else if (timeLeft === 0 && isActive) {
-      setIsActive(false);
+    else if (isActive && timeLeft === 0) {
+     setIsActive(false);
 
       const audio = new Audio(
         "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
@@ -57,20 +75,29 @@ const PomodoroTimer = () => {
 
       let nextMode = "pomodoro";
       if (mode === "pomodoro") {
-        nextMode = "short"; 
+        nextMode = "short";
       } else {
         nextMode = "pomodoro";
       }
 
       setMode(nextMode);
       setTimeLeft(customTimes[nextMode] * 60);
+
+      if(isGroupMode && isHost && socket ){
+        socket.emit("timer_update", {
+          roomId,
+          timerState : {
+            timeLeft: customTimes[nextMode] * 60 ,
+            isActive: false,
+            mode: nextMode
+          }
+        })
+      }
     }
 
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isActive, timeLeft, mode, user, customTimes]); 
-
+    return () => clearInterval(intervalRef.current);
+ 
+  }, [isActive, timeLeft, mode, user, customTimes, isGroupMode, isHost, roomId, socket]);
 
   const handleSaveSession = async (duration, mode) => {
     try {
@@ -78,6 +105,8 @@ const PomodoroTimer = () => {
       await logCompletedSession({
         duration: duration,
         mode: mode,
+        completedAt: new Date(),
+        roomId: isGroupMode ? roomId : null
       });
       console.log("Session saved successfully!");
     } catch (error) {
@@ -85,6 +114,7 @@ const PomodoroTimer = () => {
     }
   };
 
+ 
   const switchMode = (newMode) => {
     setMode(newMode);
     setTimeLeft(customTimes[newMode] * 60);
@@ -98,13 +128,13 @@ const PomodoroTimer = () => {
   };
 
   const toggleTimer = () => {
-    if(timeLeft === 0){
-      setTimeLeft(customTimes[mode]*60);
+    if (timeLeft === 0) {
+      setTimeLeft(customTimes[mode] * 60);
       setIsActive(true);
     } else {
       setIsActive(!isActive);
     }
-  }
+  };
 
   const handleTimeChange = (e) => {
     const { name, value } = e.target;
