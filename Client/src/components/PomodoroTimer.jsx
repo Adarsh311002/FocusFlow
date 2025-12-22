@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Settings, X, RotateCcw } from "lucide-react";
+import { Settings, X, RotateCcw, Newspaper } from "lucide-react";
 import logCompletedSession from "../utils/sessionService.js";
 import {useAuth} from "../context/AuthContext.jsx";
 import api from "../utils/api.js";
@@ -99,27 +99,73 @@ const PomodoroTimer = ({
  
   }, [isActive, timeLeft, mode, user, customTimes, isGroupMode, isHost, roomId, socket]);
 
-  const handleSaveSession = async (duration, mode) => {
-    try {
-      console.log("Saving session...", { duration, mode });
-      await logCompletedSession({
-        duration: duration,
-        mode: mode,
-        completedAt: new Date(),
-        roomId: isGroupMode ? roomId : null
+  useEffect(() => {
+      if(!isGroupMode || !socket) return;
+
+      const handleTimerUpdate = (newState) => {
+        if(!isHost){
+          console.log("⏰ Syncing from Host:", newState);
+          setTimeLeft(newState.timeLeft);
+          setIsActive(newState.isActive);
+          setMode(newState.mode);
+        }
+      }
+      socket.on("receive_timer_update", handleTimerUpdate);
+
+      return () => {
+        socket.off("receive_timer_update",handleTimerUpdate)
+      }
+  },[socket, isGroupMode, isHost])
+
+  useEffect(() => {
+    if(!isHost || !socket || !isGroupMode) return;
+
+    const handleNewUSer = ({userName}) => {
+      console.log(`New user ${userName} joined. Sending Current state...`);
+
+      socket.emit("timer_update",{
+        roomId,
+        timerState : {
+          timeLeft: timeLeft,
+          isActive: isActive,
+          mode: mode
+        }
       });
-      console.log("Session saved successfully!");
-    } catch (error) {
-      console.error("Failed to save session:", error);
+    }
+
+    socket.on("user_joined", handleNewUSer);
+
+    return () => {
+      socket.off("user_joined", handleNewUSer);
+    }
+  }, [
+    socket,
+    isHost,
+    isGroupMode,
+    roomId,
+    timeLeft,
+    isActive,
+    mode,
+  ]);
+
+  const switchMode = (newMode) => {
+    if (isGroupMode && !isHost) return;
+
+    setMode(newMode);
+    setTimeLeft(customTimes[newMode] * 60);
+    setIsActive(false);
+
+    if(isGroupMode && isHost && socket ){
+      socket.emit("timer_update",{
+        roomId,
+        timerState: {
+          timeLeft: customTimes[newMode] * 60, isActive: false, mode:newMode
+        } 
+      })
     }
   };
 
  
-  const switchMode = (newMode) => {
-    setMode(newMode);
-    setTimeLeft(customTimes[newMode] * 60);
-    setIsActive(false);
-  };
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -128,11 +174,29 @@ const PomodoroTimer = ({
   };
 
   const toggleTimer = () => {
+
+    if(isGroupMode && !isHost) return;
+
     if (timeLeft === 0) {
       setTimeLeft(customTimes[mode] * 60);
       setIsActive(true);
+
+      if (isGroupMode && isHost && socket) {
+        socket.emit("timer_update", {
+          roomId,
+          timerState: { timeLeft: newTime, isActive: true, mode },
+        });
+      }
     } else {
-      setIsActive(!isActive);
+      const newState = !isActive;
+      setIsActive(newState);
+
+      if (isGroupMode && isHost && socket) {
+        socket.emit("timer_update", {
+          roomId,
+          timerState: { timeLeft, isActive: newState, mode },
+        });
+      }
     }
   };
 
