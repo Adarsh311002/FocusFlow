@@ -21,6 +21,7 @@ const PomodoroTimer = ({
   });
 
   const { user } = useAuth();
+  const {socket} = useSocket();
 
   const [mode, setMode] = useState("pomodoro");
   const [timeLeft, setTimeLeft] = useState(customTimes.pomodoro * 60);
@@ -42,8 +43,6 @@ const PomodoroTimer = ({
     }
   };
 
-
-
   useEffect(() => {
     if (isActive && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -59,9 +58,8 @@ const PomodoroTimer = ({
           return newVal;
         });
       }, 1000);
-    }
-    else if (isActive && timeLeft === 0) {
-     setIsActive(false);
+    } else if (isActive && timeLeft === 0) {
+      setIsActive(false);
 
       const audio = new Audio(
         "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
@@ -83,70 +81,71 @@ const PomodoroTimer = ({
       setMode(nextMode);
       setTimeLeft(customTimes[nextMode] * 60);
 
-      if(isGroupMode && isHost && socket ){
+      if (isGroupMode && isHost && socket) {
         socket.emit("timer_update", {
           roomId,
-          timerState : {
-            timeLeft: customTimes[nextMode] * 60 ,
+          timerState: {
+            timeLeft: customTimes[nextMode] * 60,
             isActive: false,
-            mode: nextMode
-          }
-        })
+            mode: nextMode,
+          },
+        });
       }
     }
 
     return () => clearInterval(intervalRef.current);
- 
-  }, [isActive, timeLeft, mode, user, customTimes, isGroupMode, isHost, roomId, socket]);
+  }, [
+    isActive,
+    timeLeft,
+    mode,
+    user,
+    customTimes,
+    isGroupMode,
+    isHost,
+    roomId,
+    socket,
+  ]);
 
   useEffect(() => {
-      if(!isGroupMode || !socket) return;
+    if (!isGroupMode || !socket) return;
 
-      const handleTimerUpdate = (newState) => {
-        if(!isHost){
-          console.log("⏰ Syncing from Host:", newState);
-          setTimeLeft(newState.timeLeft);
-          setIsActive(newState.isActive);
-          setMode(newState.mode);
-        }
+    const handleTimerUpdate = (newState) => {
+      if (!isHost) {
+        console.log("⏰ Syncing from Host:", newState);
+        setTimeLeft(newState.timeLeft);
+        setIsActive(newState.isActive);
+        setMode(newState.mode);
       }
-      socket.on("receive_timer_update", handleTimerUpdate);
+    };
+    socket.on("receive_timer_update", handleTimerUpdate);
 
-      return () => {
-        socket.off("receive_timer_update",handleTimerUpdate)
-      }
-  },[socket, isGroupMode, isHost])
+    return () => {
+      socket.off("receive_timer_update", handleTimerUpdate);
+    };
+  }, [socket, isGroupMode, isHost]);
 
   useEffect(() => {
-    if(!isHost || !socket || !isGroupMode) return;
+    if (!isHost || !socket || !isGroupMode) return;
 
-    const handleNewUSer = ({userName}) => {
+    const handleNewUSer = ({ userName }) => {
       console.log(`New user ${userName} joined. Sending Current state...`);
 
-      socket.emit("timer_update",{
+      socket.emit("timer_update", {
         roomId,
-        timerState : {
+        timerState: {
           timeLeft: timeLeft,
           isActive: isActive,
-          mode: mode
-        }
+          mode: mode,
+        },
       });
-    }
+    };
 
     socket.on("user_joined", handleNewUSer);
 
     return () => {
       socket.off("user_joined", handleNewUSer);
-    }
-  }, [
-    socket,
-    isHost,
-    isGroupMode,
-    roomId,
-    timeLeft,
-    isActive,
-    mode,
-  ]);
+    };
+  }, [socket, isHost, isGroupMode, roomId, timeLeft, isActive, mode]);
 
   const switchMode = (newMode) => {
     if (isGroupMode && !isHost) return;
@@ -155,17 +154,17 @@ const PomodoroTimer = ({
     setTimeLeft(customTimes[newMode] * 60);
     setIsActive(false);
 
-    if(isGroupMode && isHost && socket ){
-      socket.emit("timer_update",{
+    if (isGroupMode && isHost && socket) {
+      socket.emit("timer_update", {
         roomId,
         timerState: {
-          timeLeft: customTimes[newMode] * 60, isActive: false, mode:newMode
-        } 
-      })
+          timeLeft: customTimes[newMode] * 60,
+          isActive: false,
+          mode: newMode,
+        },
+      });
     }
   };
-
- 
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -174,8 +173,7 @@ const PomodoroTimer = ({
   };
 
   const toggleTimer = () => {
-
-    if(isGroupMode && !isHost) return;
+    if (isGroupMode && !isHost) return;
 
     if (timeLeft === 0) {
       setTimeLeft(customTimes[mode] * 60);
@@ -229,6 +227,7 @@ const PomodoroTimer = ({
             <button
               key={key}
               onClick={() => switchMode(key)}
+              disabled={isGroupMode && !isHost} 
               className={`
                 px-4 py-1 rounded-full text-sm font-medium text-white transition-all capitalize
                 ${
@@ -236,6 +235,7 @@ const PomodoroTimer = ({
                     ? "bg-black/20 font-bold"
                     : "bg-transparent hover:bg-black/10"
                 }
+                ${isGroupMode && !isHost ? "cursor-not-allowed opacity-70" : ""}
               `}
             >
               {key === "short"
@@ -247,43 +247,56 @@ const PomodoroTimer = ({
           ))}
         </div>
 
-        <button
-          onClick={() => setShowSettings(true)}
-          className="p-2 bg-white/10 rounded-lg text-white hover:bg-white/20 transition-all"
-        >
-          <Settings size={20} />
-        </button>
+        {(!isGroupMode || isHost) && (
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 bg-white/10 rounded-lg text-white hover:bg-white/20 transition-all"
+          >
+            <Settings size={20} />
+          </button>
+        )}
       </div>
 
       <div className="text-center mb-12">
         <div className="text-[7.5rem] leading-none font-bold text-white tracking-tight drop-shadow-md">
           {formatTime(timeLeft)}
         </div>
+        {isGroupMode && !isHost && (
+          <p className="text-white/60 text-sm mt-2 animate-pulse">
+            Syncing with Host...
+          </p>
+        )}
       </div>
 
       <div className="flex justify-center h-24">
-        <button
-          onClick={toggleTimer}
-          className={`
-            uppercase font-bold text-2xl px-10 py-4 rounded-xl transition-all duration-100 w-48
-            bg-white
-            ${
-              isActive
-                ? "translate-y-[4px] shadow-none text-gray-400"
-                : "shadow-[0_6px_0_rgb(235,235,235)] hover:scale-[1.02] text-[#ba4949]"
-            }
-          `}
-          style={{
-            color:
-              mode === "pomodoro"
-                ? "#ba4949"
-                : mode === "short"
-                ? "#38858a"
-                : "#397097",
-          }}
-        >
-          {isActive ? "STOP" : "START"}
-        </button>
+        {isHost || !isGroupMode ? (
+          <button
+            onClick={toggleTimer}
+            className={`
+                uppercase font-bold text-2xl px-10 py-4 rounded-xl transition-all duration-100 w-48
+                bg-white
+                ${
+                  isActive
+                    ? "translate-y-[4px] shadow-none text-gray-400"
+                    : "shadow-[0_6px_0_rgb(235,235,235)] hover:scale-[1.02] text-[#ba4949]"
+                }
+            `}
+            style={{
+              color:
+                mode === "pomodoro"
+                  ? "#ba4949"
+                  : mode === "short"
+                  ? "#38858a"
+                  : "#397097",
+            }}
+          >
+            {isActive ? "STOP" : "START"}
+          </button>
+        ) : (
+          <div className="text-white/80 font-mono bg-black/10 px-6 py-3 rounded-lg">
+            WAITING FOR HOST
+          </div>
+        )}
       </div>
 
       {showSettings && (
@@ -306,42 +319,20 @@ const PomodoroTimer = ({
                 Timer (minutes)
               </label>
               <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs text-slate-400 mb-1 block">
-                    Pomodoro
-                  </label>
-                  <input
-                    type="number"
-                    name="pomodoro"
-                    value={customTimes.pomodoro}
-                    onChange={handleTimeChange}
-                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 mb-1 block">
-                    Short Break
-                  </label>
-                  <input
-                    type="number"
-                    name="short"
-                    value={customTimes.short}
-                    onChange={handleTimeChange}
-                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 mb-1 block">
-                    Long Break
-                  </label>
-                  <input
-                    type="number"
-                    name="long"
-                    value={customTimes.long}
-                    onChange={handleTimeChange}
-                    className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  />
-                </div>
+                {["pomodoro", "short", "long"].map((t) => (
+                  <div key={t}>
+                    <label className="text-xs text-slate-400 mb-1 block capitalize">
+                      {t}
+                    </label>
+                    <input
+                      type="number"
+                      name={t}
+                      value={customTimes[t]}
+                      onChange={handleTimeChange}
+                      className="w-full bg-slate-100 p-2 rounded-lg font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 
