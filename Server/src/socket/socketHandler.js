@@ -45,6 +45,19 @@ const setupSocketEvents = (io) => {
       socket.to(roomId).emit("receive_timer_update", timerState);
     });
 
+    socket.on("send_message", ({roomId, message, userName , userId}) => {
+      const messageData = {
+        roomId,
+        message,
+        userName,
+        userId,
+        time: new Date().toISOString(),
+        type: "chat"
+      }
+
+      io.to(roomId).emit("receive_message",messageData);
+    })
+
     socket.on("disconnect", () => {
       console.log("🔥: User disconnected");
     });
