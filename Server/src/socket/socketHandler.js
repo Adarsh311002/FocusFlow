@@ -45,6 +45,17 @@ const setupSocketEvents = (io) => {
       socket.to(roomId).emit("receive_timer_update", timerState);
     });
 
+    socket.on("knock_room",({roomId, userId, userName}) => {
+      console.log(`${userName} is knocking on ${roomId}`);
+      io.to(roomId).emit("receive_knock", {userId,userName});
+    })
+
+    socket.on("respond_knock",({roomId, userId, action}) => {
+      //action = "approve" | "reject"
+      console.log(`Host ${action}ed user ${userId} in ${roomId}`);
+      io.to(roomId).brodcast("knock_response", {userId, action});
+    })
+
     socket.on("send_message", ({roomId, message, userName , userId}) => {
       const messageData = {
         roomId,
