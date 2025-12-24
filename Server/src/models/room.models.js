@@ -30,10 +30,14 @@ const roomSchema = new Schema({
     type: Boolean,
     default: true,
   },
+  isPrivate : {
+    type: Boolean,
+    default : false
+  }
 },
 {timestamps: true}
 );
 
 
-export default Room = mongoose.model("Room",roomSchema);
+export const Room = mongoose.model("Room",roomSchema);
 
