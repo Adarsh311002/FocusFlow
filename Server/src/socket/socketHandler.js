@@ -1,78 +1,135 @@
 import { Room } from "../models/room.models.js";
+import redis from "../db/redisClient.js";
 
 const setupSocketEvents = (io) => {
-  const roomUsers = new Map();
+  // const roomUsers = new Map(); // now redis
 
   io.on("connection", (socket) => {
     console.log(`⚡: Connection established ${socket.id}`);
 
-    socket.on("join_room", ({ roomId, userId, userName }) => {
-      socket.join(roomId);
-      console.log(`User ${userName} (${userId}) joined room: ${roomId}`);
+    socket.on("join_room", async ({ roomId, userId, userName }) => {
+      try { 
+        const room = await Room.findOne({ roomId });
 
-      if (!roomUsers.has(roomId)) {
-        roomUsers.set(roomId, new Set());
+        if (!room) {
+          socket.emit("join_error", { message: "Room not found" });
+          return;
+        }
+
+        if (room.isPrivate) {
+          const isMember = room.members.some(
+            (memberId) => memberId.toString() === userId
+          );
+
+          const isAdmin = room.admin.toString() === userId;
+
+          if (!isMember && !isAdmin) {
+            console.log(
+              ` Access Denied: ${userName} tried to enter ${roomId}`
+            );
+            socket.emit("join_error", {
+              message: "This room is Private. You must request to join.",
+            });
+            return; 
+          }
+        }
+
+        socket.join(roomId);
+        console.log(`${userName} joined room: ${roomId}`);
+
+        const roomKey = `room: ${roomId}`;
+        const userData = JSON.stringify({userId,userName});
+
+        await redis.hset(roomKey,socket.id,userData);
+        await redis.expire(roomKey,86400);
+
+        const rawUsers = await redis.hgetall(roomKey);
+        const currentUsers = Object.values(rawUsers).map((u) => JSON.parse(u));
+
+        socket.emit("existing_users", currentUsers);
+        socket.to(roomId).emit("user_joined", { userId, userName });
+      } catch (error) {
+        console.error("Join Error:", error);
       }
-
-      const userEntry = JSON.stringify({ userId, userName });
-      roomUsers.get(roomId).add(userEntry);
-
-      const currentUsers = Array.from(roomUsers.get(roomId)).map((u) =>
-        JSON.parse(u)
-      );
-
-      socket.emit("existing_users", currentUsers);
-      socket.to(roomId).emit("user_joined", { userId, userName });
-
-      console.log(
-        `User ${userName} joined ${roomId}. Total: ${currentUsers.length}`
-      );
     });
 
-    socket.on("leave_room", ({ roomId, userId, userName }) => {
+    socket.on("leave_room", async({ roomId, userId, userName }) => {
       socket.leave(roomId);
       console.log(`User ${userName} left room ${roomId}`);
 
-      if (roomUsers.has(roomId)) {
-        const userEntry = JSON.stringify({ userId, userName });
-        roomUsers.get(roomId).delete(userEntry);
-      }
+      const roomKey = `room:${roomId}`;
 
-      socket.to(roomId).emit("user_left", { userName });
+      await redis.hdel(roomKey,socket.id);
+      
+      socket.to(roomId).emit("user_left", {userName})
+
     });
+
+    socket.on("disconnecting", async () => {
+      const rooms = [...socket.rooms];
+
+      for(const roomId of rooms){
+        if(roomId === socket.id) continue;
+
+        const roomKey = `room:${roomId}`;
+
+        const rawUser = await redis.hget(roomKey, socket.id);
+
+        if(rawUser) {
+          const { userName } = JSON.parse(rawUser);
+
+          await redis.hdel(roomKey, socket.id);
+
+          io.to(roomId).emit("user_left", {userName});
+          console.log(`User ${userName} disconnected from ${roomId}`);
+        }
+
+      }
+    })
 
     socket.on("timer_update", ({ roomId, timerState }) => {
       socket.to(roomId).emit("receive_timer_update", timerState);
     });
 
-    socket.on("knock_room",({roomId, userId, userName}) => {
+    socket.on("knock_room", ({ roomId, userId, userName }) => {
       console.log(`${userName} is knocking on ${roomId}`);
-      io.to(roomId).emit("receive_knock", {userId,userName});
-    })
+      io.to(roomId).emit("receive_knock", { userId, userName });
+    });
 
-    socket.on("respond_knock",({roomId, userId, action}) => {
-      //action = "approve" | "reject"
+    socket.on("respond_knock", ({ roomId, userId, action }) => {
       console.log(`Host ${action}ed user ${userId} in ${roomId}`);
-      io.to(roomId).brodcast("knock_response", {userId, action});
-    })
 
-    socket.on("send_message", ({roomId, message, userName , userId}) => {
+      io.emit("knock_response", { userId, action });
+
+      if (action === "approve") {
+        addMemberToRoom(roomId, userId);
+      }
+    });
+
+    socket.on("send_message", ({ roomId, message, userName, userId }) => {
       const messageData = {
         roomId,
         message,
         userName,
         userId,
         time: new Date().toISOString(),
-        type: "chat"
-      }
+        type: "chat",
+      };
+      io.to(roomId).emit("receive_message", messageData);
+    });
 
-      io.to(roomId).emit("receive_message",messageData);
-    })
-
-    socket.on("disconnect", () => {
-      console.log("🔥: User disconnected");
+    socket.on("disconnect", async () => {
+      console.log("User disconnected");
     });
   });
 };
+
+async function addMemberToRoom(roomId, userId) {
+  try {
+    await Room.findOneAndUpdate({ roomId }, { $addToSet: { members: userId } });
+  } catch (e) {
+    console.error("Failed to add member to DB", e);
+  }
+}
 
 export default setupSocketEvents;
