@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useSocket } from "../context/SocketContext";
 import { useAuth } from "../context/AuthContext";
-import { LogOut, Users, MessageSquare } from "lucide-react"; 
+import { LogOut, Users, Check, X } from "lucide-react"; 
 import { fetchRooms } from "../utils/roomService";
-import PomodoroTimer from "../components/PomodoroTimer"; 
+import PomodoroTimer from "../components/PomodoroTimer";
+import ChatBox from "../components/ChatBox";
 
 const ActiveRoom = () => {
   const { roomId } = useParams();
@@ -13,13 +14,13 @@ const ActiveRoom = () => {
   const navigate = useNavigate();
 
   const [activeUsers, setActiveUsers] = useState([]);
-  const [activityLog, setActivityLog] = useState([]);
   const [isHost, setIsHost] = useState(false);
-
+  const [knockQueue, setKnockQueue] = useState([]); 
+ 
   useEffect(() => {
     const checkRoomAdmin = async () => {
       try {
-        const data = await fetchRooms(); 
+        const data = await fetchRooms();
         const currentRoom = data?.rooms?.find((r) => r.roomId === roomId);
 
         if (currentRoom) {
@@ -28,7 +29,6 @@ const ActiveRoom = () => {
 
           if (adminId && myId && adminId.toString() === myId.toString()) {
             setIsHost(true);
-            console.log("You are the host");
           }
         }
       } catch (error) {
@@ -42,10 +42,32 @@ const ActiveRoom = () => {
   }, [user, roomId]);
 
   useEffect(() => {
-    if (user) {
-      console.log("Current User Object:", user);
-    }
+    if (!socket) return;
 
+    const handleKnock = (data) => {
+      if (isHost) {
+        // const audio = new Audio('/sounds/knock.mp3'); audio.play();
+
+        setKnockQueue((prev) => {
+          if (prev.find((k) => k.userId === data.userId)) return prev;
+          return [...prev, data];
+        });
+      }
+    };
+
+    socket.on("receive_knock", handleKnock);
+
+    return () => {
+      socket.off("receive_knock", handleKnock);
+    };
+  }, [socket, isHost]);
+
+  const handleKnockResponse = (userId, action) => {
+    socket.emit("respond_knock", { roomId, userId, action });
+    setKnockQueue((prev) => prev.filter((k) => k.userId !== userId));
+  };
+
+  useEffect(() => {
     if (!socket || !user) return;
 
     const actualName =
@@ -56,41 +78,26 @@ const ActiveRoom = () => {
       "Guest";
     const actualId = user._id || user.id || user.sub;
 
-    if (!actualId) {
-      console.error("Critical: User ID is missing!", user);
-      return;
-    }
-
-    console.log(`Emitting join_room for: ${actualName} (${actualId})`);
-
     socket.emit("join_room", {
       roomId,
       userId: actualId,
       userName: actualName,
     });
 
-    const handleExistingUsers = (users) => {
-      console.log("Received existing users:", users);
-      setActiveUsers(users);
-    };
+    socket.on("existing_users", (users) => setActiveUsers(users));
 
-    const handleUserJoined = (newUser) => {
-      console.log("New user joined:", newUser);
-      setActivityLog((prev) => [...prev, `${newUser.userName} joined`]);
+    socket.on("user_joined", (newUser) => {
       setActiveUsers((prev) => {
         if (prev.some((u) => u.userId === newUser.userId)) return prev;
         return [...prev, newUser];
       });
-    };
+    });
 
-    const handleUserLeft = (data) => {
-      setActivityLog((prev) => [...prev, `${data.userName} left`]);
+    socket.on("user_left", (data) => {
       setActiveUsers((prev) => prev.filter((u) => u.userId !== data.userId));
-    };
+    });
 
-    socket.on("existing_users", handleExistingUsers);
-    socket.on("user_joined", handleUserJoined);
-    socket.on("user_left", handleUserLeft);
+    
 
     return () => {
       socket.emit("leave_room", {
@@ -98,14 +105,54 @@ const ActiveRoom = () => {
         userId: actualId,
         userName: actualName,
       });
-      socket.off("existing_users", handleExistingUsers);
-      socket.off("user_joined", handleUserJoined);
-      socket.off("user_left", handleUserLeft);
+      socket.off("existing_users");
+      socket.off("user_joined");
+      socket.off("user_left");
     };
   }, [socket, roomId, user]);
 
+  const chatUserName =
+    user?.name ||
+    user?.fullName ||
+    user?.username ||
+    user?.email?.split("@")[0] ||
+    "Guest";
+  const chatUserId = user?._id || user?.id || user?.sub;
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col relative">
+      {isHost && knockQueue.length > 0 && (
+        <div className="absolute top-20 right-4 z-50 flex flex-col gap-2 w-80">
+          {knockQueue.map((k) => (
+            <div
+              key={k.userId}
+              className="bg-gray-800 border border-indigo-500/50 p-4 rounded-xl shadow-2xl flex items-center justify-between animate-in slide-in-from-right duration-300"
+            >
+              <div>
+                <p className="font-bold text-sm text-white">{k.userName}</p>
+                <p className="text-xs text-indigo-300">wants to join...</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleKnockResponse(k.userId, "approve")}
+                  className="p-2 bg-green-500/20 text-green-400 rounded-full hover:bg-green-500 hover:text-white transition-colors"
+                  title="Approve"
+                >
+                  <Check size={18} />
+                </button>
+                <button
+                  onClick={() => handleKnockResponse(k.userId, "reject")}
+                  className="p-2 bg-red-500/20 text-red-400 rounded-full hover:bg-red-500 hover:text-white transition-colors"
+                  title="Reject"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <header className="border-b border-gray-800 p-4 flex justify-between items-center bg-gray-950">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
@@ -124,7 +171,6 @@ const ActiveRoom = () => {
       <div className="flex-1 grid grid-cols-1 md:grid-cols-3 p-6 gap-6">
         <div className="md:col-span-2 bg-gray-800 rounded-2xl p-8 flex flex-col items-center justify-center border border-gray-700 shadow-xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
-
           <PomodoroTimer
             socket={socket}
             roomId={roomId}
@@ -133,15 +179,15 @@ const ActiveRoom = () => {
           />
         </div>
 
-        <div className="flex flex-col gap-6">
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 h-1/2">
+        <div className="flex flex-col gap-6 h-[calc(100vh-140px)]">
+          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 h-1/2 overflow-hidden flex flex-col">
             <div className="flex items-center gap-2 mb-4 text-indigo-300">
               <Users size={20} />
               <h3 className="font-semibold">
                 Live Members ({activeUsers.length})
               </h3>
             </div>
-            <ul className="space-y-3 overflow-y-auto max-h-[200px] pr-2">
+            <ul className="space-y-3 overflow-y-auto pr-2 custom-scrollbar">
               {activeUsers.map((u, i) => (
                 <li
                   key={i}
@@ -151,8 +197,10 @@ const ActiveRoom = () => {
                     {u.userName ? u.userName.charAt(0) : "?"}
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-sm font-medium">{u.userName}</span>
-                    {u.userId === (user?._id || user?.id) && (
+                    <span className="text-sm font-medium truncate max-w-[120px]">
+                      {u.userName}
+                    </span>
+                    {u.userId === chatUserId && (
                       <span className="text-indigo-400 text-[10px] uppercase font-bold tracking-wider">
                         (You)
                       </span>
@@ -163,22 +211,12 @@ const ActiveRoom = () => {
             </ul>
           </div>
 
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 h-1/2 overflow-y-auto">
-            <div className="flex items-center gap-2 mb-4 text-gray-400">
-              <MessageSquare size={18} />
-              <h3 className="font-semibold text-sm uppercase tracking-wider">
-                Activity Log
-              </h3>
-            </div>
-            <div className="space-y-2 text-xs text-gray-400 font-mono">
-              {activityLog.length === 0 && (
-                <p className="italic opacity-50">No activity yet...</p>
-              )}
-              {activityLog.map((log, i) => (
-                <p key={i}>&gt; {log}</p>
-              ))}
-            </div>
-          </div>
+          <ChatBox
+            socket={socket}
+            roomId={roomId}
+            userName={chatUserName}
+            userId={chatUserId}
+          />
         </div>
       </div>
     </div>
