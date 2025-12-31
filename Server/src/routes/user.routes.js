@@ -1,10 +1,12 @@
 import {Router} from "express"
 import { userSignup,userLogin,refreshToken, userLogout } from "../controllers/user.controller.js"
 import { jwtVerify } from "../middlewares/auth.middleware.js";
-
+import { googleLogin } from "../controllers/user.controller.js";
 
 const router = Router();
 
+
+router.route("/google").post(googleLogin)
 router.route("/signup").post(userSignup)
 router.route("/login").post(userLogin)
 router.route("/refresh").post(refreshToken)
