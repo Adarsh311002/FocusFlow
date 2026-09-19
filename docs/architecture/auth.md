@@ -4,7 +4,8 @@ Covers accounts, Google sign-in (D1), per-device sessions and tokens (D23), cook
 
 ## Accounts
 
-- A user has an email (unique, case-insensitive), a display name, an optional password hash, and `email_verified_at` (D1).
+- A user has an email (unique, case-insensitive; normalized to lowercase at input), a display name, an optional password hash (argon2id, I5), and `email_verified_at` (D1).
+- JWT signing and verification, including verification of Google ID tokens against Google's published keys, use `jose` (I5).
 - **Password signup** creates a user with `email_verified_at = NULL`. Email verification and password reset flows are open (D39); password reset must exist before public launch.
 - **Password login** returns one generic `INVALID_CREDENTIALS` error for both unknown emails and wrong passwords. Accounts without a password (Google-only) also get `INVALID_CREDENTIALS`.
 - Signup with an email that already exists returns `EMAIL_TAKEN`, including when the existing account is Google-only.
@@ -20,7 +21,7 @@ The client obtains a Google ID token and sends it to `POST /api/v1/auth/google`.
 | No identity; no account with this email; Google reports the email verified | Create the user with `email_verified_at = now()` and a Google identity; sign in |
 | No identity; no account; Google reports the email **not** verified | Refuse: `403 GOOGLE_EMAIL_UNVERIFIED` |
 
-**Explicit linking** (open D44, recommended for the MVP): a signed-in user calls `POST /api/v1/me/identities/google` with a Google ID token. The server links it if that Google `sub` is not linked to another user. Linking does not change the account email.
+**Explicit linking** (D44, part of the MVP in Phase 1b): a signed-in user calls `POST /api/v1/me/identities/google` with a Google ID token. The server links it if that Google `sub` is not linked to another user. Linking does not change the account email.
 
 ## Per-device sessions and tokens (D23)
 

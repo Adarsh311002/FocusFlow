@@ -28,8 +28,8 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 | Method & route | Request | Response | Rules |
 |---|---|---|---|
 | `GET /me` | — | `{ user }` | `UserView`: `id, email, emailVerified, displayName, avatarUrl, currentTaskId, identities: ("google")[]` |
-| `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | Task must be the user's and not deleted (D3, D38). Whether a completed task may be current is open (D43). Repeatable. |
-| `POST /me/identities/google` | `{ idToken }` | `201 { user }` | Open D44 (recommended in MVP). `409 IDENTITY_ALREADY_LINKED` if that Google account belongs to another user. |
+| `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | Task must be the user's (404 otherwise), not deleted (D38) and open (`409 TASK_NOT_OPEN` if completed, D43). Repeatable. |
+| `POST /me/identities/google` | `{ idToken }` | `201 { user }` | Explicit Google linking for a signed-in user (D1, D44; Phase 1b). `409 IDENTITY_ALREADY_LINKED` if that Google account belongs to another user. Repeating for an identity already linked to this user → `200`. |
 
 ## Tasks (D3, D38)
 
@@ -38,7 +38,7 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 | `GET /tasks` | `?status=open\|completed&cursor&limit` | `{ tasks, nextCursor }` | Own, non-deleted tasks only |
 | `POST /tasks` | `{ title }` | `201 { task }` | A retried create may duplicate (low harm; `Idempotency-Key` later) |
 | `PATCH /tasks/:taskId` | `{ title }` | `{ task }` | Owner; not deleted |
-| `POST /tasks/:taskId/complete` | — | `{ task }` | Already completed → `200` |
+| `POST /tasks/:taskId/complete` | — | `{ task }` | If it is the current task, clears `users.current_task_id` in the same transaction (D43). Already completed → `200` |
 | `POST /tasks/:taskId/reopen` | — | `{ task }` | Already open → `200` |
 | `DELETE /tasks/:taskId` | — | `204` | Soft delete (D38). Clears `users.current_task_id` in the same transaction if it pointed here. In-progress and past sessions keep their link. Already deleted → `204`. |
 
@@ -76,6 +76,9 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 
 ## Health
 
+Health checks are split (P2):
+
 | Method & route | Auth | Response |
 |---|---|---|
-| `GET /healthz` | Public | `200 { status: "ok" }` when PostgreSQL and Redis are reachable |
+| `GET /healthz` | Public | Liveness: `200 { status: "ok" }` whenever the process is running and able to respond. Never checks dependencies. |
+| `GET /readyz` | Public | Readiness: `200 { status: "ready", checks: { postgres: "ok", redis: "ok" } }` when all required dependencies are reachable; otherwise `503 { status: "not_ready", checks: { … } }` with each failing check marked `"unavailable"`. |

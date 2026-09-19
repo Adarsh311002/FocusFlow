@@ -7,7 +7,7 @@ How the frontend, API, socket server and workers share types and validation. App
 ```
 apps/
   web/            React + Vite (TSX)
-  api/            Express + Socket.IO; worker entry point (may share the process for the MVP, open D22)
+  api/            Express + Socket.IO; worker entry point/role (runs inside the API process initially, I7)
 packages/
   contracts/      Zod schemas and inferred types; depends only on zod
     src/ids.ts                  branded IDs
@@ -16,12 +16,12 @@ packages/
     src/socket/events.ts        ClientToServerEvents, ServerToClientEvents, SocketData, payload schemas
     src/domain/                 view types: user, task, focus-session, room, timer
     src/jobs/                   queue job payload schemas (exported to JSON Schema for Python later)
-  tsconfig/       shared strict base configuration
 services/
   ai/             Python AI service (later phase)
+tsconfig.base.json              shared strict compiler options (root file, not a package)
 ```
 
-The legacy `Client/` and `Server/` folders remain untouched until migration is approved. The monorepo tool is open (D27).
+The workspace uses pnpm (I1, I3). `packages/contracts` has no build step: both apps consume its TypeScript source. Domain logic (for example the pure timer transition function, I8) lives in `apps/api`, not in `contracts`; `contracts` holds only schemas and types. The legacy `Client/` and `Server/` folders remain untouched (I12).
 
 ## Rules
 
@@ -30,8 +30,9 @@ The legacy `Client/` and `Server/` folders remain untouched until migration is a
 3. **Branded IDs** prevent mixing identifiers: `UserId`, `TaskId`, `FocusSessionId`, `RoomId`, `RoomCode`, `AuthSessionId`, `FocusRunId`. For example `z.uuid().brand<"RoomId">()`.
 4. **Discriminated unions** for anything with a lifecycle, so impossible states cannot be represented.
 5. **Units in names:** `…Seconds` for session durations; `…Ms` and `…AtMs` (epoch milliseconds) for timer values; `…At` (ISO-8601 strings) for REST timestamps. `Date` objects never cross the wire.
-6. **Strict compiler settings:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`. ESLint forbids `any` and unsafe casts.
-7. **Environment variables** are validated with Zod at startup; the process refuses to start with invalid configuration.
+6. **Strict compiler settings:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noFallthroughCasesInSwitch`, `noImplicitReturns`, `verbatimModuleSyntax`, `isolatedModules`, `erasableSyntaxOnly` (no `enum`: use string-literal unions and `as const` objects). ESM with `moduleResolution: "bundler"`; the compiler only typechecks. ESLint forbids `any` and unsafe casts (I11).
+7. **Inbound schemas are strict objects** (unknown keys rejected), so a client payload that tries to send identity fields such as `userId` fails validation (F7).
+8. **Environment variables** are validated with Zod at startup; the process refuses to start with invalid configuration. `process.env` is read only in the config module.
 
 ## Key contract shapes
 
@@ -92,7 +93,7 @@ Server-internal states (for example a run that is closing, or a participant wait
 
 ## Error codes
 
-One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
+One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_NOT_OPEN`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
 
 ## Future: Node ↔ Python contracts
 

@@ -2,7 +2,7 @@
 
 How the server decides when focus starts, pauses, ends, completes or is abandoned, for room sessions and solo sessions.
 
-Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19. Everything else in this document is **Architecture**.
+Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19, and implementation decisions I7 (worker placement) and I8 (timer implementation). Everything else in this document is **Architecture**.
 
 ## Principles
 
@@ -15,7 +15,7 @@ Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19.
 
 | What | Clock |
 |---|---|
-| Room timer arithmetic, `serverNowMs` sent with timer state | Redis server time (`TIME`), read inside the atomic Lua scripts |
+| Room timer arithmetic, `serverNowMs` sent with timer state | Redis server time, read with `TIME` immediately before each change is computed (I8) |
 | Stored timestamps; solo session arithmetic | PostgreSQL `now()` |
 | API server clocks | Never used for these |
 
@@ -55,6 +55,17 @@ Derived: `elapsed = elapsedBeforeMs + (running ? now − segmentStartedAtMs : 0)
 
 If a room has no timer key, it is `idle` in a new `focus` phase using the room's saved durations.
 
+### How a change is applied (Approved, I8)
+
+Every timer change (host command, phase end, run closure) follows the same steps:
+
+1. Read the current timer state (with its `version`) and the current time from Redis `TIME`.
+2. Compute the result with a **pure TypeScript function** `(state, command, nowMs) → newState | rejection`. All timer rules live in this function; it has no I/O and is fully unit- and property-testable with any clock.
+3. Write the result with a small **version-checked atomic Redis operation**: it succeeds only if the stored `version` is still the one read in step 1. Related keys that must change together (the run ledger, the unsettled-runs set, the running-timers index) are written in the same atomic operation.
+4. On a version conflict, re-read and retry a bounded number of times; if it still conflicts, reject with `VERSION_CONFLICT` and the current state.
+
+Lua is used only for the atomic compare-version-and-write in step 3. It contains no timer rules. Property tests cover the pure function (remaining time never negative, version only increases, no illegal transitions, elapsed never exceeds duration) and interleavings of concurrent commands.
+
 ### Phase durations (D16)
 
 - Saved in PostgreSQL on the room. Redis holds a live copy of the settings.
@@ -63,7 +74,7 @@ If a room has no timer key, it is `idle` in a new `focus` phase using the room's
 
 ### Commands
 
-The host sends `room:timer:command`. Each command runs as one atomic Lua script (check state, apply, bump version), then the server broadcasts `room:timer:state`.
+The host sends `room:timer:command`. Each command is applied as described above (pure function, then version-checked write, which bumps `version`), then the server broadcasts `room:timer:state`.
 
 | Command | Allowed from | Effect |
 |---|---|---|
@@ -82,9 +93,9 @@ The host sends `room:timer:command`. Each command runs as one atomic Lua script 
 
 A BullMQ delayed job fires at `endsAtMs`, with a job ID derived from room and version (job IDs avoid `:`, which BullMQ reserves).
 
-1. An atomic script checks that the status is `running`, the version matches, and the time is up. If the job fired early, it reschedules itself. If the version changed, it does nothing.
-2. If the phase was focus, the script closes the run with reason `completed`.
-3. The script creates the next phase (`focus → short_break`, any break `→ focus`) as `idle`, reading the duration from settings; entering focus opens a new run. Version is incremented.
+1. Read the state and Redis `TIME`. If the version differs from the job's version or the status is not `running`, do nothing. If the job fired early, reschedule it.
+2. The pure function computes the transition: if the phase was focus, the run is closed with reason `completed`; the next phase (`focus → short_break`, any break `→ focus`) is created as `idle` with its duration read from settings; entering focus opens a new run.
+3. The result (timer, closed run, unsettled-runs entry, new run) is written in one version-checked atomic operation. On a conflict, the job re-reads and re-evaluates from step 1.
 4. The server broadcasts the new timer state, then settles the closed run (below).
 
 ## Focus runs (room sessions)
@@ -97,8 +108,8 @@ A focus run is one instance of a focus phase. Its Redis ledger holds the run's s
 
 1. Check: the user is a member, is present in the room, has no in-progress session, the phase is `focus` (open D31), and the optional task is theirs and not deleted.
 2. Generate `sessionId`. Insert the focus session in PostgreSQL: `in_progress`, `room_id`, `focus_run_id`, `planned_seconds = round((durationMs − elapsed) / 1000)`.
-3. Atomic script: add the participant to the run **only if** the room's current run is still that `focusRunId` and the phase is still focus.
-4. If the script fails because the run changed, delete the just-inserted row and return `409 RUN_CHANGED`.
+3. Small atomic Redis operation: add the participant to the run **only if** the room's current run is still that `focusRunId` and the phase is still focus.
+4. If that operation fails because the run changed, delete the just-inserted row and return `409 RUN_CHANGED`.
 5. Broadcast `room:focus:participants`.
 
 A retry after a crash between steps 2 and 3 finds the existing in-progress session and repairs it by adding the missing participant. A request that is never retried leaves an orphan, which the reconciler abandons.
@@ -107,7 +118,7 @@ Opting in while the timer is idle or paused is allowed; the elapsed time at that
 
 ### Disconnect and reconnect (D19)
 
-- When a participant's last socket in the room drops, an atomic script records `disconnectedAtMs` and `elapsedAtDisconnectMs`, and a grace job is scheduled for 60 seconds later. This applies whether the room timer is running or paused.
+- When a participant's last socket in the room drops, an atomic write records `disconnectedAtMs` and `elapsedAtDisconnectMs` (computed from the timer state and Redis `TIME`), and a grace job is scheduled for 60 seconds later. This applies whether the room timer is running or paused.
 - Reconnecting (`room:join`) within the grace period clears the disconnect fields; the grace job then does nothing because `disconnectedAtMs` no longer matches.
 - If the grace job fires and the participant is still disconnected with the same `disconnectedAtMs`, the session is abandoned with `grace_expired`.
 

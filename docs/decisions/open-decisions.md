@@ -22,19 +22,21 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | D36 | Can a member removed from a public room rejoin immediately? | Yes: removal is a "kick" in the MVP. Private rooms require a new knock. Bans are a later feature. | — |
 | D37 | Recorded focused time for sessions abandoned as `timer_lost` | 0, because it cannot be known. | — |
 | D39 | Email verification and password reset flows | Not needed for the MVP build (D1 removed the security dependency). **Password reset must exist before public launch.** | Public launch |
-| D43 | Does completing a task clear it as the current task? | Yes. | MVP implementation |
-| D44 | Is the explicit "link Google" endpoint in the MVP? | Yes. It is small, and the D1 refusal message sends users to it. | MVP implementation |
 | D45 | Can a soft-deleted task be restored? | Defer. | Later |
+
+## Facts and actions needed from the project owner
+
+| Item | Needed by |
+|---|---|
+| Is the legacy app deployed anywhere, or is there MongoDB data worth keeping? (If not, no data migration is needed.) | Before legacy deletion (Phase 5) |
+| Create a Google OAuth client for local development and production | Phase 1b |
+| Enable branch protection on `main` (require CI) | Phase 0 merge |
+| Choose production hosting (managed PostgreSQL 18, Redis with AOF + `noeviction`) | Phase 9 |
 
 ## Technical decisions (made during implementation)
 
 | Item | Notes / recommended default |
 |---|---|
-| ORM and migration tool | Not chosen. Contracts are kept separate from persistence types, so the choice does not affect the API. |
-| How enums are declared | PostgreSQL enum vs text + CHECK; depends on the ORM. |
-| D22 — Worker placement | Worker code has its own entry point from day one; it may run inside the API process for the MVP. |
-| D27 — Monorepo tool | npm/pnpm workspaces; build tooling optional. |
-| UUID version | Recommended UUIDv7 (time-ordered, index-friendly). |
 | Token lifetimes and overlap window | e.g. access 15 min, refresh 30 days, overlap ~20 s. |
 | Stale solo session cleanup window | How long a solo session may stay in progress (measured from `started_at`; in practice a paused one) before `abandoned(expired)` (e.g. 12 h). |
 | Duration bounds | Room phase durations and solo planned time (e.g. 1–240 min). |
@@ -45,6 +47,24 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Socket.IO transports | If long-polling fallback is enabled and more than one API instance runs, the load balancer needs sticky sessions. |
 | `Idempotency-Key` support | For create endpoints; not required for the MVP. |
 | Rate-limit values | Chat, knocks, auth endpoints. |
+| API bundler | esbuild directly or via `tsdown`. |
+| Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
+| Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
+
+## Resolved
+
+| Former item | Resolution |
+|---|---|
+| ORM and migration tool | Drizzle ORM with `node-postgres`; SQL migrations reviewed and committed (I6) |
+| How enums are declared | `text` columns with `CHECK` constraints (I6) |
+| D22 — Worker placement | Same codebase, own entry point/role, inside the API process initially (I7) |
+| D27 — Monorepo tool | pnpm workspaces (I1, I3) |
+| UUID version | UUIDv7 (I6) |
+| P1 — Delete behaviour of task references | Plain foreign keys, no `ON DELETE SET NULL`; account deletion clears `users.current_task_id` first (approved) |
+| P2 — Health checks | `/healthz` (liveness) and `/readyz` (readiness) (approved) |
+| P3 — Redis key prefix | Configurable `REDIS_KEY_PREFIX`, default `ff:`; BullMQ uses the same prefix (approved) |
+| D43 — Completing the current task | Clears it as the current task (approved) |
+| D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
 
 ## Later product phases
 

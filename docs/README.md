@@ -2,7 +2,7 @@
 
 This folder is the long-term source of truth for the Focus Flow v2 design. `CLAUDE.md` at the repository root holds the short list of rules and approved decisions; these documents hold the full design behind them.
 
-Focus Flow v2 is currently in the **design phase**. Nothing described here is implemented yet unless it is marked **Existing (legacy)**.
+Focus Flow v2 has completed design and its implementation plan is approved. **Implementation has not started**; Phase 0 is next, and each phase begins only when explicitly started (see `implementation/plan.md`). Nothing described here is implemented yet unless it is marked **Existing (legacy)**.
 
 ## Status labels
 
@@ -10,7 +10,7 @@ Every statement in these documents falls into one of these categories:
 
 | Label | Meaning |
 |---|---|
-| **Approved (Dn)** | An explicit product/architecture decision. Listed in `CLAUDE.md` and `decisions/decision-log.md`. Only changed by explicitly revisiting the decision. |
+| **Approved (Dn, Fn, In, Pn)** | An explicit product (D), foundational (F), implementation (I) or approved architecture proposal (P) decision. Listed in `CLAUDE.md` and `decisions/decision-log.md`. Only changed by explicitly revisiting the decision. |
 | **Architecture** | Accepted design direction that implements the approved decisions. Can be refined during implementation without a product decision, as long as it stays consistent with the approved decisions. |
 | **Open (Dn)** | Undecided. Tracked in `decisions/open-decisions.md`, usually with a recommended default. |
 | **Existing (legacy)** | Describes the old JavaScript/MERN implementation in `Client/` and `Server/`. |
@@ -20,7 +20,8 @@ Every statement in these documents falls into one of these categories:
 | Document | Contents |
 |---|---|
 | [decisions/decision-log.md](decisions/decision-log.md) | Every approved decision, with rationale and consequences |
-| [decisions/open-decisions.md](decisions/open-decisions.md) | Every open decision, with its category and recommended default |
+| [decisions/open-decisions.md](decisions/open-decisions.md) | Every open decision, with the phase that needs it and a recommended default; plus resolved items |
+| [implementation/plan.md](implementation/plan.md) | Repository structure, toolchain, stack, local development, testing, CI, legacy strategy, roadmap and the Phase 0 checklist |
 | [architecture/overview.md](architecture/overview.md) | System architecture, components, deployment, local development, observability, security boundaries, long-term scope |
 | [domain/model.md](domain/model.md) | Entities, PostgreSQL ERD, state machines, where state lives |
 | [architecture/auth.md](architecture/auth.md) | Accounts, Google sign-in, per-device sessions, tokens, cookies, socket authentication |

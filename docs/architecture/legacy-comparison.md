@@ -46,8 +46,10 @@ The existing `Client/` (React + Vite, JavaScript) and `Server/` (Express + Mongo
 | **Retire** | `User.role`, `Room.topic` (always hard-coded), `Room.isActive` (replaced by presence, D8), `Session.mode` (breaks are not sessions, D5), host re-broadcast on `user_joined`, `prompt()`/`confirm()` dialogs, dead navbar links, `nodemon` in production dependencies, the Mongo service in `docker-compose.yml` |
 | **Do not carry forward just because it exists** | Unbacked landing page claims: pricing, analytics, offline mode, soundscapes (D33). The public `/timer` guest route (D26). `TiltCard`/`AudioBars` beyond the marketing page |
 
-## Migration approach (Architecture; starting it requires explicit approval)
+## Migration approach (Approved, I12)
 
-- Build v2 in the new `apps/` and `packages/` layout with strict TypeScript, not by converting legacy files in place.
-- Keep the legacy folders untouched until v2 replaces them; do not delete legacy functionality merely because it belongs to the old architecture.
-- Legacy data migration (MongoDB → PostgreSQL) is a separate, explicitly approved step.
+- Build v2 in the new `apps/` and `packages/` layout with strict TypeScript. There is no gradual JavaScript-to-TypeScript conversion of the legacy app.
+- `Client/`, `Server/` and the root `docker-compose.yml` stay untouched. They are excluded from the pnpm workspace, ESLint and CI; nothing in v2 imports them. Reusable UI markup is copied and rewritten as TSX.
+- Legacy code is deleted in one dedicated commit at the solo-core milestone (end of Phase 5 in `implementation/plan.md`), not before.
+- `archi/` is not modified or committed unless explicitly instructed.
+- Legacy data migration (MongoDB → PostgreSQL) happens only if the project owner confirms there is data worth keeping; it would be a separate, explicitly approved step.

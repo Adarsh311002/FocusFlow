@@ -25,7 +25,7 @@ Later phases add AI jobs and insights, uploads, subscriptions and payments, noti
 User 1──* AuthIdentity
 User 1──* AuthSession
 User 1──* Task
-User 0..1── current Task        (users.current_task_id, same user, not deleted)
+User 0..1── current Task        (users.current_task_id, same user, open, not deleted)
 User 1──* FocusSession
 Task 0..1──* FocusSession        (optional; kept when the task is soft-deleted)
 Room 0..1──* FocusSession        (room sessions; NULL for solo)
@@ -36,7 +36,9 @@ User *──* Room via Presence       (Redis only)
 
 ## PostgreSQL ERD (MVP)
 
-All IDs are UUIDs. All timestamps are `timestamptz` in UTC. Column names are snake_case; API contracts are camelCase.
+Target: PostgreSQL 18, accessed through Drizzle ORM (I6). All IDs are UUIDv7, generated in the application (the database default `uuidv7()` is a fallback). All timestamps are `timestamptz` in UTC, set from the database clock. Column names are snake_case; API contracts are camelCase. Status-like columns (`status`, `abandon_reason`, `provider`) are `text` with `CHECK` constraints, not PostgreSQL enums. Every constraint and index is named explicitly (`pk_`, `fk_`, `uq_`, `ix_`, `ck_`).
+
+Task references (`users.current_task_id`, `focus_sessions.task_id`) are **plain foreign keys with no `ON DELETE` action** (P1). Tasks are soft-deleted (D38), so normal deletion never removes a task row, and nothing relies on `ON DELETE SET NULL`.
 
 ```
 users
@@ -46,7 +48,7 @@ users
   display_name        NOT NULL, 1–50 chars
   password_hash       NULL                         (NULL for Google-only accounts)
   avatar_url          NULL
-  current_task_id     NULL, composite FK (current_task_id, id) → tasks(id, user_id)   (D3)
+  current_task_id     NULL, composite FK (current_task_id, id) → tasks(id, user_id), no ON DELETE action   (D3, P1)
   created_at, updated_at
 
 auth_identities
@@ -82,7 +84,7 @@ tasks
 focus_sessions
   id                  PK
   user_id             FK → users, ON DELETE CASCADE
-  task_id             NULL, composite FK (task_id, user_id) → tasks(id, user_id)   (D4)
+  task_id             NULL, composite FK (task_id, user_id) → tasks(id, user_id), no ON DELETE action   (D4, P1)
   room_id             NULL, FK → rooms                                              (NULL = solo)
   focus_run_id        NULL   (room sessions only; no FK, runs live in Redis)
   status              in_progress | completed | abandoned
@@ -121,8 +123,8 @@ room_members                                        (D9)
 
 ### Rules the database cannot enforce alone
 
-- `users.current_task_id` must point to a task that is not soft-deleted. Soft-deleting a task clears it in the same transaction, with a conditional update to avoid races.
-- Whether a completed task may stay current is open (D43; recommended: completing clears it).
+- `users.current_task_id` must point to an open task that is not soft-deleted. Soft-deleting the current task (D38) or completing it (D43) clears `users.current_task_id` in the same transaction, with a conditional update to avoid races. Setting a completed or deleted task as current is rejected.
+- Account deletion (D2, when implemented) clears `users.current_task_id` in the account-deletion transaction before deleting the user's data. It does not rely on `ON DELETE SET NULL` (P1).
 - A session cannot be started or opted into with a deleted task.
 - The host always has a `room_members` row (created in the same transaction as the room).
 
@@ -137,7 +139,7 @@ room_members                                        (D9)
 open ──complete──► completed ──reopen──► open
 open | completed ──delete──► deleted (deleted_at set; hidden; history keeps the link)
 ```
-- Only a non-deleted task can be current. Deleting the current task clears `users.current_task_id`.
+- Only an open, non-deleted task can be current. Completing (D43) or deleting (D38) the current task clears `users.current_task_id`. Reopening a task does not make it current again.
 
 ### Focus session
 ```

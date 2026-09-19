@@ -4,13 +4,15 @@ Redis holds disposable state and infrastructure (F2). If losing something would 
 
 ## Configuration
 
+- Client library: `ioredis` for all connections (required by BullMQ) (I7). Per process: one general connection, BullMQ's connections (workers need their own blocking connection), and the Socket.IO adapter's publish/subscribe pair.
+- Local development: Redis runs in Docker via `infra/compose.yaml` with the same persistence and eviction settings as production (I9).
 - AOF persistence (`appendfsync everysec`): a normal restart loses at most about one second of changes.
 - `maxmemory-policy noeviction`: required by BullMQ, and prevents Redis from silently dropping timer or presence keys.
 - Correctness never depends on persistence. Data loss is detected and handled explicitly (below).
 
 ## Keys
 
-All application keys start with `ff:`. Values are validated with Zod when read.
+All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, default `ff:`. The keys below are written with the default prefix. Values are validated with Zod when read.
 
 | Key | Type | Contents | Lifetime |
 |---|---|---|---|
@@ -32,7 +34,7 @@ All application keys start with `ff:`. Values are validated with Zod when read.
 | `ff:ratelimit:{action}:{userId}` | String | Counter | TTL = rate window |
 | `ff:chat:dedupe:{userId}:{clientMessageId}` | String | `SET NX` marker | TTL 60 s |
 
-Multi-key changes that must be consistent (timer + run close + unsettled set; presence sets + presence hash; participant add guarded by run ID) run as Lua scripts, which also read Redis `TIME` so timer arithmetic uses one clock.
+Multi-key changes that must be consistent (timer + run close + unsettled set; presence sets + presence hash; participant add guarded by run ID) are written with small atomic Redis operations (Lua). For the timer (I8), the new state is computed in TypeScript from the current state and Redis `TIME`, and the Lua operation only checks that `version` is unchanged before writing all related keys; conflicts are retried a bounded number of times. Lua never contains business rules.
 
 ## Queues (BullMQ)
 
@@ -43,6 +45,10 @@ Multi-key changes that must be consistent (timer + run close + unsettled set; pr
 | `maintenance` | Reconciler (repeating) |
 
 Job IDs are derived from the entity and version they apply to, so duplicates collapse and outdated jobs do nothing. Job IDs avoid `:`.
+
+Workers run inside the API process initially, with their own entry point/role (I7). They send socket events through the Socket.IO Redis emitter rather than the in-process server, so running them as a separate process later requires no code change.
+
+BullMQ keys use the same configured prefix (P3): with the default, queues live under `ff:bull` rather than BullMQ's built-in `bull:` prefix. A distinct prefix per test file gives each test an isolated key space in a shared Redis.
 
 The Socket.IO Redis adapter uses pub/sub channels, not keys.
 
