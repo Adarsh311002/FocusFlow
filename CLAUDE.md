@@ -125,6 +125,57 @@ A user must explicitly opt into a focus session.
 
 Being present in a room alone must not automatically create a completed FocusSession.
 
+### Solo pause accounting (D6)
+- `focus_sessions.focused_seconds` stores accumulated focused time; `running_since` marks the current active stretch.
+- On pause, add the elapsed stretch to `focused_seconds` and clear `running_since`. On resume, set `running_since = now`.
+- Individual pause intervals are not stored in the MVP.
+
+### Public room membership (D9)
+- Joining a public room creates a persistent `room_members` record. Joining again is idempotent (upsert-like).
+- Membership is an access/history relationship and enables a future "My Rooms" view.
+- Private rooms still require explicit host approval.
+
+### Reset / phase change during focus (D17)
+- If the host resets the timer or changes away from a focus phase while users are opted into the current focus run, their in-progress room FocusSessions are marked `abandoned` with reason `reset` or `phase_changed`.
+- The current participant set is cleared and a new `focusRunId` is issued.
+
+### Disconnect grace (D19)
+- An unexpected socket disconnect does not immediately abandon a room FocusSession. The participant gets a 60-second reconnect grace period.
+- Reconnecting within the grace period preserves the participation. Otherwise the session is marked `abandoned` with reason `grace_expired`.
+- An intentional room leave is an immediate abandonment.
+
+### Meaning of "completed" (D14, D15, D35)
+There is one meaning of "completed" across solo and room sessions. A FocusSession is `completed` only when the planned focus period has been reached and the user is confirmed present at the end.
+- Present at completion → `completed`.
+- Actively running session, temporarily disconnected → 60-second reconnect grace. Reconnects within grace → the session continues (and can be `completed` if present at the end). Grace expires → `abandoned(grace_expired)`.
+- Paused solo session: a disconnect does NOT start the 60-second abandonment grace. The session stays paused, because pausing is an explicit user action, not an unexpected disappearance. If it stays unresolved too long, the stale-session cleanup policy marks it `abandoned(expired)`.
+- Solo early stop → `abandoned(stopped)`, preserving the actual `focused_seconds`.
+- A stale solo session that remains unresolved beyond the grace/cleanup policy → `abandoned(expired)`. Stale sessions must never permanently block the user.
+- The exact timeout/cleanup mechanics are a technical detail; the meaning of "completed" is fixed.
+
+### Room phase durations (D16)
+- Focus, short-break and long-break durations are persisted per room in PostgreSQL, with sensible defaults.
+- The host may change them. A change takes effect from the next phase, never retroactively for the current phase.
+- Redis holds the live copy while the timer runs.
+
+### Google account linking (D1)
+- Never automatically link Google to an existing password account solely because the verified emails match.
+- If Google login finds an existing password account with the same email and no linked Google identity, refuse the automatic merge and instruct the user to sign in normally and explicitly link Google from account settings.
+- The user model includes `email_verified_at`. Google-created accounts may be marked verified based on Google's verified identity.
+
+### Auth sessions and refresh tokens (D23)
+- Use per-device auth sessions.
+- Refresh tokens live in an httpOnly cookie and are rotated on every refresh.
+- Reuse of an already-rotated refresh token revokes that session. A small previous-token overlap window prevents simultaneous browser refreshes from being treated as theft.
+- Access tokens are short-lived and kept in memory on the client.
+- Exact token lifetimes are finalized during implementation.
+
+### Task deletion (D38)
+- Tasks are soft-deleted via `deleted_at` and disappear from normal task lists.
+- Historical FocusSessions keep their task relationship/history.
+- A deleted task cannot remain the user's current task.
+- Physical deletion may happen later as part of account deletion/retention policy.
+
 ## Important Architecture Principles
 
 - PostgreSQL is the durable system of record.
@@ -160,6 +211,17 @@ decide what to work on
 → review progress
 
 New features should strengthen this loop rather than being added simply because they are technically interesting.
+
+## Long-Term Product Principle
+
+The MVP is the first coherent implementation milestone, not the final product. Focus Flow is intended to grow into richer productivity, collaboration, analytics, AI, personalization, notifications, integrations, and monetization.
+
+When scoping work, distinguish:
+- Build now
+- Architect now for later
+- Deliberately defer
+
+Do not add speculative infrastructure just because the product may grow, but do not create throwaway architectural boundaries either.
 
 ## Design-Phase Rules
 
