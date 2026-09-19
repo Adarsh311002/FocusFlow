@@ -239,6 +239,10 @@ Until explicitly approved otherwise:
   - proposed ideas
   - unresolved decisions
 
+## Design Documentation
+
+The full v2 design lives in `docs/` (start at `docs/README.md`). Approved decisions are recorded in `docs/decisions/decision-log.md` and open ones in `docs/decisions/open-decisions.md`. When a decision is approved, update this file, both decision documents, and every design document that references it.
+
 ## Existing Repository
 
 The existing codebase should be treated as useful historical/contextual material.
