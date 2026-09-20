@@ -7,8 +7,8 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 ## Status
 
 - Implementation plan: **approved** (I1–I12, P1–P3, D43, D44).
-- Phase 0: next; **not started.** Each phase begins only when explicitly instructed.
-- No architectural questions remain open for Phase 0. Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
+- Phase 0: **implemented** on branch `v2/phase-0-foundation`, pending review and merge; see the checklist and follow-ups below. Phase 1 has **not started**. Each phase begins only when explicitly instructed.
+- Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
 
@@ -133,14 +133,14 @@ focus-flow/
 - The web app and API run **natively on Windows** (`pnpm dev`) for fast reloads and working debuggers.
 - Database ports are bound to `127.0.0.1` only.
 - One origin locally: the Vite dev server (port 5173) proxies `/api` and `/socket.io` (including WebSocket) to the API (port 3000).
-- `.env.example` in `apps/api`, `apps/web` and `infra`; real `.env` files are git-ignored.
+- `.env.example` in `apps/api` and `infra` (and in `apps/web` once the web app has variables, from Phase 1b); real `.env` files are git-ignored. The API scripts load `apps/api/.env` with Node's `--env-file-if-exists`.
 
 ## Environment variables and secrets
 
 | Owner | Variables | Secret |
 |---|---|---|
 | web (browser-visible) | `VITE_GOOGLE_CLIENT_ID` (from Phase 1b). No API URL: the app is same-origin. | No |
-| api: runtime | `APP_ENV`, `NODE_ENV`, `PORT`, `ROLE` (from Phase 3), `LOG_LEVEL`, `SHUTDOWN_TIMEOUT_MS` | No |
+| api: runtime | `APP_ENV` (the application setting; `NODE_ENV` is left to Node and tooling and is not validated), `HOST` (default `127.0.0.1`), `PORT`, `ROLE` (from Phase 3), `LOG_LEVEL`, `SHUTDOWN_TIMEOUT_MS` | No |
 | api: database | `DATABASE_URL`; `MIGRATION_DATABASE_URL` (migration step) | Yes |
 | api: Redis | `REDIS_URL`, `REDIS_KEY_PREFIX` (default `ff:`) | Yes (URL) |
 | api: auth (Phase 1) | `JWT_ACCESS_SECRETS` (with key IDs for rotation), `JWT_ISSUER`, `JWT_AUDIENCE`, `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_TOKEN_TTL_SECONDS`, `REFRESH_OVERLAP_SECONDS`, `GOOGLE_CLIENT_ID` | Yes (JWT secrets) |
@@ -209,56 +209,56 @@ Phase 0, followed immediately by Phase 1 email/password accounts: a person can s
 Branch: `v2/phase-0-foundation`, merged through a pull request.
 
 ### Repository root
-- [ ] `.gitignore` (dependencies, build output, coverage, test artifacts, logs, `.env*` except `.env.example`)
-- [ ] `.gitattributes` (`* text=auto eol=lf`; binary types marked binary)
-- [ ] `.editorconfig`, `.node-version` (24)
-- [ ] `package.json`: private; `packageManager` pinned; `engines.node` 24; Prettier config; scripts `dev`, `build`, `typecheck`, `lint`, `format`, `format:check`, `test`, `test:int`, `check:no-js`, `infra:up`, `infra:down`, `infra:reset`, `infra:logs` (all `infra:*` scripts call `docker compose -f infra/compose.yaml …`)
-- [ ] `pnpm-workspace.yaml`: `apps/*`, `packages/*`; catalog for shared versions (TypeScript, Zod, Vitest, `@types/node`); allowlist for packages with install scripts
-- [ ] `tsconfig.base.json` with the compiler options above
-- [ ] `eslint.config.ts` with the rule set above; ignores `Client/`, `Server/`, build output
-- [ ] `lefthook.yml`: pre-commit (Prettier + ESLint on staged files), commit-msg (Conventional Commits check), pre-push (typecheck)
-- [ ] `scripts/check-no-js.ts` and `scripts/check-commit-msg.ts`
-- [ ] Root `Readme.md`: v2 quick start and a note that `Client/`/`Server/` are legacy
+- [x] `.gitignore` (dependencies, build output, coverage, test artifacts, logs, `.env*` except `.env.example`)
+- [x] `.gitattributes` (`* text=auto eol=lf`; binary types marked binary)
+- [x] `.editorconfig`, `.node-version` (24)
+- [x] `package.json`: private; `packageManager` pinned; `engines.node` 24; Prettier config; scripts `dev`, `build`, `typecheck`, `lint`, `format`, `format:check`, `test`, `test:int`, `check:no-js`, `infra:up`, `infra:down`, `infra:reset`, `infra:logs` (all `infra:*` scripts call `docker compose -f infra/compose.yaml …`)
+- [x] `pnpm-workspace.yaml`: `apps/*`, `packages/*`; catalog for shared versions (TypeScript, Zod, Vitest, `@types/node`); allowlist for packages with install scripts
+- [x] `tsconfig.base.json` with the compiler options above
+- [x] `eslint.config.ts` with the rule set above; ignores `Client/`, `Server/`, build output
+- [x] `lefthook.yml`: pre-commit (Prettier + ESLint on staged files), commit-msg (Conventional Commits check), pre-push (typecheck)
+- [x] `scripts/check-no-js.ts` and `scripts/check-commit-msg.ts`
+- [x] Root `Readme.md`: v2 quick start and a note that `Client/`/`Server/` are legacy
 
 ### `infra/`
-- [ ] `compose.yaml`: `postgres:18` (health check, named volume, `127.0.0.1:5432`) and Redis (`--appendonly yes --maxmemory-policy noeviction`, health check, named volume, `127.0.0.1:6379`)
-- [ ] `.env.example` for the Compose credentials
+- [x] `compose.yaml`: `postgres:18` (health check, named volume, `127.0.0.1:5432`) and Redis (`--appendonly yes --maxmemory-policy noeviction`, health check, named volume, `127.0.0.1:6379`)
+- [x] `.env.example` for the Compose credentials
 
 ### `packages/contracts`
-- [ ] Package setup (`@focus-flow/contracts`, ESM, exports TypeScript source, depends only on `zod`)
-- [ ] Branded-ID helper
-- [ ] Error envelope schema and the initial error-code union (codes used in Phase 0 only)
-- [ ] Liveness and readiness response schemas
-- [ ] Unit tests for the schemas
+- [x] Package setup (`@focus-flow/contracts`, ESM, exports TypeScript source, depends only on `zod`)
+- [x] Branded-ID helper
+- [x] Error envelope schema and the initial error-code union (codes used in Phase 0 only)
+- [x] Liveness and readiness response schemas
+- [x] Unit tests for the schemas
 
 ### `apps/api`
-- [ ] Package setup (`@focus-flow/api`), `tsconfig.json`, Vitest config (unit and integration projects), esbuild build script
-- [ ] `platform/config.ts`: Zod-validated environment (`APP_ENV`, `NODE_ENV`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`, `REDIS_URL`, `REDIS_KEY_PREFIX`, `SHUTDOWN_TIMEOUT_MS`)
-- [ ] `platform/logger.ts` (pino), request context (`AsyncLocalStorage`), request ID middleware
-- [ ] `platform/errors.ts`: `AppError`, error middleware, 404 handler, response envelope
-- [ ] `platform/db.ts` (node-postgres pool) and `platform/redis.ts` (ioredis connection factory applying `REDIS_KEY_PREFIX`, default `ff:`, P3)
-- [ ] `GET /api/v1/healthz` (liveness, no dependency checks) and `GET /api/v1/readyz` (PostgreSQL and Redis reachability; `503` when not ready), response shapes from `contracts` (P2)
-- [ ] `platform/shutdown.ts`: graceful shutdown on SIGTERM/SIGINT
-- [ ] `main.ts` wiring it together
-- [ ] `.env.example`
-- [ ] Tests: config validation and error mapping (unit); health endpoint with both databases up and with Redis down (integration, Testcontainers)
+- [x] Package setup (`@focus-flow/api`), `tsconfig.json`, Vitest config (unit and integration projects), esbuild build script
+- [x] `platform/config.ts`: Zod-validated environment (`APP_ENV`, `HOST`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`, `REDIS_URL`, `REDIS_KEY_PREFIX`, `SHUTDOWN_TIMEOUT_MS`)
+- [x] `platform/logger.ts` (pino), request context (`AsyncLocalStorage`), request ID middleware
+- [x] `platform/errors.ts`: `AppError`, error middleware, 404 handler, response envelope
+- [x] `platform/db.ts` (node-postgres pool) and `platform/redis.ts` (ioredis connection factory applying `REDIS_KEY_PREFIX`, default `ff:`, P3)
+- [x] `GET /api/v1/healthz` (liveness, no dependency checks) and `GET /api/v1/readyz` (PostgreSQL and Redis reachability; `503` when not ready), response shapes from `contracts` (P2)
+- [x] `platform/shutdown.ts`: graceful shutdown on SIGTERM/SIGINT
+- [x] `main.ts` wiring it together
+- [x] `.env.example`
+- [x] Tests: config validation and error mapping (unit); health endpoint with both databases up and with Redis down (integration, Testcontainers)
 
 ### `apps/web`
-- [ ] Package setup (`@focus-flow/web`), `tsconfig.json`, `vite.config.ts` (React, Tailwind v4, proxy for `/api` and `/socket.io` with WebSocket)
-- [ ] `index.html`, `src/main.tsx`
-- [ ] TanStack Router (root and index routes) and TanStack Query provider
-- [ ] Typed `fetch` client (base path `/api/v1`, error envelope parsing, response validation; no auth yet)
-- [ ] A system-status view showing API health through the proxy
-- [ ] Component test for the status view
+- [x] Package setup (`@focus-flow/web`), `tsconfig.json`, `vite.config.ts` (React, Tailwind v4, proxy for `/api` and `/socket.io` with WebSocket)
+- [x] `index.html`, `src/main.tsx`
+- [x] TanStack Router (root and index routes) and TanStack Query provider
+- [x] Typed `fetch` client (base path `/api/v1`, error envelope parsing, response validation; no auth yet)
+- [x] A system-status view showing API health through the proxy
+- [x] Component test for the status view
 
 ### CI
-- [ ] `.github/workflows/ci.yml`: install (frozen, cached) → typecheck, lint, format check, no-JavaScript check → unit tests → integration tests → builds
+- [x] `.github/workflows/ci.yml`: install (frozen, cached) → typecheck, lint, format check, no-JavaScript check → unit tests → integration tests → builds
 
 ### Validation
-- [ ] From a fresh clone: `pnpm install`, `pnpm infra:up`, copy the `.env.example` files, `pnpm dev` → the browser at `localhost:5173` shows the API as live and ready through the proxy
-- [ ] Stopping Redis makes `/readyz` return `503` and the status view show the API as not ready, while `/healthz` still returns `200`
-- [ ] `typecheck`, `lint`, `format:check`, `check:no-js`, `test`, `test:int` and `build` pass locally and in CI
-- [ ] `git diff` shows no changes to `Client/`, `Server/`, the root `docker-compose.yml` or `archi/`
+- [ ] From a fresh clone: `pnpm install`, `pnpm infra:up`, copy the `.env.example` files, `pnpm dev` → the browser at `localhost:5173` shows the API as live and ready through the proxy _(verified without Docker: the API starts from `.env`, `/healthz` is 200 and `/readyz` is 503 through the proxy; the ready state needs Docker, which was not available)_
+- [ ] Stopping Redis makes `/readyz` return `503` and the status view show the API as not ready, while `/healthz` still returns `200` _(covered by the Testcontainers integration test; not yet executed, needs Docker)_
+- [ ] `typecheck`, `lint`, `format:check`, `check:no-js`, `test`, `test:int` and `build` pass locally and in CI _(all pass locally except `test:int`, which needs Docker; CI has not run yet)_
+- [x] `git diff` shows no changes to `Client/`, `Server/`, the root `docker-compose.yml` or `archi/`
 
 ### Deliberately not in Phase 0
 Database schema, Drizzle schema files and migrations (Phase 1); authentication (Phase 1); Socket.IO, BullMQ, the worker role and presence (Phase 3); Zustand (Phase 6); Dockerfiles and a full-stack Compose profile (Phase 9, or earlier if CI end-to-end tests need them); `e2e/` and Playwright (Phase 6); Radix.
@@ -274,3 +274,18 @@ Database schema, Drizzle schema files and migrations (Phase 1); authentication (
 | D44 | Explicit Google linking endpoint is part of Phase 1b |
 
 Still needed from the project owner, by phase: Google OAuth client (Phase 1b); branch protection on `main` (Phase 0 merge); whether the legacy app is deployed or has MongoDB data worth keeping (before legacy deletion, Phase 5); production hosting (Phase 9). See `decisions/open-decisions.md`.
+
+## Phase 0 review follow-ups
+
+Four independent reviews (architecture, security, testing/reliability, developer experience) ran on the Phase 0 implementation. Findings that belonged to Phase 0 were fixed. The rest are deferred here with the phase that should pick them up.
+
+| Finding | Deferred to |
+|---|---|
+| Convert `ZodError` to a 400 only at a single request-parsing helper; a `ZodError` from anywhere else (for example a malformed database row) should be a 500, not a leaked 400 | Phase 1 (first real request validation) |
+| Security headers (`X-Content-Type-Options`, `Cache-Control: no-store`, frame options), for example via `helmet` | Phase 1 (before cookies and sessions) |
+| `/readyz` runs a real `SELECT 1` and `PING` per request; add a short cache or rate limit | Phase 1 (with rate limiting) |
+| Restructure `system.int.test.ts` so the degraded-dependency cases do not depend on test order, and add the Postgres-down and both-down readiness cases | Phase 1 (when the integration suite grows; needs Docker to verify) |
+| `docker/login-action` (or a registry mirror) in CI to avoid anonymous Docker Hub pull limits for Testcontainers | When CI first hits the limit |
+| Pin container images and GitHub Actions by digest or SHA; add a secret-scan hook | Phase 9 (launch readiness) |
+| A property test (`fast-check`) of the contracts | Phase 7 (timer state machine), where it earns its place |
+| The legacy root `docker-compose.yml` publishes MongoDB and Redis on all interfaces without authentication | Not touched (legacy is frozen, I12); removed with the legacy code at the end of Phase 5 |

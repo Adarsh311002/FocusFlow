@@ -8,7 +8,7 @@ The existing repository contains an older JavaScript/MERN implementation. We are
 
 Product/domain/architecture design is complete and the implementation plan is approved (see `docs/implementation/plan.md`).
 
-**Phase state:** Phase 0 (foundation) is next and has **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
+**Phase state:** Phase 0 (foundation) is implemented on branch `v2/phase-0-foundation` and pending review and merge. Phase 1 (accounts) has **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
 
 Do not change the architectural direction again unless a genuine contradiction appears during implementation; if one does, explain it rather than silently changing the design.
 

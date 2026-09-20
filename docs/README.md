@@ -2,7 +2,7 @@
 
 This folder is the long-term source of truth for the Focus Flow v2 design. `CLAUDE.md` at the repository root holds the short list of rules and approved decisions; these documents hold the full design behind them.
 
-Focus Flow v2 has completed design and its implementation plan is approved. **Implementation has not started**; Phase 0 is next, and each phase begins only when explicitly started (see `implementation/plan.md`). Nothing described here is implemented yet unless it is marked **Existing (legacy)**.
+Focus Flow v2 has completed design and its implementation plan is approved. **Phase 0 (foundation) is implemented** on branch `v2/phase-0-foundation`: workspace tooling, shared contracts, the API platform layer with health checks, the web shell, local infrastructure and CI. Nothing beyond that is implemented yet; each later phase begins only when explicitly started (see `implementation/plan.md`). Unless a document says otherwise, what it describes is the design, not the code.
 
 ## Status labels
 

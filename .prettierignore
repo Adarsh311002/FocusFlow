@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+
+# Legacy v1 application: frozen, excluded from v2 tooling (CLAUDE.md, I12).
+Client/
+Server/
+docker-compose.yml
+archi/
+
+# Hand-maintained design documents and project rules; reformatting them would
+# create noise unrelated to the code.
+docs/
+CLAUDE.md

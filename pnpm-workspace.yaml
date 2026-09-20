@@ -1,0 +1,31 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependencies allowed to run install scripts (everything else is blocked).
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  # Optional native add-ons pulled in by Testcontainers; the pure-JS fallbacks are fine.
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
+
+# pnpm delays adoption of freshly published versions; these are pinned deliberately.
+minimumReleaseAgeExclude:
+  - tsx@4.23.14
+
+# Shared dependency versions. Packages reference these with "catalog:".
+catalog:
+  '@eslint/js': ^10.0.1
+  '@types/node': ^24.13.6
+  esbuild: ^0.28.2
+  eslint: ^10.11.0
+  globals: ^17.12.0
+  jiti: ^2.7.0
+  prettier: ^3.9.8
+  tsx: ^4.23.14
+  typescript: 6.0.3
+  typescript-eslint: ^8.70.0
+  vitest: ^5.0.1
+  zod: ^4.6.5

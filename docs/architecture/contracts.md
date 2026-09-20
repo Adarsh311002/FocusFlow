@@ -21,7 +21,7 @@ services/
 tsconfig.base.json              shared strict compiler options (root file, not a package)
 ```
 
-The workspace uses pnpm (I1, I3). `packages/contracts` has no build step: both apps consume its TypeScript source. Domain logic (for example the pure timer transition function, I8) lives in `apps/api`, not in `contracts`; `contracts` holds only schemas and types. The legacy `Client/` and `Server/` folders remain untouched (I12).
+The workspace uses pnpm (I1, I3). `packages/contracts` has no build step: both apps consume its TypeScript source. Inside `contracts`, relative imports are extensionless (`./errors`), because every consumer resolves the source through a bundler; the API's own files use explicit `.js` extensions (`./config.js`), which also work under Node ESM. Route paths (`API_BASE_PATH`, `healthPaths`) live in `contracts` so the API and the web app cannot drift apart. Domain logic (for example the pure timer transition function, I8) lives in `apps/api`, not in `contracts`; `contracts` holds only schemas and types. The legacy `Client/` and `Server/` folders remain untouched (I12).
 
 ## Rules
 

@@ -1,0 +1,62 @@
+name: CI
+
+# Every change reaches main through a pull request, so pull_request is the main
+# trigger; the push triggers cover direct pushes to main and to the v2 branches.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'v2/**'
+
+# Superseded runs for the same ref are pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# The four jobs are independent on purpose: a failing lint run should not hide a
+# failing test run. Each one installs the workspace through .github/actions/setup.
+jobs:
+  static:
+    name: Typecheck, lint, format, no-JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm check:no-js
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: pnpm test
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    # Testcontainers pulls PostgreSQL and Redis images on the first run, which is
+    # slow; the Ubuntu runners provide the Docker daemon it needs.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: pnpm test:int
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: pnpm build

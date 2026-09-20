@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": ["eslint.config.ts", "scripts/**/*.ts", "types/**/*.d.ts"]
+}

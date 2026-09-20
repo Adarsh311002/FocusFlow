@@ -1,0 +1,21 @@
+name: Setup workspace
+description: Install pnpm and Node, then install the workspace dependencies from the lockfile.
+
+runs:
+  using: composite
+  steps:
+    # pnpm must exist before setup-node so that `cache: pnpm` can find the store.
+    # The version is taken from "packageManager" in package.json (pnpm 12.5.1);
+    # passing it here as well would make pnpm/action-setup fail on a double definition.
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Install Node
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: .node-version
+        cache: pnpm
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      shell: bash
