@@ -1,0 +1,68 @@
+# Local development datastores for Focus Flow v2.
+#
+# Only PostgreSQL and Redis run in Docker (I9): the API and the web app run
+# natively on the host for fast reloads and working debuggers on Windows.
+# Ports are published on the loopback interface only, so nothing is reachable
+# from the network. Credentials come from infra/.env (see .env.example) and are
+# local-only development values.
+#
+# Managed with the root scripts: pnpm infra:up / infra:down / infra:reset / infra:logs,
+# which always pass -f infra/compose.yaml so the legacy root docker-compose.yml is untouched.
+#
+# Integration tests (pnpm test:int) use Testcontainers and do NOT use this file.
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: focusflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-focusflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-focusflow}
+      POSTGRES_DB: ${POSTGRES_DB:-focusflow}
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # The postgres:18 image keeps its data directory under /var/lib/postgresql
+      # (PGDATA points at a version-specific subdirectory), so the volume is
+      # mounted on that parent directory rather than on /var/lib/postgresql/data.
+      - focusflow-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "${POSTGRES_USER:-focusflow}" -d "${POSTGRES_DB:-focusflow}"'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # First start initialises the cluster; do not report unhealthy meanwhile.
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: focusflow-redis
+    restart: unless-stopped
+    # AOF persistence and noeviction are architectural requirements: Redis holds
+    # live room/timer state and queue data that must not be silently evicted.
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    volumes:
+      - focusflow-redis-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  focusflow-postgres-data:
+  focusflow-redis-data:

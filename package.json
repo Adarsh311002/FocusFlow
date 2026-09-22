@@ -1,0 +1,54 @@
+{
+  "name": "focus-flow",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @focus-flow/api --filter @focus-flow/web dev",
+    "dev:api": "pnpm --filter @focus-flow/api dev",
+    "dev:web": "pnpm --filter @focus-flow/web dev",
+    "build": "pnpm -r run build",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r run test",
+    "test:watch": "pnpm --parallel -r run test:watch",
+    "test:int": "pnpm --filter @focus-flow/api run test:int",
+    "check:no-js": "tsx scripts/check-no-js.ts",
+    "check:commit-msg": "tsx scripts/check-commit-msg.ts",
+    "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm check:no-js && pnpm test && pnpm build",
+    "infra:up": "docker compose -f infra/compose.yaml up -d",
+    "infra:down": "docker compose -f infra/compose.yaml down",
+    "infra:reset": "docker compose -f infra/compose.yaml down -v",
+    "infra:logs": "docker compose -f infra/compose.yaml logs -f",
+    "hooks:install": "lefthook install"
+  },
+  "prettier": {
+    "endOfLine": "lf",
+    "printWidth": 100,
+    "singleQuote": true,
+    "semi": true,
+    "trailingComma": "all"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
+    "globals": "catalog:",
+    "jiti": "catalog:",
+    "lefthook": "^2.1.14",
+    "prettier": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}

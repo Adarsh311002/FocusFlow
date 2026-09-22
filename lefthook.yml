@@ -1,0 +1,48 @@
+# Git hooks for Focus Flow v2 (lefthook). Install once per clone: pnpm hooks:install
+#
+# Everything here must stay fast: the full gate (typecheck, lint, format check,
+# no-JavaScript check, tests, build) lives in CI and in `pnpm verify`.
+
+pre-commit:
+  # Nothing to fix up while Git is replaying commits.
+  skip:
+    - merge
+    - rebase
+  # Deliberately sequential: both jobs rewrite the same staged files, so running
+  # them in parallel would let one overwrite the other's fixes. ESLint first
+  # (it reorders imports), Prettier last so formatting always wins.
+  parallel: false
+  jobs:
+    - name: eslint
+      glob: '*.{ts,tsx}'
+      # Legacy v1 code and the design scratch space are frozen (I12).
+      exclude:
+        - 'Client/**/*'
+        - 'Server/**/*'
+        - 'archi/**/*'
+      run: pnpm exec eslint --fix {staged_files}
+      stage_fixed: true
+
+    - name: prettier
+      glob: '*.{ts,tsx,json,md,yaml,yml,css,html}'
+      exclude:
+        - 'Client/**/*'
+        - 'Server/**/*'
+        - 'archi/**/*'
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  skip:
+    - merge
+    - rebase
+  jobs:
+    # {1} is the path to the commit message file Git passes to the hook.
+    - name: conventional-commit
+      run: pnpm exec tsx scripts/check-commit-msg.ts {1}
+
+pre-push:
+  jobs:
+    # Cheapest check that catches a broken workspace before CI does.
+    - name: typecheck
+      run: pnpm typecheck
