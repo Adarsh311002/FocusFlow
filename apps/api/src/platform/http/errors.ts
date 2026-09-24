@@ -27,6 +27,28 @@ export const errorBody = (code: ErrorCode, message: string, details?: unknown): 
   details === undefined ? { error: { code, message } } : { error: { code, message, details } };
 
 /**
+ * Thrown only by `parseRequestBody` below. Handlers use that helper (not a bare
+ * `schema.parse(...)`) for anything that came from the client, so the error handler
+ * can map exactly this type to 400 — never a `z.ZodError` raised anywhere else, such
+ * as a sanity check on a value already read back from the database, which is a server
+ * bug and must surface as a 500.
+ */
+export class RequestValidationError extends AppError {
+  constructor(zodError: z.ZodError) {
+    super('VALIDATION_FAILED', 400, 'Request validation failed', z.flattenError(zodError));
+    this.name = 'RequestValidationError';
+  }
+}
+
+export const parseRequestBody = <T>(schema: z.ZodType<T>, body: unknown): T => {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new RequestValidationError(result.error);
+  }
+  return result.data;
+};
+
+/**
  * Narrow structural types: the handlers only need these members, which keeps them
  * unit-testable with plain typed stubs while staying assignable to Express's
  * RequestHandler and ErrorRequestHandler. Widen them when a handler needs more of
@@ -115,14 +137,10 @@ export const createErrorHandler = (logger: ErrorHandlerLogger): ApiErrorHandler 
       return;
     }
 
-    // Known gap (tracked for Phase 1): every ZodError becomes a 400 here. Once requests
-    // are parsed in one boundary helper, only that helper's errors should map to 400 and
-    // a ZodError from anywhere else (e.g. a malformed database row) should be a 500.
-    if (err instanceof z.ZodError) {
-      const details = z.flattenError(err);
-      res.status(400).json(errorBody('VALIDATION_FAILED', 'Request validation failed', details));
-      return;
-    }
+    // A bare z.ZodError (as opposed to the RequestValidationError that
+    // parseRequestBody raises for client input) means something server-side failed a
+    // sanity check against data that was never meant to reach the client raw — that is
+    // a bug, not a client mistake, so it falls through to the generic 500 below.
 
     // The client gets a generic message; the real error only goes to the log.
     logger.error(
