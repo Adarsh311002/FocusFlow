@@ -70,7 +70,9 @@ export default defineConfig([
     },
   },
   {
-    files: ['apps/api/src/platform/config.ts'],
+    // Standalone CLI scripts read their own connection string rather than going
+    // through the full app config (see src/db/migrate.ts for why).
+    files: ['apps/api/src/platform/config.ts', 'apps/api/src/db/migrate.ts'],
     rules: { 'no-restricted-properties': 'off' },
   },
 
