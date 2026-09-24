@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, fetchLiveness, fetchReadiness } from './api-client';
+import { ApiError, apiRequestNoContent, fetchLiveness, fetchReadiness } from './api-client';
 
-/** Only the parts of `Response` that the api-client actually reads. */
-type StubResponse = Pick<Response, 'ok' | 'status'> & { json: () => Promise<unknown> };
-
-function respond(status: number, body: unknown): StubResponse {
-  return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
+/**
+ * A real `Response` (not a hand-rolled partial mock): api-client.ts reads the body via
+ * `.text()`, and only a real `Response` behaves correctly for every case below,
+ * including an empty body.
+ */
+function respond(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status });
 }
 
-function stubFetch(response: StubResponse | Error): void {
+function stubFetch(response: Response | Error): void {
   vi.stubGlobal('fetch', () =>
     response instanceof Error ? Promise.reject(response) : Promise.resolve(response),
   );
@@ -48,13 +50,7 @@ describe('api-client', () => {
   });
 
   it('reports MALFORMED_RESPONSE when the body is not JSON', async () => {
-    vi.stubGlobal('fetch', () =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.reject(new SyntaxError('Unexpected token <')),
-      }),
-    );
+    stubFetch(new Response('<html>not json</html>', { status: 200 }));
 
     const error = await rejection(fetchLiveness());
 
@@ -114,5 +110,22 @@ describe('fetchReadiness', () => {
     const error = await rejection(fetchReadiness());
 
     expect(error.code).toBe('MALFORMED_RESPONSE');
+  });
+});
+
+describe('apiRequestNoContent', () => {
+  it('resolves without reading a body on 204', async () => {
+    stubFetch(new Response(null, { status: 204 }));
+
+    await expect(apiRequestNoContent('/anything')).resolves.toBeUndefined();
+  });
+
+  it('still throws a normal ApiError for a non-OK response', async () => {
+    stubFetch(respond(401, { error: { code: 'UNAUTHENTICATED', message: 'no token' } }));
+
+    const error = await rejection(apiRequestNoContent('/anything'));
+
+    expect(error.code).toBe('UNAUTHENTICATED');
+    expect(error.status).toBe(401);
   });
 });

@@ -5,22 +5,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SystemStatus } from './system-status';
 
-/** Only the parts of `Response` that the api-client actually reads. */
-type StubResponse = Pick<Response, 'ok' | 'status'> & { json: () => Promise<unknown> };
-
-function jsonResponse(status: number, body: unknown): StubResponse {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body),
-  };
+// A real `Response` (not a hand-rolled partial mock): api-client.ts reads the body
+// via `.text()`, which only a real `Response` provides correctly.
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status });
 }
 
-function stubFetch(handler: (path: string) => Promise<StubResponse>): void {
+function stubFetch(handler: (path: string) => Promise<Response>): void {
   vi.stubGlobal('fetch', (input: string) => handler(input));
 }
 
-function healthyLiveness(): StubResponse {
+function healthyLiveness(): Response {
   return jsonResponse(200, { status: 'ok' });
 }
 
@@ -48,7 +43,7 @@ afterEach(() => {
 
 describe('SystemStatus', () => {
   it('shows a loading state while the checks are in flight', () => {
-    stubFetch(() => new Promise<StubResponse>(() => undefined));
+    stubFetch(() => new Promise<Response>(() => undefined));
 
     renderSystemStatus();
 

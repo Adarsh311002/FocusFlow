@@ -1,5 +1,9 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 
+import { LoginPage } from '../features/auth/login-page';
+import { RequireAuth } from '../features/auth/require-auth';
+import { SignupPage } from '../features/auth/signup-page';
+import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { SystemStatus } from '../features/system/system-status';
 
 /** Minimal shell: the app name and a slot for the active route. No design work yet. */
@@ -24,8 +28,39 @@ const indexRoute = createRoute({
   component: SystemStatus,
 });
 
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/login',
+  component: LoginPage,
+});
+
+const signupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/signup',
+  component: SignupPage,
+});
+
+/**
+ * Guarded in the component rather than in `beforeLoad`: the session is only known after
+ * the refresh-on-load probe resolves, and `RequireAuth` can render a loading state while
+ * it does. A `beforeLoad` redirect would have to either block navigation or guess.
+ */
+function ProtectedDashboard() {
+  return (
+    <RequireAuth>
+      <DashboardPage />
+    </RequireAuth>
+  );
+}
+
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/dashboard',
+  component: ProtectedDashboard,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
-const routeTree = rootRoute.addChildren([indexRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, loginRoute, signupRoute, dashboardRoute]);
 
 export const router = createRouter({ routeTree });
 
