@@ -15,6 +15,9 @@ export const errorCodes = [
   'UNAUTHENTICATED',
   'SESSION_INVALID',
   'SESSION_REVOKED',
+  // Tasks (Phase 2, docs/api/rest.md)
+  'TASK_NOT_FOUND',
+  'TASK_NOT_OPEN',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);
