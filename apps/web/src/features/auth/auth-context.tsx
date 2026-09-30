@@ -11,6 +11,7 @@ import {
 } from 'react';
 
 import {
+  fetchMe,
   login as requestLogin,
   logout as requestLogout,
   onSessionEnded,
@@ -31,6 +32,13 @@ export interface AuthContextValue extends AuthState {
   readonly login: (email: string, password: string) => Promise<void>;
   readonly signup: (email: string, password: string, displayName: string) => Promise<void>;
   readonly logout: () => Promise<void>;
+  /**
+   * Replaces the signed-in user with a fresher copy from the server (for example the
+   * `{ user }` that `PUT /me/current-task` returns). Ignored when signed out.
+   */
+  readonly updateUser: (user: UserView) => void;
+  /** Re-reads `GET /me`, for changes the server made as a side effect (D43). */
+  readonly reloadUser: () => Promise<void>;
 }
 
 const ANONYMOUS: AuthState = { user: null, status: 'anonymous' };
@@ -141,9 +149,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [queryClient]);
 
+  const updateUser = useCallback((user: UserView) => {
+    setState((current) =>
+      current.status === 'authenticated' && current.user?.id === user.id
+        ? { user, status: 'authenticated' }
+        : current,
+    );
+  }, []);
+
+  const reloadUser = useCallback(async () => {
+    updateUser(await fetchMe());
+  }, [updateUser]);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, login, signup, logout }),
-    [state, login, signup, logout],
+    () => ({ ...state, login, signup, logout, updateUser, reloadUser }),
+    [state, login, signup, logout, updateUser, reloadUser],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

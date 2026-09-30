@@ -16,6 +16,7 @@ import {
 } from '../../test/api-stub';
 import {
   authedApiRequest,
+  authedApiRequestNoContent,
   fetchMe,
   login,
   logout,
@@ -361,5 +362,52 @@ describe('restoreSession', () => {
     stubFetch(() => errorResponse(500, 'INTERNAL', 'Internal server error'));
 
     await expect(restoreSession()).resolves.toBeNull();
+  });
+});
+
+describe('authedApiRequestNoContent', () => {
+  const PATH = '/tasks/01a0ed0d-55de-7d1b-8495-82fb5050d815';
+
+  it('sends the bearer token and resolves on an empty 204', async () => {
+    setAccessToken('live-token');
+    const calls = stubFetch(() => noContentResponse());
+
+    await expect(authedApiRequestNoContent(PATH, { method: 'DELETE' })).resolves.toBeUndefined();
+
+    const request = requestsTo(calls, PATH)[0]!;
+    expect(request.method).toBe('DELETE');
+    expect(request.headers.get('authorization')).toBe('Bearer live-token');
+  });
+
+  it('refreshes once and replays after a 401 UNAUTHENTICATED, with the new token', async () => {
+    setAccessToken('expired-token');
+    let attempts = 0;
+    const calls = stubFetch((request) => {
+      if (request.url.endsWith(authPaths.refresh)) {
+        return jsonResponse(200, refreshBody('renewed'));
+      }
+      attempts += 1;
+      return attempts === 1
+        ? errorResponse(401, 'UNAUTHENTICATED', 'Access token expired.')
+        : noContentResponse();
+    });
+
+    await authedApiRequestNoContent(PATH, { method: 'DELETE' });
+
+    const requests = requestsTo(calls, PATH);
+    expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
+      'Bearer expired-token',
+      'Bearer renewed',
+    ]);
+    expect(requestsTo(calls, authPaths.refresh)).toHaveLength(1);
+  });
+
+  it('surfaces a non-session error from the API', async () => {
+    setAccessToken('live-token');
+    stubFetch(() => errorResponse(404, 'TASK_NOT_FOUND', 'Task not found.'));
+
+    const error = await rejection(authedApiRequestNoContent(PATH, { method: 'DELETE' }));
+
+    expect(error.code).toBe('TASK_NOT_FOUND');
   });
 });

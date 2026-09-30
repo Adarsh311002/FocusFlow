@@ -169,17 +169,36 @@ function sendAuthed<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): 
   return apiRequest<T>(path, schema, withHeaders(init, authorization));
 }
 
+function sendAuthedNoContent(path: string, init?: RequestInit): Promise<void> {
+  const token = getAccessToken();
+  const authorization: HeaderRecord = token === null ? {} : { Authorization: `Bearer ${token}` };
+  return apiRequestNoContent(path, withHeaders(init, authorization));
+}
+
 /**
  * `apiRequest` for endpoints behind `Authorization: Bearer`. Attaches the in-memory
  * token, and on a 401 `UNAUTHENTICATED` refreshes once and replays the request exactly
  * once — never in a loop. If the refresh itself finds no session, the in-memory token
  * is dropped and the caller sees a session-ended `ApiError`.
  */
-export async function authedApiRequest<T>(
+export function authedApiRequest<T>(
   path: string,
   schema: z.ZodType<T>,
   init?: RequestInit,
 ): Promise<T> {
+  return withSessionRetry(() => sendAuthed(path, schema, init));
+}
+
+/** `authedApiRequest` for endpoints that answer `204` with no body (e.g. deleting a task). */
+export function authedApiRequestNoContent(path: string, init?: RequestInit): Promise<void> {
+  return withSessionRetry(() => sendAuthedNoContent(path, init));
+}
+
+/**
+ * The shared session handling of both authenticated request helpers. `attempt` reads the
+ * in-memory token each time it runs, so the replay after a refresh uses the new token.
+ */
+async function withSessionRetry<T>(attempt: () => Promise<T>): Promise<T> {
   if (getAccessToken() === null) {
     // Nothing cached (a fresh page load): establish a token before the first attempt.
     const outcome = await refresh();
@@ -189,7 +208,7 @@ export async function authedApiRequest<T>(
   }
 
   try {
-    return await sendAuthed(path, schema, init);
+    return await attempt();
   } catch (error) {
     if (!(error instanceof ApiError)) {
       throw error;
@@ -209,7 +228,7 @@ export async function authedApiRequest<T>(
       notifySessionEnded(outcome.reason);
       throw sessionEndedError(outcome.reason);
     }
-    return await sendAuthed(path, schema, init);
+    return await attempt();
   }
 }
 
