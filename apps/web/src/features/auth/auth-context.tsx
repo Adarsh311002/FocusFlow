@@ -1,4 +1,5 @@
 import type { AuthResponse, UserView } from '@focus-flow/contracts';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
   type ReactNode,
@@ -10,6 +11,7 @@ import {
 } from 'react';
 
 import {
+  fetchMe,
   login as requestLogin,
   logout as requestLogout,
   onSessionEnded,
@@ -30,6 +32,20 @@ export interface AuthContextValue extends AuthState {
   readonly login: (email: string, password: string) => Promise<void>;
   readonly signup: (email: string, password: string, displayName: string) => Promise<void>;
   readonly logout: () => Promise<void>;
+  /**
+   * Replaces the signed-in user with a fresher copy from the server (for example the
+   * `{ user }` that `PUT /me/current-task` returns). Ignored when signed out.
+   */
+  readonly updateUser: (user: UserView) => void;
+  /**
+   * Re-reads `GET /me`, for changes the server made as a side effect (D43, D38). Best
+   * effort: it never throws. It resolves `true` when the user was refreshed and `false`
+   * when it could not be, in which case `userSyncFailed` is set until a later refresh
+   * succeeds. A session that has ended is handled by the usual session-ended path.
+   */
+  readonly reloadUser: () => Promise<boolean>;
+  /** The last `reloadUser` failed, so the shown user (e.g. its current task) may be stale. */
+  readonly userSyncFailed: boolean;
 }
 
 const ANONYMOUS: AuthState = { user: null, status: 'anonymous' };
@@ -47,6 +63,11 @@ const AuthContext = createContext<AuthContextValue | null>(null);
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(LOADING);
+  const [userSyncFailed, setUserSyncFailed] = useState(false);
+  // Server data cached by TanStack Query belongs to one session. It is cleared whenever
+  // the session changes (sign-in, sign-up, sign-out, or the session ending on its own), so
+  // one user's tasks can never be rendered — even briefly — for the next user of the tab.
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let active = true;
@@ -76,21 +97,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // refresh cookie is dead), which no component's login/logout call would otherwise
     // surface — without this, the UI would keep rendering a stale authenticated state.
     return onSessionEnded(() => {
+      queryClient.clear();
+      setUserSyncFailed(false);
       setState(ANONYMOUS);
     });
-  }, []);
+  }, [queryClient]);
 
-  const accept = useCallback((response: AuthResponse) => {
-    setAccessToken(response.accessToken);
-    setState({ user: response.user, status: 'authenticated' });
-  }, []);
+  const accept = useCallback(
+    (response: AuthResponse) => {
+      // A new session may belong to a different person than the last one in this tab, so
+      // nothing cached for the previous session may be shown to it.
+      queryClient.clear();
+      setUserSyncFailed(false);
+      setAccessToken(response.accessToken);
+      setState({ user: response.user, status: 'authenticated' });
+    },
+    [queryClient],
+  );
 
   /** Errors reach the form that asked, which is what shows them; nothing is swallowed. */
-  const reject = useCallback((error: unknown): never => {
-    setAccessToken(null);
-    setState(ANONYMOUS);
-    throw error;
-  }, []);
+  const reject = useCallback(
+    (error: unknown): never => {
+      queryClient.clear();
+      setUserSyncFailed(false);
+      setAccessToken(null);
+      setState(ANONYMOUS);
+      throw error;
+    },
+    [queryClient],
+  );
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -118,14 +153,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await requestLogout();
     } finally {
-      // Whether or not the server answered, this browser is done with the session.
+      // Whether or not the server answered, this browser is done with the session, and
+      // with every piece of server data it fetched for it.
+      queryClient.clear();
+      setUserSyncFailed(false);
       setState(ANONYMOUS);
     }
+  }, [queryClient]);
+
+  const updateUser = useCallback((user: UserView) => {
+    setUserSyncFailed(false);
+    setState((current) =>
+      current.status === 'authenticated' && current.user?.id === user.id
+        ? { user, status: 'authenticated' }
+        : current,
+    );
   }, []);
 
+  const reloadUser = useCallback(async () => {
+    try {
+      updateUser(await fetchMe());
+      return true;
+    } catch {
+      // A session that ended was already reported through onSessionEnded (the user is
+      // signed out); anything else leaves the user as it was and flags it as stale.
+      setUserSyncFailed(true);
+      return false;
+    }
+  }, [updateUser]);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, login, signup, logout }),
-    [state, login, signup, logout],
+    () => ({ ...state, userSyncFailed, login, signup, logout, updateUser, reloadUser }),
+    [state, userSyncFailed, login, signup, logout, updateUser, reloadUser],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

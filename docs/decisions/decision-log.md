@@ -170,6 +170,34 @@ Approved with the implementation plan. Full details: `implementation/plan.md`.
 - **Decision:** all application Redis keys use a configurable prefix (`REDIS_KEY_PREFIX`, default `ff:`), and BullMQ keys use the corresponding configured prefix (default `ff:bull`).
 - **Why:** one namespace per deployment, and an isolated key space per test file in a shared Redis.
 
+## Tasks implementation decisions (Phase 2)
+
+Approved at the start of Phase 2 from the Phase 2 reconnaissance.
+
+### T1 — Read a single task
+- **Decision:** `GET /tasks/:taskId` returns one of the user's live tasks.
+- **Why:** the current task must be shown even when it is not on a loaded list page; later focus-session features need the same read.
+- **Consequences:** same ownership rule as every task route: another user's, a deleted or a nonexistent task is `404 TASK_NOT_FOUND`.
+
+### T2 — Task ordering and pagination
+- **Decision:** task lists are newest-created first, ordered by UUIDv7 `id DESC`, with keyset pagination on `id` behind an opaque cursor. One full index `ix_tasks_user_id_id (user_id, id DESC)`. No `completed_at`-based ordering and no second cursor.
+- **Why:** UUIDv7 ids sort by creation time, so one key serves ordering and the cursor. A full (not partial) index also serves the `ON DELETE CASCADE` from `users`, which must reach soft-deleted rows.
+- **Consequences:** supersedes the earlier sketch `INDEX (user_id, created_at) WHERE deleted_at IS NULL` in `domain/model.md`.
+
+### T3 — Current-task synchronization on the client
+- **Decision:** after completing or deleting the currently selected task, the client re-reads `GET /me` and updates its user state. Task responses do not carry a `currentTaskCleared` flag.
+- **Why:** the server alone decides (D43, D38); the client does not guess, and task responses stay about tasks.
+
+### T4 — No optimistic updates in Phase 2
+- **Decision:** deferred. Phase 2 uses server responses plus pending states only.
+- **Consequences:** I4 still allows optimistic updates for tasks later.
+
+### T5 — Task management on the dashboard
+- **Decision:** task management lives on `/dashboard`, with the current task shown prominently.
+
+### T6 — Task limits
+- **Decision:** title 1–200 characters after trimming; list limit default 50, maximum 100; no per-user task count cap for now.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

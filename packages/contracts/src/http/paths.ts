@@ -1,3 +1,5 @@
+import type { TaskId } from '../ids';
+
 /**
  * Route paths the API serves and the web app calls. Owning them here means the two
  * apps cannot drift apart (for example when a future `/api/v2` appears).
@@ -18,7 +20,22 @@ export const authPaths = {
 
 export const mePaths = {
   self: '/me',
+  currentTask: '/me/current-task',
 } as const;
+
+/** Express-style templates; the web app fills in `:taskId` with `taskPath`. */
+export const taskPaths = {
+  collection: '/tasks',
+  item: '/tasks/:taskId',
+  complete: '/tasks/:taskId/complete',
+  reopen: '/tasks/:taskId/reopen',
+} as const;
+
+export type TaskPathTemplate = Exclude<(typeof taskPaths)[keyof typeof taskPaths], '/tasks'>;
+
+/** Builds a concrete task URL path from one of the `taskPaths` templates. */
+export const taskPath = (template: TaskPathTemplate, taskId: TaskId): string =>
+  template.replace(':taskId', encodeURIComponent(taskId));
 
 /**
  * Required on every refresh/logout request in addition to the refresh cookie: a

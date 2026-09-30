@@ -7,7 +7,9 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 ## Status
 
 - Implementation plan: **approved** (I1–I12, P1–P3, D43, D44).
-- Phase 0: **implemented** on branch `v2/phase-0-foundation`, pending review and merge; see the checklist and follow-ups below. Phase 1 has **not started**. Each phase begins only when explicitly instructed.
+- Phase 0 (foundation) and Phase 1 (accounts): **merged** into `main` (Phase 1 checkpoint: tag `phase-1-accounts`).
+- Phase 2 (tasks): **implemented** on branch `v2/phase-2-tasks`, pending review; see "Phase 2" below.
+- Phase 1b and Phase 3 onwards: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
@@ -87,7 +89,7 @@ focus-flow/
 | Styling | Tailwind CSS v4 |
 | Components | Radix primitives only where actually needed |
 | Animation | None yet; visual design is deferred |
-| Optimistic updates | Tasks only; server-controlled state (sessions, timer) shows a pending state instead |
+| Optimistic updates | Tasks only; server-controlled state (sessions, timer) shows a pending state instead. Deferred in Phase 2 (T4): tasks also use server responses plus pending states for now |
 
 ## Backend (I5)
 
@@ -275,6 +277,17 @@ Database schema, Drizzle schema files and migrations (Phase 1); authentication (
 
 Still needed from the project owner, by phase: Google OAuth client (Phase 1b); branch protection on `main` (Phase 0 merge); whether the legacy app is deployed or has MongoDB data worth keeping (before legacy deletion, Phase 5); production hosting (Phase 9). See `decisions/open-decisions.md`.
 
+## Phase 2 — Tasks
+
+Branch: `v2/phase-2-tasks`. Decisions D3, D38, D43, P1 and T1–T6 (`decisions/decision-log.md`).
+
+- **Contracts:** `TaskId`; `TASK_NOT_FOUND`, `TASK_NOT_OPEN`; `TaskView` (a union on `status`); strict create/rename/params/list-query schemas; `UserView.currentTaskId`; `taskPaths` and `mePaths.currentTask`.
+- **Database:** migration `0001_create_tasks`: `tasks` (soft delete, title CHECK, `uq_tasks_id_user_id`, `ix_tasks_user_id_id (user_id, id DESC)`) and `users.current_task_id` with the composite foreign key `(current_task_id, id) → tasks(id, user_id)` and no `ON DELETE` action.
+- **API:** `modules/tasks` (http, service, queries, views, cursor) and `PUT /me/current-task` in `modules/users`. Every query is scoped by task id and owner; complete/delete clear the current task in the same transaction; set-current locks the task row first. `parseRequestInput` validates params and query strings.
+- **Web:** `features/tasks` on `/dashboard`: current-task card, new-task form, open/completed tabs with "Load more", rename, complete/reopen, confirmed delete. The query cache is cleared whenever the session changes.
+- **Tests:** database behaviour (constraints, composite FK, no `ON DELETE` action, cascade when deleting a user with a current task), API integration (lifecycle, idempotency, soft delete, pagination, validation, authentication, cross-user isolation, current-task rules, set-current vs complete/delete races), and web client, cache and dashboard-flow tests.
+- **Not in Phase 2:** optimistic updates (T4), restore (D45), task descriptions (D29), `Idempotency-Key`, a per-user task cap, security headers and rate limiting (production hardening), strict Phase 1 auth schemas (separate fix PR).
+
 ## Phase 0 review follow-ups
 
 Four independent reviews (architecture, security, testing/reliability, developer experience) ran on the Phase 0 implementation. Findings that belonged to Phase 0 were fixed. The rest are deferred here with the phase that should pick them up.
@@ -282,8 +295,8 @@ Four independent reviews (architecture, security, testing/reliability, developer
 | Finding | Deferred to |
 |---|---|
 | Convert `ZodError` to a 400 only at a single request-parsing helper; a `ZodError` from anywhere else (for example a malformed database row) should be a 500, not a leaked 400 | Phase 1 (first real request validation) |
-| Security headers (`X-Content-Type-Options`, `Cache-Control: no-store`, frame options), for example via `helmet` | Phase 1 (before cookies and sessions) |
-| `/readyz` runs a real `SELECT 1` and `PING` per request; add a short cache or rate limit | Phase 1 (with rate limiting) |
+| Security headers (`X-Content-Type-Options`, `Cache-Control: no-store`, frame options), for example via `helmet` | Production-hardening phase (not done in Phase 1; re-scheduled at the start of Phase 2) |
+| `/readyz` runs a real `SELECT 1` and `PING` per request; add a short cache or rate limit | Production-hardening phase, with rate limiting. **Rate limiting must be in place before the auth API is publicly exposed.** |
 | Restructure `system.int.test.ts` so the degraded-dependency cases do not depend on test order, and add the Postgres-down and both-down readiness cases | Phase 1 (when the integration suite grows; needs Docker to verify) |
 | `docker/login-action` (or a registry mirror) in CI to avoid anonymous Docker Hub pull limits for Testcontainers | When CI first hits the limit |
 | Pin container images and GitHub Actions by digest or SHA; add a secret-scan hook | Phase 9 (launch readiness) |

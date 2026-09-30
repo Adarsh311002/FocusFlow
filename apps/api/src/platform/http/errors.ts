@@ -27,11 +27,11 @@ export const errorBody = (code: ErrorCode, message: string, details?: unknown): 
   details === undefined ? { error: { code, message } } : { error: { code, message, details } };
 
 /**
- * Thrown only by `parseRequestBody` below. Handlers use that helper (not a bare
- * `schema.parse(...)`) for anything that came from the client, so the error handler
- * can map exactly this type to 400 — never a `z.ZodError` raised anywhere else, such
- * as a sanity check on a value already read back from the database, which is a server
- * bug and must surface as a 500.
+ * Thrown only by `parseRequestInput` / `parseRequestBody` below. Handlers use those
+ * helpers (not a bare `schema.parse(...)`) for anything that came from the client, so the
+ * error handler can map exactly this type to 400 — never a `z.ZodError` raised anywhere
+ * else, such as a sanity check on a value already read back from the database, which is
+ * a server bug and must surface as a 500.
  */
 export class RequestValidationError extends AppError {
   constructor(zodError: z.ZodError) {
@@ -40,13 +40,21 @@ export class RequestValidationError extends AppError {
   }
 }
 
-export const parseRequestBody = <T>(schema: z.ZodType<T>, body: unknown): T => {
-  const result = schema.safeParse(body);
+/**
+ * Validates any client-supplied input — body, path parameters or query string — and
+ * returns the schema's output type, so schemas that coerce or apply defaults (for
+ * example a query-string `limit`) come back already converted.
+ */
+export const parseRequestInput = <S extends z.ZodType>(schema: S, input: unknown): z.output<S> => {
+  const result = schema.safeParse(input);
   if (!result.success) {
     throw new RequestValidationError(result.error);
   }
   return result.data;
 };
+
+export const parseRequestBody = <T>(schema: z.ZodType<T>, body: unknown): T =>
+  parseRequestInput(schema, body);
 
 /**
  * Narrow structural types: the handlers only need these members, which keeps them

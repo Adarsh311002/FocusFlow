@@ -75,6 +75,7 @@ export const userBody = {
   emailVerified: false,
   displayName: 'Ada Lovelace',
   avatarUrl: null,
+  currentTaskId: null,
   identities: [],
 };
 

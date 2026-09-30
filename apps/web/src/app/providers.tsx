@@ -18,8 +18,8 @@ const queryClient = new QueryClient({
 });
 
 /**
- * `AuthProvider` sits inside the query client so a future feature can invalidate queries
- * when the session changes; auth itself does not depend on TanStack Query.
+ * `AuthProvider` sits inside the query client because it clears the cache whenever the
+ * session changes; the session itself is not stored in TanStack Query.
  */
 export function AppProviders({ children }: { children: ReactNode }) {
   return (

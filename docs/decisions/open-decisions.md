@@ -51,6 +51,17 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
 | Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
 
+## Tracked follow-ups
+
+Known work that is deliberately outside the phase that surfaced it.
+
+| Item | Where it goes |
+|---|---|
+| Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) instead of `z.strictObject` (`architecture/contracts.md`, rule 7) | A separate small hardening/fix PR |
+| Security headers (e.g. `helmet`, `Cache-Control: no-store`), rate limiting, `/readyz` caching | The production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.** |
+| Optimistic updates for tasks (T4) | Later, if the pending states feel slow |
+| A per-user task count cap (T6) | Later, if abuse or scale requires it |
+
 ## Resolved
 
 | Former item | Resolution |
@@ -65,6 +76,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | P3 — Redis key prefix | Configurable `REDIS_KEY_PREFIX`, default `ff:`; BullMQ uses the same prefix (approved) |
 | D43 — Completing the current task | Clears it as the current task (approved) |
 | D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
+| T1–T6 — Phase 2 task details | Single-task read, `id DESC` ordering with one full index, `GET /me` re-read after clearing, no optimistic updates yet, tasks on `/dashboard`, limits (approved; see `decision-log.md`) |
 
 ## Later product phases
 
