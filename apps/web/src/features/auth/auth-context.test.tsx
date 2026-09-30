@@ -1,7 +1,9 @@
 import { authPaths, mePaths } from '@focus-flow/contracts';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import {
   authBody,
@@ -14,7 +16,8 @@ import {
   stubFetch,
   userBody,
 } from '../../test/api-stub';
-import { resetPendingRefresh } from './auth-client';
+import { createTestQueryClient } from '../../test/query-client';
+import { authedApiRequest, resetPendingRefresh } from './auth-client';
 import { AuthProvider, useAuth } from './auth-context';
 import { clearAccessToken, getAccessToken } from './token-store';
 
@@ -63,11 +66,15 @@ function AuthProbe() {
   );
 }
 
-function renderProvider(): { unmount: () => void } {
+function renderProvider(queryClient: QueryClient = createTestQueryClient()): {
+  unmount: () => void;
+} {
   const { unmount } = render(
-    <AuthProvider>
-      <AuthProbe />
-    </AuthProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <AuthProbe />
+      </AuthProvider>
+    </QueryClientProvider>,
   );
   return { unmount };
 }
@@ -229,5 +236,87 @@ describe('AuthProvider storage invariant', () => {
     } finally {
       setItem.mockRestore();
     }
+  });
+});
+
+describe('AuthProvider query cache', () => {
+  // Stands in for any per-user server data (for example the task list) that a signed-in
+  // screen has cached.
+  const CACHED_KEY = ['tasks', 'previous-user'];
+
+  function seededClient(): QueryClient {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(CACHED_KEY, ['a private task']);
+    return queryClient;
+  }
+
+  it('clears cached server data on logout', async () => {
+    stubFetch((request) =>
+      request.url.endsWith(authPaths.logout) ? noContentResponse() : liveSession(request),
+    );
+    const queryClient = createTestQueryClient();
+    renderProvider(queryClient);
+    expect(await screen.findByText('status: authenticated')).not.toBeNull();
+    queryClient.setQueryData(CACHED_KEY, ['a private task']);
+
+    click('run logout');
+
+    expect(await screen.findByText('status: anonymous')).not.toBeNull();
+    expect(queryClient.getQueryData(CACHED_KEY)).toBeUndefined();
+  });
+
+  it('clears data cached for a previous session when a new user logs in', async () => {
+    stubFetch((request) =>
+      request.url.endsWith(authPaths.login)
+        ? jsonResponse(200, authBody('login-token'))
+        : noSession(),
+    );
+    const queryClient = seededClient();
+    renderProvider(queryClient);
+    expect(await screen.findByText('status: anonymous')).not.toBeNull();
+
+    click('run login');
+
+    expect(await screen.findByText('status: authenticated')).not.toBeNull();
+    expect(queryClient.getQueryData(CACHED_KEY)).toBeUndefined();
+  });
+
+  it('clears cached data on signup', async () => {
+    stubFetch((request) =>
+      request.url.endsWith(authPaths.signup)
+        ? jsonResponse(201, authBody('signup-token'))
+        : noSession(),
+    );
+    const queryClient = seededClient();
+    renderProvider(queryClient);
+    expect(await screen.findByText('status: anonymous')).not.toBeNull();
+
+    click('run signup');
+
+    expect(await screen.findByText('status: authenticated')).not.toBeNull();
+    expect(queryClient.getQueryData(CACHED_KEY)).toBeUndefined();
+  });
+
+  it('clears cached data when the session ends on its own mid-app', async () => {
+    stubFetch((request) => {
+      if (request.url.endsWith('/tasks')) {
+        return errorResponse(401, 'SESSION_REVOKED', 'This session has been revoked.');
+      }
+      return liveSession(request);
+    });
+    const queryClient = createTestQueryClient();
+    renderProvider(queryClient);
+    expect(await screen.findByText('status: authenticated')).not.toBeNull();
+    queryClient.setQueryData(CACHED_KEY, ['a private task']);
+
+    // Any authenticated request that learns the session was revoked ends it.
+    await expect(authedApiRequest('/tasks', z.unknown())).rejects.toMatchObject({
+      code: 'SESSION_REVOKED',
+    });
+
+    expect(await screen.findByText('status: anonymous')).not.toBeNull();
+    await waitFor(() => {
+      expect(queryClient.getQueryData(CACHED_KEY)).toBeUndefined();
+    });
   });
 });

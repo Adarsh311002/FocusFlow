@@ -1,3 +1,4 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -12,6 +13,7 @@ import { AuthProvider } from '../features/auth/auth-context';
 import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
+import { createTestQueryClient } from './query-client';
 
 export const DASHBOARD_TEXT = 'Dashboard placeholder';
 
@@ -56,8 +58,10 @@ export function renderAuthRoutes(initialPath: '/login' | '/signup' | '/dashboard
   });
 
   render(
-    <AuthProvider>
-      <RouterProvider router={router} />
-    </AuthProvider>,
+    <QueryClientProvider client={createTestQueryClient()}>
+      <AuthProvider>
+        <RouterProvider router={router} />
+      </AuthProvider>
+    </QueryClientProvider>,
   );
 }

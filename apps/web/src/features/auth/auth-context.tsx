@@ -1,4 +1,5 @@
 import type { AuthResponse, UserView } from '@focus-flow/contracts';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
   type ReactNode,
@@ -47,6 +48,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(LOADING);
+  // Server data cached by TanStack Query belongs to one session. It is cleared whenever
+  // the session changes (sign-in, sign-up, sign-out, or the session ending on its own), so
+  // one user's tasks can never be rendered — even briefly — for the next user of the tab.
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let active = true;
@@ -76,21 +81,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // refresh cookie is dead), which no component's login/logout call would otherwise
     // surface — without this, the UI would keep rendering a stale authenticated state.
     return onSessionEnded(() => {
+      queryClient.clear();
       setState(ANONYMOUS);
     });
-  }, []);
+  }, [queryClient]);
 
-  const accept = useCallback((response: AuthResponse) => {
-    setAccessToken(response.accessToken);
-    setState({ user: response.user, status: 'authenticated' });
-  }, []);
+  const accept = useCallback(
+    (response: AuthResponse) => {
+      // A new session may belong to a different person than the last one in this tab, so
+      // nothing cached for the previous session may be shown to it.
+      queryClient.clear();
+      setAccessToken(response.accessToken);
+      setState({ user: response.user, status: 'authenticated' });
+    },
+    [queryClient],
+  );
 
   /** Errors reach the form that asked, which is what shows them; nothing is swallowed. */
-  const reject = useCallback((error: unknown): never => {
-    setAccessToken(null);
-    setState(ANONYMOUS);
-    throw error;
-  }, []);
+  const reject = useCallback(
+    (error: unknown): never => {
+      queryClient.clear();
+      setAccessToken(null);
+      setState(ANONYMOUS);
+      throw error;
+    },
+    [queryClient],
+  );
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -118,10 +134,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await requestLogout();
     } finally {
-      // Whether or not the server answered, this browser is done with the session.
+      // Whether or not the server answered, this browser is done with the session, and
+      // with every piece of server data it fetched for it.
+      queryClient.clear();
       setState(ANONYMOUS);
     }
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ ...state, login, signup, logout }),
