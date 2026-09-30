@@ -15,6 +15,7 @@ import { eq } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { beginHeldTransaction, trackSettled, waitUntilBlockedBy } from '../../../test/db-locks.js';
 import { startTestHarness, stopTestHarness, type TestHarness } from '../../../test/harness.js';
 import { signUpTestUser, type TestUser } from '../../../test/users.js';
 import { authIdentities, authSessions, tasks, users } from '../../db/schema.js';
@@ -558,6 +559,8 @@ describe('current task under concurrency', () => {
   // Each round races "make this task current" against "complete" (or "delete") of the
   // same task. Whichever wins, the invariant must hold afterwards: the current task is
   // never a completed or deleted task. Neither request may fail with a server error.
+  // This is a probabilistic smoke test over real HTTP; the deterministic proof that the
+  // locking order is what guarantees this is in "current task locking (deterministic)".
   const ROUNDS = 25;
 
   const assertCurrentIsOpenOrNull = async (user: TestUser): Promise<void> => {
@@ -603,6 +606,138 @@ describe('current task under concurrency', () => {
       expect([200, 404]).toContain(setResult.status);
       expect((await meOf(user)).currentTaskId).toBeNull();
       await assertCurrentIsOpenOrNull(user);
+    }
+  });
+});
+
+// Deterministic versions of the races above. A transaction on its own connection takes
+// the row lock the competing operation would take, the real endpoint is then called, and
+// PostgreSQL itself (pg_blocking_pids) must report that request as blocked by that
+// transaction before it commits. Each test therefore proves the ordering, not just the
+// final invariant.
+describe('current task locking (deterministic)', () => {
+  const currentTaskInDb = async (user: TestUser): Promise<string | null | undefined> => {
+    const [row] = await requireHarness()
+      .db.select({ currentTaskId: users.currentTaskId })
+      .from(users)
+      .where(eq(users.id, user.userId));
+    return row?.currentTaskId;
+  };
+
+  it.each([
+    ['complete', 'completed_at', 409, 'TASK_NOT_OPEN'],
+    ['delete', 'deleted_at', 404, 'TASK_NOT_FOUND'],
+  ] as const)(
+    'PUT /me/current-task waits for an uncommitted %s, then sees the committed state',
+    async (_label, column, expectedStatus, expectedCode) => {
+      const h = requireHarness();
+      const user = await signUpTestUser(h);
+      const task = await createTask(user, 'locked by a concurrent change');
+
+      // The competing complete/delete, mid-transaction: the task row is updated (and so
+      // row-locked) but not committed yet.
+      const holder = await beginHeldTransaction(h.pool);
+      try {
+        await holder.client.query(`UPDATE tasks SET ${column} = now() WHERE id = $1`, [task.id]);
+
+        const put = trackSettled(putCurrentTask(user, task.id));
+
+        // set-current's FOR SHARE read must queue behind the uncommitted update. Without
+        // the lock it would read the old (open) row, succeed, and never appear here.
+        await waitUntilBlockedBy(h.pool, holder.pid);
+        expect(put.state.settled).toBe(false);
+
+        await holder.commit();
+        const result = await put.done;
+
+        // After the commit, the locking read returns the committed row and rejects it.
+        expect(result.status).toBe(expectedStatus);
+        expect(errorCode(result)).toBe(expectedCode);
+        expect(await currentTaskInDb(user)).toBeNull();
+      } finally {
+        await holder.rollback();
+      }
+    },
+  );
+
+  it.each([
+    ['complete', (user: TestUser, id: TaskId) => call(user, 'POST', completePath(id)), 200],
+    ['delete', (user: TestUser, id: TaskId) => call(user, 'DELETE', itemPath(id)), 204],
+  ] as const)(
+    '%s waits for an uncommitted set-current, then clears the committed choice (D43, D38)',
+    async (_label, runOperation, expectedStatus) => {
+      const h = requireHarness();
+      const user = await signUpTestUser(h);
+      const task = await createTask(user, 'about to become current');
+
+      // A concurrent set-current, mid-transaction, doing exactly what setCurrentTask
+      // does: lock the task FOR SHARE, then point the user at it; not committed yet.
+      const holder = await beginHeldTransaction(h.pool);
+      try {
+        await holder.client.query('SELECT id FROM tasks WHERE id = $1 AND user_id = $2 FOR SHARE', [
+          task.id,
+          user.userId,
+        ]);
+        await holder.client.query('UPDATE users SET current_task_id = $1 WHERE id = $2', [
+          task.id,
+          user.userId,
+        ]);
+
+        const operation = trackSettled(runOperation(user, task.id));
+
+        // The task-row update must queue behind the share lock...
+        await waitUntilBlockedBy(h.pool, holder.pid);
+        expect(operation.state.settled).toBe(false);
+
+        await holder.commit();
+        const result = await operation.done;
+
+        // ...so its conditional clear runs after set-current committed, sees the new
+        // current task, and clears it.
+        expect(result.status).toBe(expectedStatus);
+        expect(await currentTaskInDb(user)).toBeNull();
+      } finally {
+        await holder.rollback();
+      }
+    },
+  );
+
+  it('counterfactual: the same interleaving WITHOUT the row lock leaves a completed task current', async () => {
+    // This is what setCurrentTask would do with a plain read instead of FOR SHARE. It is
+    // the interleaving of the previous test, minus the lock, and it breaks the invariant,
+    // which is why the service locks the task row first.
+    const h = requireHarness();
+    const user = await signUpTestUser(h);
+    const task = await createTask(user, 'unlocked read');
+
+    const holder = await beginHeldTransaction(h.pool);
+    try {
+      // 1. "Set current" reads the task without a lock: it looks open.
+      const read = await holder.client.query<{ completed_at: Date | null }>(
+        'SELECT completed_at FROM tasks WHERE id = $1 AND user_id = $2',
+        [task.id, user.userId],
+      );
+      expect(read.rows[0]?.completed_at).toBeNull();
+
+      // 2. A complete runs in between. Nothing blocks it, and there is nothing to clear
+      //    yet because the user does not point at the task.
+      const completed = await call(user, 'POST', completePath(task.id));
+      expect(completed.status).toBe(200);
+
+      // 3. "Set current" writes based on its stale read and commits.
+      await holder.client.query('UPDATE users SET current_task_id = $1 WHERE id = $2', [
+        task.id,
+        user.userId,
+      ]);
+      await holder.commit();
+
+      // The current task is now a completed task: exactly what the FOR SHARE lock in
+      // setCurrentTask (proven by the tests above) prevents.
+      expect(await currentTaskInDb(user)).toBe(task.id);
+      const [row] = await h.db.select().from(tasks).where(eq(tasks.id, task.id));
+      expect(row?.completedAt).not.toBeNull();
+    } finally {
+      await holder.rollback();
     }
   });
 });
