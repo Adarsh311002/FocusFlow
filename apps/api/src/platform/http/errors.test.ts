@@ -11,6 +11,8 @@ import {
   internal,
   notFound,
   notFoundHandler,
+  parseRequestBody,
+  RequestValidationError,
 } from './errors.js';
 
 type LoggedLine = { details: Parameters<ErrorHandlerLogger['error']>[0]; message: string };
@@ -81,6 +83,18 @@ describe('AppError', () => {
   });
 });
 
+describe('parseRequestBody', () => {
+  const schema = z.object({ title: z.string() });
+
+  it('returns the parsed value on success', () => {
+    expect(parseRequestBody(schema, { title: 'ok' })).toEqual({ title: 'ok' });
+  });
+
+  it('throws a RequestValidationError on failure', () => {
+    expect(() => parseRequestBody(schema, { title: 42 })).toThrow(RequestValidationError);
+  });
+});
+
 describe('notFoundHandler', () => {
   it('answers 404 with the shared error envelope', () => {
     const sent: { status?: number; body?: unknown } = {};
@@ -118,15 +132,31 @@ describe('createErrorHandler', () => {
     expect(harness.logged).toHaveLength(0);
   });
 
-  it('maps a ZodError to 400 VALIDATION_FAILED with details', () => {
+  it('maps a RequestValidationError (from parseRequestBody) to 400 VALIDATION_FAILED with details', () => {
     const harness = createHarness();
 
-    harness.run(makeZodError());
+    harness.run(new RequestValidationError(makeZodError()));
 
     expect(harness.sent.status).toBe(400);
     const body = errorBodySchema.parse(harness.sent.body);
     expect(body.error.code).toBe('VALIDATION_FAILED');
     expect(body.error.details).toBeDefined();
+    expect(harness.logged).toHaveLength(0);
+  });
+
+  it('treats a bare ZodError (not raised via parseRequestBody) as an internal failure', () => {
+    // A ZodError thrown by a server-side sanity check (e.g. validating a value just
+    // read back from the database) is a bug, not a client mistake, so it must not be
+    // confused with client input validation and leaked back as a 400.
+    const harness = createHarness();
+
+    harness.run(makeZodError());
+
+    expect(harness.sent.status).toBe(500);
+    expect(errorBodySchema.parse(harness.sent.body)).toEqual({
+      error: { code: 'INTERNAL', message: 'Internal server error' },
+    });
+    expect(harness.logged).toHaveLength(1);
   });
 
   it('maps a malformed-body error from Express middleware to a 400, not a 500', () => {

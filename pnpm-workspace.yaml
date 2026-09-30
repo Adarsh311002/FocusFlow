@@ -6,6 +6,9 @@ packages:
 allowBuilds:
   esbuild: true
   lefthook: true
+  # Native password-hashing addon (argon2id, I5): its install script fetches a
+  # prebuilt binary or compiles one; required for the package to work at all.
+  argon2: true
   # Optional native add-ons pulled in by Testcontainers; the pure-JS fallbacks are fine.
   cpu-features: false
   protobufjs: false

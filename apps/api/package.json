@@ -10,15 +10,22 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:int": "vitest run -c vitest.int.config.ts"
+    "test:int": "vitest run -c vitest.int.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts"
   },
   "dependencies": {
     "@focus-flow/contracts": "workspace:*",
+    "argon2": "^0.45.1",
+    "cookie": "^2.0.1",
+    "drizzle-orm": "^0.45.3",
     "express": "^5.2.1",
     "ioredis": "^6.0.0",
+    "jose": "^6.2.12",
     "pg": "^8.23.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "uuidv7": "^1.2.1",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -27,6 +34,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
     "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
     "esbuild": "catalog:",
     "testcontainers": "^12.1.0",
     "tsx": "catalog:",

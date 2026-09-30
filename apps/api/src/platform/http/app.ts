@@ -7,7 +7,10 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import pinoHttp from 'pino-http';
 
+import { createAuthRouter } from '../../modules/auth/http.js';
+import type { AuthDeps } from '../../modules/auth/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
+import { createUsersRouter } from '../../modules/users/http.js';
 import type { AppConfig } from '../config.js';
 import { getRequestId } from '../request-context.js';
 import { createErrorHandler, notFoundHandler } from './errors.js';
@@ -18,9 +21,10 @@ type AppDeps = {
   logger: Logger;
   pool: Pool;
   redis: Redis;
+  authDeps: AuthDeps;
 };
 
-export const createApp = ({ config, logger, pool, redis }: AppDeps): Express => {
+export const createApp = ({ config, logger, pool, redis, authDeps }: AppDeps): Express => {
   const app = express();
 
   app.disable('x-powered-by');
@@ -41,6 +45,8 @@ export const createApp = ({ config, logger, pool, redis }: AppDeps): Express => 
   app.use(express.json({ limit: '16kb' }));
 
   app.use(API_BASE_PATH, createSystemRouter({ pool, redis }));
+  app.use(API_BASE_PATH, createAuthRouter(authDeps));
+  app.use(API_BASE_PATH, createUsersRouter(authDeps));
 
   app.use(notFoundHandler);
 

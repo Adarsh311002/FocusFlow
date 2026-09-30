@@ -1,3 +1,5 @@
+import { createDb } from './db/client.js';
+import type { AuthDeps } from './modules/auth/service.js';
 import { type AppConfig, loadConfig } from './platform/config.js';
 import { createPool } from './platform/db.js';
 import { createApp } from './platform/http/app.js';
@@ -22,7 +24,21 @@ const main = (): void => {
   const logger = createLogger(config);
   const pool = createPool(config, logger);
   const redis = createRedisClient(config, logger);
-  const app = createApp({ config, logger, pool, redis });
+  const db = createDb(pool);
+
+  const authDeps: AuthDeps = {
+    db,
+    redis,
+    logger,
+    jwtKeys: config.JWT_ACCESS_SECRETS,
+    jwtIssuer: config.JWT_ISSUER,
+    jwtAudience: config.JWT_AUDIENCE,
+    accessTokenTtlSeconds: config.ACCESS_TOKEN_TTL_SECONDS,
+    refreshTokenTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS,
+    refreshOverlapSeconds: config.REFRESH_OVERLAP_SECONDS,
+  };
+
+  const app = createApp({ config, logger, pool, redis, authDeps });
 
   const server = app.listen(config.PORT, config.HOST, () => {
     logger.info({ host: config.HOST, port: config.PORT, appEnv: config.APP_ENV }, 'API listening');

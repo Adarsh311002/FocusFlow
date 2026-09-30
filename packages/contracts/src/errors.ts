@@ -5,7 +5,17 @@ import { z } from 'zod';
  * Phase 0 defines only the codes the foundation itself can produce; later phases add
  * their own (docs/architecture/contracts.md).
  */
-export const errorCodes = ['VALIDATION_FAILED', 'NOT_FOUND', 'INTERNAL'] as const;
+export const errorCodes = [
+  'VALIDATION_FAILED',
+  'NOT_FOUND',
+  'INTERNAL',
+  // Auth (Phase 1, docs/architecture/auth.md)
+  'EMAIL_TAKEN',
+  'INVALID_CREDENTIALS',
+  'UNAUTHENTICATED',
+  'SESSION_INVALID',
+  'SESSION_REVOKED',
+] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;

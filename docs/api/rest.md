@@ -23,12 +23,16 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 | `POST /auth/refresh` | Cookie + client header | — | `200 { accessToken, accessTokenExpiresAt }` (+ rotated cookie) | `401 SESSION_INVALID`, `401 SESSION_REVOKED` (reuse detected). Overlap window returns an access token without rotation. |
 | `POST /auth/logout` | Cookie + client header | — | `204` | Safe to repeat. Revokes the session and disconnects its sockets. |
 
+"Client header" means the required `x-focus-flow-client` header (any non-empty value; its presence is the CSRF signal, not its content — `auth.md`). A refresh or logout request missing it never reaches the cookie/session logic at all: it is rejected with `401 UNAUTHENTICATED` before the cookie is even read.
+
 ## Me
 
 | Method & route | Request | Response | Rules |
 |---|---|---|---|
 | `GET /me` | — | `{ user }` | `UserView`: `id, email, emailVerified, displayName, avatarUrl, currentTaskId, identities: ("google")[]` |
 | `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | Task must be the user's (404 otherwise), not deleted (D38) and open (`409 TASK_NOT_OPEN` if completed, D43). Repeatable. |
+
+Phase 1's `GET /me` implementation deliberately omits `currentTaskId` from its response: there is no task tracking yet (Tasks lands in a later phase), so the field has nothing to report. `UserView`'s contract schema keeps it as documented here for the shape Phase 2 will fill in; `PUT /me/current-task` is not implemented until that phase either.
 | `POST /me/identities/google` | `{ idToken }` | `201 { user }` | Explicit Google linking for a signed-in user (D1, D44; Phase 1b). `409 IDENTITY_ALREADY_LINKED` if that Google account belongs to another user. Repeating for an identity already linked to this user → `200`. |
 
 ## Tasks (D3, D38)

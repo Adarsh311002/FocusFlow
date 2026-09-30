@@ -81,6 +81,9 @@ UserView = {
   id: UserId; email: string; emailVerified: boolean; displayName: string
   avatarUrl: string | null; currentTaskId: TaskId | null; identities: "google"[]
 }
+// Phase 1's userViewSchema (packages/contracts/src/http/user.ts) omits `currentTaskId`
+// entirely rather than faking a value: the `tasks` table it references does not exist
+// until Phase 2, which adds the field back alongside the column that backs it.
 
 Ack<T> = { ok: true } & T | { ok: false; error: { code: ErrorCode; message: string } }
 ```

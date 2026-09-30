@@ -42,11 +42,23 @@ function requestUrl(path: string): string {
 }
 
 async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
+  // A plain object spread (`{ headers: {...}, ...init }`) would silently replace the
+  // whole headers object — and drop this default — the moment any caller adds its own
+  // headers (an auth token, a CSRF header). `Headers` merges correctly regardless of
+  // which of the three `HeadersInit` shapes the caller passed.
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
+
   try {
     return await fetch(requestUrl(path), {
-      headers: { Accept: 'application/json' },
       ...init,
-      // Cookie-based sessions arrive in a later phase; same-origin is the safe default.
+      headers,
+      // The refresh cookie is scoped to the API's own path (modules/auth/cookies.ts)
+      // and is always requested through the same-origin dev proxy (vite.config.ts) or
+      // a same-origin deployment, so `same-origin` is the correct — not merely
+      // permissive — setting, and never needs to widen to `include`.
       credentials: 'same-origin',
     });
   } catch (cause) {
@@ -54,10 +66,30 @@ async function sendRequest(path: string, init?: RequestInit): Promise<Response> 
   }
 }
 
+/**
+ * `undefined` for a genuinely empty body (every 204 the API sends, since `express`
+ * never writes a body for `res.status(204).end()`) — never attempts `response.json()`
+ * against an empty string, which would otherwise throw and be misreported as a
+ * malformed response instead of a valid no-content success.
+ */
 async function readJsonBody(response: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (cause) {
+    throw new ApiError(
+      'MALFORMED_RESPONSE',
+      response.status,
+      'The API response body could not be read.',
+      cause,
+    );
+  }
+  if (text.length === 0) {
+    return undefined;
+  }
   let body: unknown;
   try {
-    body = await response.json();
+    body = JSON.parse(text);
   } catch (cause) {
     throw new ApiError(
       'MALFORMED_RESPONSE',
@@ -114,6 +146,20 @@ export async function apiRequest<T>(
   }
 
   return parseBody(schema, body, response.status);
+}
+
+/**
+ * For endpoints documented as returning no body on success (every `204`, e.g. logout —
+ * docs/api/rest.md). Never attempts to validate a response schema against an empty
+ * body; a non-OK response is still parsed and thrown as a normal `ApiError`.
+ */
+export async function apiRequestNoContent(path: string, init?: RequestInit): Promise<void> {
+  const response = await sendRequest(path, init);
+
+  if (!response.ok) {
+    const body = await readJsonBody(response);
+    throw toApiError(response.status, body);
+  }
 }
 
 export function fetchLiveness(): Promise<LivenessResponse> {

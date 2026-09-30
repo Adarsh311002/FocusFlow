@@ -44,6 +44,9 @@ export default defineConfig([
       'no-console': 'error',
       eqeqeq: ['error', 'always'],
       'prefer-const': 'error',
+      // Ambient `declare global { namespace X {} }` blocks (e.g. augmenting Express's
+      // Request type) are type-only and fully erasable; only value namespaces stay banned.
+      '@typescript-eslint/no-namespace': ['error', { allowDeclarations: true }],
       'no-restricted-syntax': [
         'error',
         {
@@ -70,7 +73,9 @@ export default defineConfig([
     },
   },
   {
-    files: ['apps/api/src/platform/config.ts'],
+    // Standalone CLI scripts read their own connection string rather than going
+    // through the full app config (see src/db/migrate.ts for why).
+    files: ['apps/api/src/platform/config.ts', 'apps/api/src/db/migrate.ts'],
     rules: { 'no-restricted-properties': 'off' },
   },
 
