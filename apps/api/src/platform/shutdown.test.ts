@@ -21,6 +21,7 @@ const createHarness = (
     beforeServerClose?: string[];
     steps?: string[];
     failingStep?: string;
+    hangingStep?: string;
   } = {},
 ) => {
   const calls: Calls = [];
@@ -91,6 +92,9 @@ const createHarness = (
       name,
       run: () => {
         calls.push(name);
+        if (name === overrides.hangingStep) {
+          return new Promise<void>(() => undefined);
+        }
         return name === overrides.failingStep
           ? Promise.reject(new Error(`${name} failed`))
           : Promise.resolve();
@@ -138,6 +142,32 @@ describe('createShutdown steps', () => {
     await shutdown('SIGTERM', 0);
 
     expect(calls).toContain('workers');
+    expect(calls).toContain('redis.quit');
+    expect(calls).toContain('pool.end');
+    expect(exits).toEqual([0]);
+  });
+});
+
+describe('createShutdown step budget', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('abandons a hung step after its share of the budget and still closes what follows', async () => {
+    const { calls, exits, shutdown } = createHarness({
+      steps: ['worker', 'heartbeat'],
+      hangingStep: 'worker',
+    });
+
+    const done = shutdown('SIGTERM', 0);
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS / 4 + 1);
+    await done;
+
+    expect(calls).toContain('heartbeat');
     expect(calls).toContain('redis.quit');
     expect(calls).toContain('pool.end');
     expect(exits).toEqual([0]);

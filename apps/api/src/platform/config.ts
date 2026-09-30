@@ -96,6 +96,12 @@ const configSchema = z
     /** Socket.IO ping settings: a silently dropped client is detected within their sum. */
     SOCKET_PING_INTERVAL_MS: durationMs.default(10_000),
     SOCKET_PING_TIMEOUT_MS: durationMs.default(10_000),
+    /**
+     * What this process runs (I7): `all` (HTTP + Socket.IO + workers, the normal mode),
+     * `api` (no workers) or `worker` (workers only, no HTTP listener).
+     */
+    ROLE: z.enum(['all', 'api', 'worker']).default('all'),
+    RECONCILER_INTERVAL_MS: durationMs.default(30_000),
   })
   .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
     path: ['INSTANCE_TTL_MS'],

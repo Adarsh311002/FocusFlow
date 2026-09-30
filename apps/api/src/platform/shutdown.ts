@@ -4,6 +4,8 @@ import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 
+import { withTimeout } from './timeout.js';
+
 /** The few members shutdown needs; the real objects satisfy these structurally. */
 export type ShutdownServer = {
   /** `false` once closed (Socket.IO's `io.close()` closes the HTTP server it is attached to). */
@@ -64,10 +66,20 @@ export const createShutdown = ({
 }: ShutdownDeps): Shutdown => {
   let shuttingDown = false;
 
+  // Each step gets a share of the budget: one hung step (for example a client waiting
+  // on a Redis that is gone) is abandoned so the steps after it still run.
+  const stepTimeoutMs = timeoutMs / 4;
   const runSteps = async (list: readonly ShutdownStep[]): Promise<void> => {
     for (const step of list) {
       try {
-        await step.run();
+        const finished = await withTimeout(
+          step.run().then(() => true),
+          stepTimeoutMs,
+          false,
+        );
+        if (!finished) {
+          logger.warn({ step: step.name, stepTimeoutMs }, 'Shutdown step timed out; continuing');
+        }
       } catch (error) {
         logger.warn({ err: error, step: step.name }, 'Shutdown step failed');
       }

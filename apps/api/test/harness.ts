@@ -40,6 +40,10 @@ export type TestHarness = {
 
 type ConfigOverrides = Partial<Record<string, string>>;
 
+/** The configuration an instance on this harness’s containers would use. */
+export const configFor = (harness: TestHarness, overrides: ConfigOverrides = {}): AppConfig =>
+  buildConfig(harness.postgresContainer, harness.redisContainer, overrides);
+
 const buildConfig = (
   postgres: StartedPostgreSqlContainer,
   redis: StartedRedisContainer,
@@ -58,7 +62,10 @@ const buildConfig = (
 const startRuntime = async (config: AppConfig): Promise<TestInstance> => {
   const runtime = await createRuntime(config);
   try {
-    const port = await runtime.listen(0, '127.0.0.1');
+    const port = await runtime.start({ port: 0, host: '127.0.0.1' });
+    if (port === undefined) {
+      throw new Error('the test instance did not listen (is ROLE=worker?)');
+    }
     return { runtime, baseUrl: `http://127.0.0.1:${String(port)}` };
   } catch (error) {
     await runtime.stop();

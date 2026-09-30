@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 
+import type { ReconcileJob } from '@focus-flow/contracts';
+import type { Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
@@ -10,12 +12,20 @@ import type { AuthDeps } from '../modules/auth/service.js';
 import { createPresence, type Presence } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
+import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
 import { createEpochMonitor, type EpochMonitor } from './epoch.js';
 import { createApp } from './http/app.js';
 import { createInstanceHeartbeat, type InstanceHeartbeat } from './instance.js';
 import { createLogger } from './logger.js';
+import {
+  createMaintenanceQueue,
+  createMaintenanceWorker,
+  enqueueReconcile,
+  type MaintenanceQueue,
+  upsertReconcileSchedule,
+} from './queues.js';
 import { createRedisClient, createRedisConnection, waitForRedisReady } from './redis.js';
 import { createShutdown, type ShutdownStep } from './shutdown.js';
 import { createSocketEmitter, createSocketServer, type SocketEmitter } from './socket.js';
@@ -79,8 +89,18 @@ export type Runtime = {
   readonly onSocketConnect: ((socket: AppSocket) => void)[];
   /** Per-user presence: which users have a live socket on a live instance. */
   readonly presence: Presence;
-  /** Resolves with the bound port once listening; the heartbeat starts then. */
-  readonly listen: (port: number, host: string) => Promise<number>;
+  /** The `maintenance` queue (every role can enqueue; only workers process). */
+  readonly maintenanceQueue: MaintenanceQueue;
+  /** Present when the role runs workers. */
+  readonly maintenanceWorker: Worker<ReconcileJob> | undefined;
+  readonly reconciler: Reconciler;
+  /**
+   * Starts the process according to its ROLE: listens on `listenOn` when the role serves
+   * the API (resolving with the bound port), then publishes the heartbeat, ensures the
+   * reconcile schedule and, when the role runs workers, starts them and queues a startup
+   * reconcile. A worker-only process has no HTTP listener (approved Phase 3 decision 7).
+   */
+  readonly start: (listenOn?: { port: number; host: string }) => Promise<number | undefined>;
   /** Closed before the HTTP server (long-lived connections). */
   readonly beforeServerClose: readonly ShutdownStep[];
   /** Closed after the HTTP server, before Redis and PostgreSQL. */
@@ -98,6 +118,8 @@ export const createRuntime = async (
   options: RuntimeOptions = {},
 ): Promise<Runtime> => {
   const logger = options.logger ?? createLogger(config);
+  const servesApi = config.ROLE !== 'worker';
+  const runsWorkers = config.ROLE !== 'api';
   // A process start is always a new instance: a restarted process never inherits the
   // presence of the one that died (docs/architecture/redis-keys.md).
   const instanceId = config.INSTANCE_ID ?? randomUUID();
@@ -115,8 +137,29 @@ export const createRuntime = async (
   });
   epoch.onLocalRecovery(() => heartbeat.publish());
 
+  // BullMQ gets connections of its own (no keyPrefix; I7). The queue exists before the
+  // epoch check so global recovery can queue a reconcile run.
+  const queueConnection = createRedisConnection(config, logger, 'bullmq');
+  const workerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const maintenanceQueue = createMaintenanceQueue(queueConnection, config);
+  const ensureSchedule = async (): Promise<void> => {
+    try {
+      await upsertReconcileSchedule(maintenanceQueue, config);
+    } catch (error) {
+      logger.warn({ err: error, instanceId }, 'Could not register the reconcile schedule');
+    }
+  };
+  // The SET NX winner queues one recovery run per epoch; every instance that sees the
+  // epoch change re-registers the schedule, which was lost with Redis's data.
+  epoch.onGlobalRecovery(() =>
+    enqueueReconcile(maintenanceQueue, 'recovery', epoch.known() ?? instanceId),
+  );
+  epoch.onLocalRecovery(ensureSchedule);
+
   // The epoch is established before anything is served. If Redis is unreachable the API
-  // still starts — readiness reports it — and the check runs as soon as Redis connects.
+  // still starts (readiness reports it) and the check runs as soon as Redis connects.
   try {
     await waitForRedisReady(redis, REDIS_STARTUP_WAIT_MS);
     await epoch.check('startup');
@@ -124,7 +167,7 @@ export const createRuntime = async (
     logger.warn({ err: error, instanceId }, 'Redis unavailable at startup; epoch check deferred');
   }
 
-  let listening = false;
+  let started = false;
 
   // Socket.IO's adapter needs its own publisher and subscriber connections; the emitter
   // publishes on the same channels through the publisher.
@@ -147,6 +190,8 @@ export const createRuntime = async (
     },
   };
 
+  // Built for every role so the process is wired the same way; a worker-only process
+  // simply never listens, so it serves no HTTP and accepts no sockets.
   const app = createApp({ config, logger, pool, redis, authDeps });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
@@ -167,12 +212,29 @@ export const createRuntime = async (
   });
   onSocketConnect.push(presence.track);
   epoch.onLocalRecovery(() => presence.reassertLocal());
+  heartbeat.onRejoined(() => presence.reassertLocal());
+
+  const reconciler = createReconciler({
+    redis,
+    presence,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+    logger,
+  });
+  const maintenanceWorker =
+    workerConnection === undefined
+      ? undefined
+      : createMaintenanceWorker({
+          connection: workerConnection,
+          config,
+          logger,
+          reconcile: reconciler.run,
+        });
 
   // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
   // back empty), re-publish the heartbeat, and re-add this instance's sockets (writes made
   // while Redis was unreachable were lost; adding is idempotent).
   redis.on('ready', () => {
-    if (listening) {
+    if (started) {
       void heartbeat
         .tick('reconnect')
         .then(() => presence.reassertLocal())
@@ -187,11 +249,32 @@ export const createRuntime = async (
     { name: 'socket.io', run: () => closeSocketServer(io) },
   ];
   const shutdownSteps: ShutdownStep[] = [
+    // Workers first: a running reconcile finishes while Redis is still open.
+    ...(maintenanceWorker === undefined
+      ? []
+      : [
+          {
+            name: 'maintenance worker',
+            // Graceful when Redis is reachable (the running job finishes); forced when it is
+            // not, so BullMQ drops its blocking connection instead of waiting on QUIT.
+            run: () => maintenanceWorker.close(workerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'maintenance queue', run: () => maintenanceQueue.close() },
     // A clean shutdown removes this instance's presence at once instead of leaving it
     // for the reconciler to find after the heartbeat TTL.
     { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
     { name: 'instance heartbeat', run: heartbeat.stop },
-    { name: 'redis pub/sub', run: () => closeConnections(pubClient, subClient) },
+    {
+      name: 'redis connections',
+      run: () =>
+        closeConnections(
+          pubClient,
+          subClient,
+          queueConnection,
+          ...(workerConnection === undefined ? [] : [workerConnection]),
+        ),
+    },
   ];
 
   const listen = async (port: number, host: string): Promise<number> => {
@@ -202,13 +285,30 @@ export const createRuntime = async (
         resolve();
       });
     });
-    listening = true;
-    await heartbeat.start();
     const address = server.address();
     if (address === null || typeof address === 'string') {
       throw new Error('expected the HTTP server to listen on a TCP port');
     }
     return address.port;
+  };
+
+  const start = async (listenOn?: { port: number; host: string }): Promise<number | undefined> => {
+    const port =
+      servesApi && listenOn !== undefined ? await listen(listenOn.port, listenOn.host) : undefined;
+    started = true;
+    await heartbeat.start();
+    await ensureSchedule();
+    if (maintenanceWorker !== undefined) {
+      maintenanceWorker.run().catch((error: unknown) => {
+        logger.error({ err: error, instanceId }, 'The maintenance worker stopped unexpectedly');
+      });
+      try {
+        await enqueueReconcile(maintenanceQueue, 'startup', instanceId);
+      } catch (error) {
+        logger.warn({ err: error, instanceId }, 'Could not queue the startup reconcile');
+      }
+    }
+    return port;
   };
 
   const stop = createShutdown({
@@ -237,7 +337,10 @@ export const createRuntime = async (
     socketEmitter,
     onSocketConnect,
     presence,
-    listen,
+    maintenanceQueue,
+    maintenanceWorker,
+    reconciler,
+    start,
     beforeServerClose,
     shutdownSteps,
     stop: () => stop('stop', 0),

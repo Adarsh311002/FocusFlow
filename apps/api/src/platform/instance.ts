@@ -21,6 +21,12 @@ export type InstanceHeartbeat = {
   readonly tick: (reason: 'tick' | 'reconnect') => Promise<void>;
   /** Publishes a heartbeat without an epoch check (used by local recovery). */
   readonly publish: () => Promise<void>;
+  /**
+   * Runs when a heartbeat finds this instance missing from the live set although it had
+   * published before: another instance's reconciler declared it dead (for example after a
+   * long pause) and removed its presence. The handler re-adds what was removed.
+   */
+  readonly onRejoined: (handler: () => Promise<void> | void) => void;
 };
 
 type HeartbeatDeps = {
@@ -39,10 +45,21 @@ export const createInstanceHeartbeat = ({
   epoch,
 }: HeartbeatDeps): InstanceHeartbeat => {
   let timer: NodeJS.Timeout | undefined;
+  let published = false;
+  const rejoinHandlers: (() => Promise<void> | void)[] = [];
 
   const publish = async (): Promise<void> => {
     const nowMs = await redisTimeMs(redis);
-    await redis.zadd(redisKeys.instances, nowMs, instanceId);
+    // ZADD answers 1 only when the member was not in the set.
+    const added = (await redis.zadd(redisKeys.instances, nowMs, instanceId)) === 1;
+    const rejoined = added && published;
+    published = true;
+    if (rejoined) {
+      logger.warn({ instanceId }, 'Instance was missing from the live set; re-adding its state');
+      for (const handler of rejoinHandlers) {
+        await handler();
+      }
+    }
   };
 
   const tick = async (reason: 'tick' | 'reconnect'): Promise<void> => {
@@ -68,6 +85,7 @@ export const createInstanceHeartbeat = ({
     stop: async () => {
       clearInterval(timer);
       timer = undefined;
+      published = false;
       try {
         await redis.zrem(redisKeys.instances, instanceId);
       } catch (error) {
@@ -76,5 +94,8 @@ export const createInstanceHeartbeat = ({
     },
     tick,
     publish,
+    onRejoined: (handler) => {
+      rejoinHandlers.push(handler);
+    },
   };
 };

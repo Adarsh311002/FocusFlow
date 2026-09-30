@@ -19,10 +19,18 @@ const main = async (): Promise<void> => {
   const runtime = await createRuntime(config);
   const { logger, server, pool, redis } = runtime;
 
-  const port = await runtime.listen(config.PORT, config.HOST);
+  const port = await runtime.start(
+    config.ROLE === 'worker' ? undefined : { port: config.PORT, host: config.HOST },
+  );
   logger.info(
-    { host: config.HOST, port, appEnv: config.APP_ENV, instanceId: runtime.instanceId },
-    'API listening',
+    {
+      role: config.ROLE,
+      host: config.HOST,
+      port,
+      appEnv: config.APP_ENV,
+      instanceId: runtime.instanceId,
+    },
+    config.ROLE === 'worker' ? 'Worker started' : 'API listening',
   );
 
   registerShutdownHandlers({

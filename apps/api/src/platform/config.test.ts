@@ -33,6 +33,8 @@ describe('loadConfig', () => {
       INSTANCE_TTL_MS: 30_000,
       SOCKET_PING_INTERVAL_MS: 10_000,
       SOCKET_PING_TIMEOUT_MS: 10_000,
+      ROLE: 'all',
+      RECONCILER_INTERVAL_MS: 30_000,
     });
   });
 
@@ -57,6 +59,12 @@ describe('loadConfig', () => {
       expect(() =>
         loadConfig({ ...baseEnv, INSTANCE_HEARTBEAT_MS: '10000', INSTANCE_TTL_MS: '15000' }),
       ).toThrow(/INSTANCE_TTL_MS/);
+    });
+
+    it('accepts each role and rejects anything else', () => {
+      expect(loadConfig({ ...baseEnv, ROLE: 'worker' }).ROLE).toBe('worker');
+      expect(loadConfig({ ...baseEnv, ROLE: 'api' }).ROLE).toBe('api');
+      expect(() => loadConfig({ ...baseEnv, ROLE: 'scheduler' })).toThrow(/ROLE/);
     });
 
     it('rejects durations below 100 ms', () => {

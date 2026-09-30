@@ -156,6 +156,9 @@ describe('Redis data loss (FLUSHALL)', () => {
         second.runtime.epoch.known() === current
       );
     });
+    // An instance records the new epoch before running its recovery hooks, so wait for
+    // the hooks themselves.
+    await waitFor(() => Promise.resolve(counts.local === 2));
     await waitFor(
       async () =>
         (await heartbeatScore(h.runtime.instanceId)) !== null &&
