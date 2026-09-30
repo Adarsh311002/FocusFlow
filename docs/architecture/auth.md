@@ -66,6 +66,8 @@ The client performs at most one refresh at a time (single-flight), and calls ref
 - Handshake middleware verifies the JWT, rejects revoked `sid`s, loads the user, and stores `socket.data = { userId, sid, displayName, avatarUrl, tokenExpiresAtMs, joinedRooms }`.
 - Each socket joins `user:{userId}` (per-user notifications) and `session:{sid}` (revocation).
 - Payloads never carry identity. Every handler uses `socket.data`.
+- The handshake runs exactly the REST checks (the same JWT verification and revocation check, including the trust-loss window, R3) plus "the user still exists". A refusal carries `err.data.code`: `UNAUTHENTICATED` (refresh once, reconnect), `SESSION_REVOKED` (session over) or `INTERNAL` (temporary; retry later).
+- Revocation (logout, refresh-token reuse) disconnects `session:{sid}` on every instance through the Socket.IO Redis emitter, after the PostgreSQL and Redis writes.
 - When the access token expires, the server disconnects the socket. The Socket.IO client's `auth` option is a function that fetches a fresh token (via single-flight refresh), so reconnection re-authenticates automatically. After reconnecting, the client sends `room:join` again for any room it was in.
 
 ## Authorization summary

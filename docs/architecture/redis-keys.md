@@ -16,10 +16,10 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 
 | Key | Type | Contents | Lifetime |
 |---|---|---|---|
-| `ff:epoch` | String | Random value set once (`SET NX`) | Permanent; its disappearance means Redis lost its data |
-| `ff:instance:{instanceId}` | String | Heartbeat | TTL ~30 s, refreshed |
-| `ff:instances` | Set | Known instance IDs | Pruned by the reconciler |
-| `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect |
+| `ff:epoch` | String | `{uuid}.{createdAtMs}` (Redis TIME), set once with `SET NX` (R3) | Permanent; its disappearance means Redis lost its data; its age drives the revocation trust window |
+| `ff:instances` | Sorted set | `instanceId` scored by its last heartbeat (Redis TIME, ms) (R1) | Refreshed every heartbeat; dead ones removed by the reconciler (the score survives the instance) |
+| `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; deleted by clean shutdown or the reconciler |
+| `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; entries of dead instances ignored at read time and removed by the reconciler |
 | `ff:user:{userId}:disconnected` | String | `disconnectedAtMs` while a running solo session is in grace | Deleted on reconnect or settlement; safety TTL |
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
@@ -50,7 +50,9 @@ Workers run inside the API process initially, with their own entry point/role (I
 
 BullMQ keys use the same configured prefix (P3): with the default, queues live under `ff:bull` rather than BullMQ's built-in `bull:` prefix. A distinct prefix per test file gives each test an isolated key space in a shared Redis.
 
-The Socket.IO Redis adapter uses pub/sub channels, not keys.
+The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the channel prefix is `{REDIS_KEY_PREFIX}socket.io` (P3). Their connections (and BullMQ's) carry no ioredis `keyPrefix` and wait for a reconnect instead of rejecting, because the adapter and emitter do not await their commands.
+
+**Implemented in Phase 3:** `ff:epoch`, `ff:instances`, `ff:instance:{instanceId}:sockets`, `ff:user:{userId}:sockets`, `ff:auth:revoked:{sid}` (Phase 1), and the `maintenance` queue with its reconcile scheduler. The other keys and queues arrive with their phases.
 
 ## Restart semantics
 
@@ -66,4 +68,5 @@ The Socket.IO Redis adapter uses pub/sub channels, not keys.
 | Solo sessions | Unaffected (PostgreSQL). The reconciler recreates their jobs. Running sessions of users who are not connected → `abandoned(expired)` |
 | Knocks | Expire client-side; the requester can knock again |
 | Queued jobs | Recreated by the reconciler from PostgreSQL (solo) or not needed (room timers restarted) |
-| Rate limits, chat de-duplication, revoked-session list | Harmless to lose. A lost revoked-session entry means a revoked session's existing access token works until it expires (at most one access-token lifetime) |
+| Rate limits, chat de-duplication | Harmless to lose |
+| Revoked-session list | Lost markers are covered by the trust-loss window (R3): until the new epoch is one access-token lifetime old, revocation checks go to PostgreSQL, so a revoked session never becomes trusted |

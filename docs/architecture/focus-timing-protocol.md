@@ -21,7 +21,7 @@ Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19,
 
 All hosts run NTP. Room session `ended_at` values come from the focus run's close time.
 
-**Client display.** The client estimates its clock offset from `serverNowMs` values, including a `time:sync` round trip on connect and every few minutes: `offset ≈ serverNowMs − (t0 + t1) / 2`. It shows `max(0, endsAtMs − (Date.now() + offset))`. At 0:00, before new state arrives, it shows "finishing…". It never advances a phase or ends a session by itself, and it ignores timer state with a lower `version` than it already has.
+**Client display.** The client estimates its clock offset from `serverNowMs` values (Redis TIME, R2), including a `time:sync` burst on connect and every 5 minutes, trusting the sample with the shortest round trip: `offset ≈ serverNowMs − (t0 + t1) / 2`. It shows `max(0, endsAtMs − (Date.now() + offset))`. At 0:00, before new state arrives, it shows "finishing…". It never advances a phase or ends a session by itself, and it ignores timer state with a lower `version` than it already has.
 
 ## Presence
 
@@ -35,7 +35,8 @@ Presence is tracked at two levels, both in Redis and both keyed by `{instanceId}
 - A user is **disconnected** at a level when their last socket at that level goes away. The 60-second grace counts from when the server **detects** this; Socket.IO ping settings are tightened so silent drops are detected quickly.
 - Closing a tab is detected immediately. On mobile, a locked screen usually drops the socket (accepted consequence of D14/15/35).
 - `room:leave` is sent only for an explicit "Leave room" action. Navigating elsewhere in the app does not leave the room.
-- If an API instance dies, its sockets never run their disconnect handlers. The reconciler detects the dead instance (missing heartbeat), removes its entries, and treats affected users as disconnected at the instance's last heartbeat. A normal deploy, where clients reconnect within 60 seconds, therefore does not abandon anyone's focus.
+- If an API instance dies, its sockets never run their disconnect handlers. Its entries stop counting as soon as its heartbeat (the `ff:instances` score, Redis TIME) is older than the TTL, and the reconciler removes them through the `ff:instance:{instanceId}:sockets` index and treats affected users as disconnected at the instance's last heartbeat. A normal deploy, where clients reconnect within 60 seconds, therefore does not abandon anyone's focus.
+- **Implemented in Phase 3** (user level): per-socket entries, read-time liveness filtering, the "user went offline" hook (Phase 4 attaches grace to it), re-assertion after reconnect or epoch change, and reconciler step 1. Room-level presence arrives with rooms.
 
 ## Room timer
 
@@ -208,7 +209,7 @@ A solo session is `abandoned(expired)` when:
 
 ## Reconciler
 
-Runs at startup and on a repeating schedule (e.g. every 30 seconds). Every step is safe to repeat.
+Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 30 seconds, R6), so exactly one worker takes each scheduled run. Every step is safe to repeat. Phase 3 implements step 1; the others arrive with the phases that own their state.
 
 1. Remove presence entries of dead API instances; treat their users and room participants as disconnected at the instance's last heartbeat, and schedule grace.
 2. Room timers that are running past `endsAtMs`: run the phase end. Running timers without a pending job: schedule it.
