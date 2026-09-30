@@ -12,7 +12,9 @@ import { render } from '@testing-library/react';
 import { AuthProvider } from '../features/auth/auth-context';
 import { RequireAuth } from '../features/auth/require-auth';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { RealtimeProvider } from '../features/realtime/realtime-provider';
 import { createTestQueryClient } from './query-client';
+import { createStubRealtimeClient } from './realtime-stub';
 
 export const LOGIN_TEXT = 'Login placeholder';
 
@@ -42,7 +44,9 @@ export function renderDashboard(): void {
   render(
     <QueryClientProvider client={createTestQueryClient()}>
       <AuthProvider>
-        <RouterProvider router={router} />
+        <RealtimeProvider client={createStubRealtimeClient()}>
+          <RouterProvider router={router} />
+        </RealtimeProvider>
       </AuthProvider>
     </QueryClientProvider>,
   );

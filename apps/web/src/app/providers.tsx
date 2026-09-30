@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 import { AuthProvider } from '../features/auth/auth-context';
+import { RealtimeProvider } from '../features/realtime/realtime-provider';
 
 /**
  * Created once for the lifetime of the module so the cache survives re-renders.
@@ -24,7 +25,9 @@ const queryClient = new QueryClient({
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>{children}</AuthProvider>
+      <AuthProvider>
+        <RealtimeProvider>{children}</RealtimeProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
