@@ -112,21 +112,22 @@ describe('createShutdown steps', () => {
   it('runs pre-close steps before the server, other steps between the server and the stores', async () => {
     const { calls, exits, shutdown } = createHarness({
       beforeServerClose: ['socket.io'],
-      steps: ['heartbeat', 'workers'],
+      steps: ['heartbeat', 'presence', 'worker', 'queue', 'connections'],
     });
 
     await shutdown('SIGTERM', 0);
 
-    const order = calls.filter((call) =>
-      ['socket.io', 'server.close', 'heartbeat', 'workers', 'redis.quit', 'pool.end'].includes(
-        call,
-      ),
-    );
+    const order = calls.filter((call) => call !== 'server.closeIdleConnections');
+    // The approved Phase 3 order: Socket.IO, HTTP, heartbeat and presence, the BullMQ worker
+    // and queue, the remaining Redis connections, then the general Redis client and PostgreSQL.
     expect(order).toEqual([
       'socket.io',
       'server.close',
       'heartbeat',
-      'workers',
+      'presence',
+      'worker',
+      'queue',
+      'connections',
       'redis.quit',
       'pool.end',
     ]);
@@ -171,6 +172,77 @@ describe('createShutdown step budget', () => {
     expect(calls).toContain('redis.quit');
     expect(calls).toContain('pool.end');
     expect(exits).toEqual([0]);
+  });
+});
+
+describe('createShutdown step invocation', () => {
+  const timesCalled = (calls: Calls, name: string): number =>
+    calls.filter((call) => call === name).length;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('runs every step exactly once, before and after the server closes', async () => {
+    const { calls, shutdown } = createHarness({
+      beforeServerClose: ['socket.io'],
+      steps: ['heartbeat', 'presence', 'worker', 'queue', 'connections'],
+    });
+
+    await shutdown('SIGTERM', 0);
+
+    for (const name of ['socket.io', 'heartbeat', 'presence', 'worker', 'queue', 'connections']) {
+      expect(timesCalled(calls, name), name).toBe(1);
+    }
+    expect(timesCalled(calls, 'server.close')).toBe(1);
+    expect(timesCalled(calls, 'redis.quit')).toBe(1);
+    expect(timesCalled(calls, 'pool.end')).toBe(1);
+  });
+
+  it('runs a hanging step exactly once: it is abandoned after its budget, never retried', async () => {
+    const { calls, exits, shutdown } = createHarness({
+      steps: ['worker', 'heartbeat'],
+      hangingStep: 'worker',
+    });
+
+    const done = shutdown('SIGTERM', 0);
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS / 4 + 1);
+    await done;
+    // Well past the whole deadline: still no second attempt.
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 2);
+
+    expect(timesCalled(calls, 'worker')).toBe(1);
+    expect(timesCalled(calls, 'heartbeat')).toBe(1);
+    expect(exits).toEqual([0]);
+  });
+
+  it('runs a failing step exactly once and continues with the next', async () => {
+    const { calls, exits, shutdown } = createHarness({
+      steps: ['worker', 'heartbeat'],
+      failingStep: 'worker',
+    });
+
+    await shutdown('SIGTERM', 0);
+
+    expect(timesCalled(calls, 'worker')).toBe(1);
+    expect(timesCalled(calls, 'heartbeat')).toBe(1);
+    expect(exits).toEqual([0]);
+  });
+
+  it('runs every step exactly once even when shutdown is signalled twice', async () => {
+    const { calls, shutdown } = createHarness({
+      beforeServerClose: ['socket.io'],
+      steps: ['worker'],
+    });
+
+    await Promise.all([shutdown('SIGTERM', 0), shutdown('SIGINT', 0)]);
+
+    expect(timesCalled(calls, 'socket.io')).toBe(1);
+    expect(timesCalled(calls, 'worker')).toBe(1);
   });
 });
 

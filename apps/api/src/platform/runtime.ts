@@ -249,7 +249,10 @@ export const createRuntime = async (
     { name: 'socket.io', run: () => closeSocketServer(io) },
   ];
   const shutdownSteps: ShutdownStep[] = [
-    // Workers first: a running reconcile finishes while Redis is still open.
+    { name: 'instance heartbeat', run: heartbeat.stop },
+    // A clean shutdown removes this instance's presence at once instead of leaving it
+    // for the reconciler to find after the heartbeat TTL.
+    { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
     ...(maintenanceWorker === undefined
       ? []
       : [
@@ -261,10 +264,6 @@ export const createRuntime = async (
           },
         ]),
     { name: 'maintenance queue', run: () => maintenanceQueue.close() },
-    // A clean shutdown removes this instance's presence at once instead of leaving it
-    // for the reconciler to find after the heartbeat TTL.
-    { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
-    { name: 'instance heartbeat', run: heartbeat.stop },
     {
       name: 'redis connections',
       run: () =>

@@ -223,3 +223,20 @@ describe('worker-only role', () => {
     }
   });
 });
+
+describe('shutdown order', () => {
+  it('follows the approved order: Socket.IO, then heartbeat, presence, worker, queue, connections', () => {
+    const { runtime } = requireHarness();
+
+    // The HTTP server closes between the two lists; the general Redis client and PostgreSQL
+    // close after the last step (see createShutdown).
+    expect(runtime.beforeServerClose.map((step) => step.name)).toEqual(['socket.io']);
+    expect(runtime.shutdownSteps.map((step) => step.name)).toEqual([
+      'instance heartbeat',
+      'presence',
+      'maintenance worker',
+      'maintenance queue',
+      'redis connections',
+    ]);
+  });
+});
