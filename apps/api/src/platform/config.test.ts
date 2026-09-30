@@ -31,6 +31,8 @@ describe('loadConfig', () => {
       REFRESH_OVERLAP_SECONDS: 20,
       INSTANCE_HEARTBEAT_MS: 10_000,
       INSTANCE_TTL_MS: 30_000,
+      SOCKET_PING_INTERVAL_MS: 10_000,
+      SOCKET_PING_TIMEOUT_MS: 10_000,
     });
   });
 

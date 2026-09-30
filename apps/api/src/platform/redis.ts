@@ -32,8 +32,12 @@ export const createRedisClient = (config: AppConfig, logger: Logger): Redis => {
  * - `bullmq`: BullMQ does not support ioredis `keyPrefix` (it has its own `prefix`
  *   option) and its workers issue blocking commands that need `maxRetriesPerRequest:
  *   null`.
- * - `pubsub`: the Socket.IO adapter's publisher and subscriber. A subscribed connection
- *   can run nothing else, and channel names are namespaced by the adapter's own `key`.
+ * - `pubsub`: the Socket.IO adapter's (and emitter's) publisher and subscriber. A
+ *   subscribed connection can run nothing else, and channel names are namespaced by the
+ *   adapter's own `key`. The adapter and emitter fire PUBLISH/SUBSCRIBE without awaiting
+ *   them, so these commands must wait for a reconnect rather than reject: a rejection
+ *   would be unhandled, and an unhandled rejection shuts the process down
+ *   (platform/shutdown.ts). Hence `maxRetriesPerRequest: null` here too.
  */
 export type RedisConnectionRole = 'bullmq' | 'pubsub';
 
@@ -42,10 +46,7 @@ export const createRedisConnection = (
   logger: Logger,
   role: RedisConnectionRole,
 ): Redis => {
-  const client = new Redis(
-    config.REDIS_URL,
-    role === 'bullmq' ? { maxRetriesPerRequest: null } : { maxRetriesPerRequest: 1 },
-  );
+  const client = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
   client.on('error', (error: Error) => {
     logger.warn({ err: error, role }, 'Redis connection error');

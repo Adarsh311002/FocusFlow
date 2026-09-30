@@ -6,6 +6,8 @@ import type { Logger } from 'pino';
 
 /** The few members shutdown needs; the real objects satisfy these structurally. */
 export type ShutdownServer = {
+  /** `false` once closed (Socket.IO's `io.close()` closes the HTTP server it is attached to). */
+  readonly listening?: boolean;
   close: (callback: (error?: Error) => void) => unknown;
   closeIdleConnections: () => void;
   closeAllConnections: () => void;
@@ -73,6 +75,9 @@ export const createShutdown = ({
   };
 
   const closeServer = (): Promise<void> => {
+    if (server.listening === false) {
+      return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
       server.close((error) => {
         if (error) {

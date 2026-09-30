@@ -7,17 +7,50 @@ import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
 import type { AuthDeps } from '../modules/auth/service.js';
+import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
 import { createEpochMonitor, type EpochMonitor } from './epoch.js';
 import { createApp } from './http/app.js';
 import { createInstanceHeartbeat, type InstanceHeartbeat } from './instance.js';
 import { createLogger } from './logger.js';
-import { createRedisClient, waitForRedisReady } from './redis.js';
+import { createRedisClient, createRedisConnection, waitForRedisReady } from './redis.js';
 import { createShutdown, type ShutdownStep } from './shutdown.js';
+import { createSocketEmitter, createSocketServer, type SocketEmitter } from './socket.js';
 
 /** How long startup waits for Redis before continuing without the epoch check. */
 const REDIS_STARTUP_WAIT_MS = 5_000;
+
+/**
+ * Closes connections gracefully when Redis is reachable. When it is not, `quit()` would
+ * wait in the offline queue for a server that is gone, so the connection is dropped.
+ */
+const closeConnections = async (...clients: Redis[]): Promise<void> => {
+  for (const client of clients) {
+    if (client.status !== 'ready') {
+      client.disconnect();
+      continue;
+    }
+    try {
+      await client.quit();
+    } catch {
+      client.disconnect();
+    }
+  }
+};
+
+/**
+ * Stops Socket.IO on this instance only: every local socket is disconnected (their
+ * disconnect handlers run while Redis is still open) and the engine stops accepting
+ * connections. `io.close()` is deliberately not used: it also closes the Redis adapter,
+ * whose un-awaited UNSUBSCRIBE commands would reject when Redis is down; the adapter's
+ * subscriptions end with its connection instead.
+ */
+const closeSocketServer = (io: AppServer): Promise<void> => {
+  io.local.disconnectSockets(true);
+  io.engine.close();
+  return Promise.resolve();
+};
 
 /**
  * One API process, fully wired but not yet listening. `main.ts` and the integration-test
@@ -36,6 +69,12 @@ export type Runtime = {
   readonly epoch: EpochMonitor;
   readonly heartbeat: InstanceHeartbeat;
   readonly server: Server;
+  /** The Socket.IO server attached to `server`, with the Redis adapter. */
+  readonly io: AppServer;
+  /** Broadcasts through Redis to sockets on every instance. */
+  readonly socketEmitter: SocketEmitter;
+  /** Hooks run for every authenticated socket (feature modules register here). */
+  readonly onSocketConnect: ((socket: AppSocket) => void)[];
   /** Resolves with the bound port once listening; the heartbeat starts then. */
   readonly listen: (port: number, host: string) => Promise<number>;
   /** Closed before the HTTP server (long-lived connections). */
@@ -90,6 +129,12 @@ export const createRuntime = async (
     }
   });
 
+  // Socket.IO's adapter needs its own publisher and subscriber connections; the emitter
+  // publishes on the same channels through the publisher.
+  const pubClient = createRedisConnection(config, logger, 'pubsub');
+  const subClient = createRedisConnection(config, logger, 'pubsub');
+  const socketEmitter = createSocketEmitter(pubClient, config);
+
   const authDeps: AuthDeps = {
     db,
     redis,
@@ -100,13 +145,32 @@ export const createRuntime = async (
     accessTokenTtlSeconds: config.ACCESS_TOKEN_TTL_SECONDS,
     refreshTokenTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS,
     refreshOverlapSeconds: config.REFRESH_OVERLAP_SECONDS,
+    disconnectSession: (sid) => {
+      socketEmitter.in(sessionRoom(sid)).disconnectSockets(true);
+    },
   };
 
   const app = createApp({ config, logger, pool, redis, authDeps });
   const server = createServer(app);
+  const onSocketConnect: ((socket: AppSocket) => void)[] = [];
+  const io = createSocketServer({
+    httpServer: server,
+    config,
+    logger,
+    authDeps,
+    pubClient,
+    subClient,
+    onConnect: onSocketConnect,
+  });
 
-  const beforeServerClose: ShutdownStep[] = [];
-  const shutdownSteps: ShutdownStep[] = [{ name: 'instance heartbeat', run: heartbeat.stop }];
+  // Socket.IO first: its upgraded connections would otherwise hold the HTTP server open.
+  const beforeServerClose: ShutdownStep[] = [
+    { name: 'socket.io', run: () => closeSocketServer(io) },
+  ];
+  const shutdownSteps: ShutdownStep[] = [
+    { name: 'instance heartbeat', run: heartbeat.stop },
+    { name: 'redis pub/sub', run: () => closeConnections(pubClient, subClient) },
+  ];
 
   const listen = async (port: number, host: string): Promise<number> => {
     await new Promise<void>((resolve, reject) => {
@@ -147,6 +211,9 @@ export const createRuntime = async (
     epoch,
     heartbeat,
     server,
+    io,
+    socketEmitter,
+    onSocketConnect,
     listen,
     beforeServerClose,
     shutdownSteps,

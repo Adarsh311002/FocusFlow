@@ -93,6 +93,9 @@ const configSchema = z
     INSTANCE_HEARTBEAT_MS: durationMs.default(10_000),
     /** An instance whose last heartbeat is older than this is dead. */
     INSTANCE_TTL_MS: durationMs.default(30_000),
+    /** Socket.IO ping settings: a silently dropped client is detected within their sum. */
+    SOCKET_PING_INTERVAL_MS: durationMs.default(10_000),
+    SOCKET_PING_TIMEOUT_MS: durationMs.default(10_000),
   })
   .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
     path: ['INSTANCE_TTL_MS'],

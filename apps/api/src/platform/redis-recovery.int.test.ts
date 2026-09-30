@@ -33,9 +33,20 @@ const requireHarness = (): TestHarness => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Polls until `condition` holds. A probe that throws counts as "not yet": the probes use
+ * the application's own Redis client, which fails fast (by design) while it reconnects.
+ */
 const waitFor = async (condition: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
-  while (!(await condition())) {
+  const holds = async (): Promise<boolean> => {
+    try {
+      return await condition();
+    } catch {
+      return false;
+    }
+  };
+  while (!(await holds())) {
     if (Date.now() > deadline) {
       throw new Error('condition not met in time');
     }
