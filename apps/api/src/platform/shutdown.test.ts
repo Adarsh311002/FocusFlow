@@ -18,6 +18,9 @@ const createHarness = (
     poolEnd?: () => Promise<void>;
     /** Models a request that keeps the server open until its socket is cut. */
     lingeringConnection?: boolean;
+    beforeServerClose?: string[];
+    steps?: string[];
+    failingStep?: string;
   } = {},
 ) => {
   const calls: Calls = [];
@@ -77,6 +80,22 @@ const createHarness = (
     redis,
     logger,
     timeoutMs: TIMEOUT_MS,
+    beforeServerClose: (overrides.beforeServerClose ?? []).map((name) => ({
+      name,
+      run: () => {
+        calls.push(name);
+        return Promise.resolve();
+      },
+    })),
+    steps: (overrides.steps ?? []).map((name) => ({
+      name,
+      run: () => {
+        calls.push(name);
+        return name === overrides.failingStep
+          ? Promise.reject(new Error(`${name} failed`))
+          : Promise.resolve();
+      },
+    })),
     exit: (code) => {
       exits.push(code);
     },
@@ -84,6 +103,46 @@ const createHarness = (
 
   return { calls, exits, shutdown };
 };
+
+describe('createShutdown steps', () => {
+  it('runs pre-close steps before the server, other steps between the server and the stores', async () => {
+    const { calls, exits, shutdown } = createHarness({
+      beforeServerClose: ['socket.io'],
+      steps: ['heartbeat', 'workers'],
+    });
+
+    await shutdown('SIGTERM', 0);
+
+    const order = calls.filter((call) =>
+      ['socket.io', 'server.close', 'heartbeat', 'workers', 'redis.quit', 'pool.end'].includes(
+        call,
+      ),
+    );
+    expect(order).toEqual([
+      'socket.io',
+      'server.close',
+      'heartbeat',
+      'workers',
+      'redis.quit',
+      'pool.end',
+    ]);
+    expect(exits).toEqual([0]);
+  });
+
+  it('keeps going when a step fails, so later resources are still closed', async () => {
+    const { calls, exits, shutdown } = createHarness({
+      steps: ['heartbeat', 'workers'],
+      failingStep: 'heartbeat',
+    });
+
+    await shutdown('SIGTERM', 0);
+
+    expect(calls).toContain('workers');
+    expect(calls).toContain('redis.quit');
+    expect(calls).toContain('pool.end');
+    expect(exits).toEqual([0]);
+  });
+});
 
 describe('createShutdown', () => {
   beforeEach(() => {

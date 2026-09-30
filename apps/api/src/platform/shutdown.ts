@@ -17,12 +17,27 @@ export type ShutdownRedis = { quit: () => Promise<unknown>; disconnect: () => vo
 
 export type ShutdownLogger = Pick<Logger, 'info' | 'warn' | 'error'>;
 
+/**
+ * A named resource to close after the HTTP server stops and before Redis and PostgreSQL
+ * are closed (for example the Socket.IO server, the heartbeat, queue workers). Steps run
+ * in order; a failing step is logged and never skips the ones after it.
+ */
+export type ShutdownStep = { readonly name: string; readonly run: () => Promise<void> };
+
 export type ShutdownDeps = {
   server: ShutdownServer;
   pool: ShutdownPool;
   redis: ShutdownRedis;
   logger: ShutdownLogger;
   timeoutMs: number;
+  /**
+   * Run before the HTTP server is closed. Long-lived connections the server cannot drain
+   * on its own (Socket.IO's upgraded WebSockets) must be closed here, or `server.close()`
+   * would wait for them until the deadline.
+   */
+  beforeServerClose?: readonly ShutdownStep[];
+  /** Closed between the HTTP server and the data stores, in order. */
+  steps?: readonly ShutdownStep[];
   /** Terminates the process. Injected so the sequence can be tested without exiting. */
   exit: (code: number) => void;
 };
@@ -41,9 +56,21 @@ export const createShutdown = ({
   redis,
   logger,
   timeoutMs,
+  beforeServerClose = [],
+  steps = [],
   exit,
 }: ShutdownDeps): Shutdown => {
   let shuttingDown = false;
+
+  const runSteps = async (list: readonly ShutdownStep[]): Promise<void> => {
+    for (const step of list) {
+      try {
+        await step.run();
+      } catch (error) {
+        logger.warn({ err: error, step: step.name }, 'Shutdown step failed');
+      }
+    }
+  };
 
   const closeServer = (): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -82,12 +109,16 @@ export const createShutdown = ({
     }, timeoutMs);
     forceExit.unref();
 
+    await runSteps(beforeServerClose);
+
     try {
       await closeServer();
     } catch (error) {
       logger.warn({ err: error }, 'Failed to close the HTTP server cleanly');
     }
     clearTimeout(cutConnections);
+
+    await runSteps(steps);
 
     try {
       await redis.quit();
@@ -114,6 +145,8 @@ type RegisterDeps = {
   redis: Redis;
   logger: Logger;
   timeoutMs: number;
+  beforeServerClose: readonly ShutdownStep[];
+  steps: readonly ShutdownStep[];
 };
 
 export const registerShutdownHandlers = (deps: RegisterDeps): void => {

@@ -60,16 +60,11 @@ afterAll(async () => {
   if (harness === undefined) {
     return;
   }
-  const { server, pool, redis, postgresContainer } = harness;
+  const { runtime, postgresContainer } = harness;
 
-  server.closeAllConnections();
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve();
-    });
-  });
-  redis.disconnect();
-  await pool.end();
+  // The full graceful shutdown (heartbeat, Redis, PostgreSQL); it tolerates Redis being
+  // gone already.
+  await runtime.stop();
 
   // Idempotent: the Redis-down test below may already have stopped this container.
   await stopRedisContainer();
