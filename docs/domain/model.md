@@ -79,7 +79,9 @@ tasks
   deleted_at          NULL   (D38)
   created_at, updated_at
   UNIQUE (id, user_id)                              (target of composite FKs)
-  INDEX (user_id, created_at) WHERE deleted_at IS NULL
+  INDEX (user_id, id DESC)                          (T2: newest-created-first keyset pagination on
+                                                     UUIDv7 id; full, so the users cascade also
+                                                     reaches soft-deleted rows)
 
 focus_sessions
   id                  PK
@@ -123,7 +125,7 @@ room_members                                        (D9)
 
 ### Rules the database cannot enforce alone
 
-- `users.current_task_id` must point to an open task that is not soft-deleted. Soft-deleting the current task (D38) or completing it (D43) clears `users.current_task_id` in the same transaction, with a conditional update to avoid races. Setting a completed or deleted task as current is rejected.
+- `users.current_task_id` must point to an open task that is not soft-deleted. Soft-deleting the current task (D38) or completing it (D43) clears `users.current_task_id` in the same transaction, with a conditional update to avoid races. Setting a completed or deleted task as current is rejected. Setting the current task locks the task row (`FOR SHARE`) before writing the user row — the same task-then-user order that complete and delete use — so a concurrent complete or delete can never leave a completed or deleted task current (covered by a race test).
 - Account deletion (D2, when implemented) clears `users.current_task_id` in the account-deletion transaction before deleting the user's data. It does not rely on `ON DELETE SET NULL` (P1).
 - A session cannot be started or opted into with a deleted task.
 - The host always has a `room_members` row (created in the same transaction as the room).

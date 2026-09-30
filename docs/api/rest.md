@@ -30,21 +30,25 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 | Method & route | Request | Response | Rules |
 |---|---|---|---|
 | `GET /me` | — | `{ user }` | `UserView`: `id, email, emailVerified, displayName, avatarUrl, currentTaskId, identities: ("google")[]` |
-| `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | Task must be the user's (404 otherwise), not deleted (D38) and open (`409 TASK_NOT_OPEN` if completed, D43). Repeatable. |
-
-Phase 1's `GET /me` implementation deliberately omits `currentTaskId` from its response: there is no task tracking yet (Tasks lands in a later phase), so the field has nothing to report. `UserView`'s contract schema keeps it as documented here for the shape Phase 2 will fill in; `PUT /me/current-task` is not implemented until that phase either.
+| `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | `null` clears it. Task must be the user's, not deleted (D38) and open: another user's, a deleted or a nonexistent task → `404 TASK_NOT_FOUND`; a completed task → `409 TASK_NOT_OPEN` (D43). Repeatable. |
 | `POST /me/identities/google` | `{ idToken }` | `201 { user }` | Explicit Google linking for a signed-in user (D1, D44; Phase 1b). `409 IDENTITY_ALREADY_LINKED` if that Google account belongs to another user. Repeating for an identity already linked to this user → `200`. |
 
-## Tasks (D3, D38)
+## Tasks (D3, D38, D43, T1, T2, T6) — implemented in Phase 2
 
 | Method & route | Request | Response | Rules and retry behaviour |
 |---|---|---|---|
-| `GET /tasks` | `?status=open\|completed&cursor&limit` | `{ tasks, nextCursor }` | Own, non-deleted tasks only |
-| `POST /tasks` | `{ title }` | `201 { task }` | A retried create may duplicate (low harm; `Idempotency-Key` later) |
-| `PATCH /tasks/:taskId` | `{ title }` | `{ task }` | Owner; not deleted |
-| `POST /tasks/:taskId/complete` | — | `{ task }` | If it is the current task, clears `users.current_task_id` in the same transaction (D43). Already completed → `200` |
-| `POST /tasks/:taskId/reopen` | — | `{ task }` | Already open → `200` |
-| `DELETE /tasks/:taskId` | — | `204` | Soft delete (D38). Clears `users.current_task_id` in the same transaction if it pointed here. In-progress and past sessions keep their link. Already deleted → `204`. |
+| `GET /tasks` | `?status=open\|completed&cursor&limit` | `{ tasks, nextCursor }` | Own, non-deleted tasks only. `status` defaults to `open`; `limit` defaults to 50, maximum 100. Newest-created first (UUIDv7 `id DESC`, T2). `cursor` is the opaque `nextCursor` of the previous page; `nextCursor` is `null` on the last page. |
+| `POST /tasks` | `{ title }` | `201 { task }` | Title trimmed, 1–200 characters (T6). A retried create may duplicate (low harm; `Idempotency-Key` later) |
+| `GET /tasks/:taskId` | — | `{ task }` | Own, non-deleted task (T1) |
+| `PATCH /tasks/:taskId` | `{ title }` | `{ task }` | Owner; not deleted. Completed tasks may be renamed. |
+| `POST /tasks/:taskId/complete` | — | `{ task }` | If it is the current task, clears `users.current_task_id` in the same transaction (D43). Already completed → `200` with the original `completedAt` |
+| `POST /tasks/:taskId/reopen` | — | `{ task }` | Already open → `200`. Never makes the task current again. |
+| `DELETE /tasks/:taskId` | — | `204` | Soft delete (D38). Clears `users.current_task_id` in the same transaction if it pointed here. In-progress and past sessions keep their link. Deleting one's own already-deleted task → `204`. |
+
+- `TaskView`: `{ id, title, status: "open", createdAt, updatedAt }` or `{ id, title, status: "completed", completedAt, createdAt, updatedAt }`. Deleted tasks are never returned; `userId` and `deletedAt` never leave the API.
+- Another user's task, a deleted task and a nonexistent task all answer the same `404 TASK_NOT_FOUND` (except `DELETE` of one's own deleted task, above). A malformed `:taskId`, an unknown body or query key, a bad `limit` or a tampered cursor → `400 VALIDATION_FAILED`.
+- Every task route requires a bearer token and is scoped to the authenticated user. Task CRUD uses PostgreSQL only (no Redis).
+- The web client re-reads `GET /me` after completing or deleting the current task (T3).
 
 ## Focus sessions (D4, D6, D14/15/35)
 

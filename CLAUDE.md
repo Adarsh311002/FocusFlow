@@ -8,7 +8,7 @@ The existing repository contains an older JavaScript/MERN implementation. We are
 
 Product/domain/architecture design is complete and the implementation plan is approved (see `docs/implementation/plan.md`).
 
-**Phase state:** Phase 0 (foundation) is implemented on branch `v2/phase-0-foundation` and pending review and merge. Phase 1 (accounts) has **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
+**Phase state:** Phase 0 (foundation) and Phase 1 (accounts) are merged into `main` (Phase 1 checkpoint: tag `phase-1-accounts`). Phase 2 (tasks) is implemented on branch `v2/phase-2-tasks`, pending review. Phase 1b (Google sign-in) and Phase 3 onwards have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
 
 Do not change the architectural direction again unless a genuine contradiction appears during implementation; if one does, explain it rather than silently changing the design.
 
@@ -198,6 +198,19 @@ There is one meaning of "completed" across solo and room sessions. A FocusSessio
 
 ### Completing the current task (D43)
 - When a task is completed, clear it as the user's current task if it is currently selected. The current task is always an open, non-deleted task.
+
+### Tasks implementation decisions (Phase 2: T1–T6)
+- **T1:** `GET /tasks/:taskId` exists; it resolves/displays the current task and serves later focus-session features.
+- **T2:** Task lists are newest-created first, ordered by UUIDv7 `id DESC` and paginated by an opaque keyset cursor, served by one full index `(user_id, id DESC)`. No `completed_at` ordering and no second cursor.
+- **T3:** After completing or deleting the currently selected task, the client re-reads `GET /me` to update its user state. Task responses do not carry a `currentTaskCleared` flag.
+- **T4:** No optimistic updates in Phase 2: server responses plus pending states only.
+- **T5:** Task management lives on `/dashboard`, with the current task shown prominently.
+- **T6:** Title 1–200 characters after trimming; list limit default 50, maximum 100; no per-user task count cap for now.
+- Tasks are always scoped by `req.authUser.userId`; another user's, a deleted and a nonexistent task all answer `404 TASK_NOT_FOUND`. Completed tasks may be renamed; reopening never makes a task current. Task CRUD uses no Redis.
+
+### Tracked follow-ups (not part of Phase 2)
+- Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
+- Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
 
 ## Important Architecture Principles
 
