@@ -7,6 +7,8 @@ import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
 import type { AuthDeps } from '../modules/auth/service.js';
+import { createPresence, type Presence } from '../modules/presence/presence.js';
+import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
@@ -75,6 +77,8 @@ export type Runtime = {
   readonly socketEmitter: SocketEmitter;
   /** Hooks run for every authenticated socket (feature modules register here). */
   readonly onSocketConnect: ((socket: AppSocket) => void)[];
+  /** Per-user presence: which users have a live socket on a live instance. */
+  readonly presence: Presence;
   /** Resolves with the bound port once listening; the heartbeat starts then. */
   readonly listen: (port: number, host: string) => Promise<number>;
   /** Closed before the HTTP server (long-lived connections). */
@@ -121,13 +125,6 @@ export const createRuntime = async (
   }
 
   let listening = false;
-  // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
-  // back empty) and re-publish the heartbeat straight away.
-  redis.on('ready', () => {
-    if (listening) {
-      void heartbeat.tick('reconnect');
-    }
-  });
 
   // Socket.IO's adapter needs its own publisher and subscriber connections; the emitter
   // publishes on the same channels through the publisher.
@@ -163,11 +160,36 @@ export const createRuntime = async (
     onConnect: onSocketConnect,
   });
 
+  const presence = createPresence({
+    store: createPresenceStore({ redis, instanceId, instanceTtlMs: config.INSTANCE_TTL_MS }),
+    io,
+    logger,
+  });
+  onSocketConnect.push(presence.track);
+  epoch.onLocalRecovery(() => presence.reassertLocal());
+
+  // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
+  // back empty), re-publish the heartbeat, and re-add this instance's sockets (writes made
+  // while Redis was unreachable were lost; adding is idempotent).
+  redis.on('ready', () => {
+    if (listening) {
+      void heartbeat
+        .tick('reconnect')
+        .then(() => presence.reassertLocal())
+        .catch((error: unknown) => {
+          logger.warn({ err: error, instanceId }, 'Presence re-assertion after reconnect failed');
+        });
+    }
+  });
+
   // Socket.IO first: its upgraded connections would otherwise hold the HTTP server open.
   const beforeServerClose: ShutdownStep[] = [
     { name: 'socket.io', run: () => closeSocketServer(io) },
   ];
   const shutdownSteps: ShutdownStep[] = [
+    // A clean shutdown removes this instance's presence at once instead of leaving it
+    // for the reconciler to find after the heartbeat TTL.
+    { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
     { name: 'instance heartbeat', run: heartbeat.stop },
     { name: 'redis pub/sub', run: () => closeConnections(pubClient, subClient) },
   ];
@@ -214,6 +236,7 @@ export const createRuntime = async (
     io,
     socketEmitter,
     onSocketConnect,
+    presence,
     listen,
     beforeServerClose,
     shutdownSteps,
