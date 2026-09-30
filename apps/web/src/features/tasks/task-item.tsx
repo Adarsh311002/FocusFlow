@@ -18,7 +18,9 @@ const BUTTON = 'rounded border border-slate-300 px-2 py-0.5 text-sm disabled:opa
 
 /**
  * One task and its actions. Each action waits for the server (no optimistic updates in
- * Phase 2): while any of them is in flight, the item's buttons are disabled.
+ * Phase 2): while any of them is in flight, the item's buttons are disabled. Starting an
+ * action clears the outcome of earlier ones, so an old error never outlives a newer
+ * action that succeeds.
  */
 export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boolean }) {
   const [editing, setEditing] = useState(false);
@@ -41,21 +43,31 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
       ? null
       : taskErrorMessage(mutationError);
 
+  /** Every mutating action goes through here: earlier errors are cleared first. */
+  function run(action: () => void): void {
+    for (const mutation of mutations) {
+      mutation.reset();
+    }
+    setInvalid(false);
+    action();
+  }
+
   function saveRename(): void {
     const fields = updateTaskRequestSchema.safeParse({ title: draft });
     if (!fields.success) {
       setInvalid(true);
       return;
     }
-    setInvalid(false);
-    rename.mutate(
-      { taskId: task.id, title: fields.data.title },
-      {
-        onSuccess: () => {
-          setEditing(false);
+    run(() => {
+      rename.mutate(
+        { taskId: task.id, title: fields.data.title },
+        {
+          onSuccess: () => {
+            setEditing(false);
+          },
         },
-      },
-    );
+      );
+    });
   }
 
   return (
@@ -110,7 +122,9 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
               disabled={pending}
               className={BUTTON}
               onClick={() => {
-                makeCurrent.mutate(task.id);
+                run(() => {
+                  makeCurrent.mutate(task.id);
+                });
               }}
             >
               Set as current
@@ -122,7 +136,9 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
               disabled={pending}
               className={BUTTON}
               onClick={() => {
-                complete.mutate(task.id);
+                run(() => {
+                  complete.mutate(task.id);
+                });
               }}
             >
               {complete.isPending ? 'Completing…' : 'Complete'}
@@ -133,7 +149,9 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
               disabled={pending}
               className={BUTTON}
               onClick={() => {
-                reopen.mutate(task.id);
+                run(() => {
+                  reopen.mutate(task.id);
+                });
               }}
             >
               {reopen.isPending ? 'Reopening…' : 'Reopen'}
@@ -171,10 +189,12 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
             disabled={pending}
             className={BUTTON}
             onClick={() => {
-              remove.mutate(task.id, {
-                onSettled: () => {
-                  setConfirmingDelete(false);
-                },
+              run(() => {
+                remove.mutate(task.id, {
+                  onSettled: () => {
+                    setConfirmingDelete(false);
+                  },
+                });
               });
             }}
           >

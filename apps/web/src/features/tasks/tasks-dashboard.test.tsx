@@ -2,8 +2,8 @@ import { mePaths, taskPaths } from '@focus-flow/contracts';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { type RecordedRequest, requestsTo, stubFetch } from '../../test/api-stub';
-import { renderDashboard } from '../../test/dashboard-route';
+import { errorResponse, type RecordedRequest, requestsTo, stubFetch } from '../../test/api-stub';
+import { LOGIN_TEXT, renderDashboard } from '../../test/dashboard-route';
 import { createFakeTaskApi } from '../../test/fake-task-api';
 import { resetPendingRefresh } from '../auth/auth-client';
 import { clearAccessToken } from '../auth/token-store';
@@ -263,5 +263,209 @@ describe('dashboard tasks', () => {
     ).not.toBeNull();
     expect(screen.queryByRole('listitem', { name: 'Oldest, but current' })).toBeNull();
     expect(requestsTo(calls, `${taskPaths.collection}/${oldest.id}`)).toHaveLength(1);
+  });
+});
+
+const SERVER_ERROR = 'Something went wrong on the server. Please try again.';
+const SYNC_FAILED = 'Your current task could not be refreshed.';
+const isMe = (request: RecordedRequest) => request.url.endsWith(mePaths.self);
+const isSetCurrent = (request: RecordedRequest) =>
+  request.method === 'PUT' && request.url.endsWith(mePaths.currentTask);
+
+describe('current task resynchronization (FE-1)', () => {
+  it('re-reads /me when the current task no longer exists and shows no current task', async () => {
+    const api = createFakeTaskApi();
+    const gone = api.addTask('Deleted elsewhere');
+    api.setCurrentTaskId(gone.id);
+    // Deleted in another tab: this tab's session restore still reports it as current, but
+    // the server has since cleared it (D38), so every later GET /me says null.
+    gone.deletedAt = new Date().toISOString();
+    let meReads = 0;
+    const calls = stubFetch((request) => {
+      const response = api.handle(request);
+      if (isMe(request)) {
+        meReads += 1;
+        api.setCurrentTaskId(null);
+      }
+      return response;
+    });
+
+    renderDashboard();
+
+    const section = await currentTaskSection();
+    expect(await within(section).findByText(/No current task/)).not.toBeNull();
+    expect(requestsTo(calls, `${taskPaths.collection}/${gone.id}`)).toHaveLength(1);
+    expect(meReads).toBe(2);
+    expect(screen.queryByText(/has been refreshed/)).toBeNull();
+  });
+
+  it('offers a working "Clear current task" when the re-read fails', async () => {
+    const api = createFakeTaskApi();
+    const gone = api.addTask('Deleted elsewhere');
+    api.setCurrentTaskId(gone.id);
+    gone.deletedAt = new Date().toISOString();
+    let meReads = 0;
+    stubFetch((request) => {
+      if (isMe(request)) {
+        meReads += 1;
+        if (meReads > 1) {
+          return errorResponse(500, 'INTERNAL');
+        }
+      }
+      return api.handle(request);
+    });
+
+    renderDashboard();
+
+    const section = await currentTaskSection();
+    expect(
+      await within(section).findByText('Your current task is no longer available.'),
+    ).not.toBeNull();
+    expect(await within(section).findByText(SYNC_FAILED)).not.toBeNull();
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Clear current task' }));
+
+    expect(await within(section).findByText(/No current task/)).not.toBeNull();
+    expect(api.currentTaskId()).toBeNull();
+    expect(within(section).queryByText(SYNC_FAILED)).toBeNull();
+    expect(within(section).queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('stale mutation errors (FE-3)', () => {
+  it('a successful rename clears an earlier failed "Set as current" on the same task', async () => {
+    const api = createFakeTaskApi();
+    api.addTask('Flaky');
+    let failSetCurrent = true;
+    stubFetch((request) => {
+      if (isSetCurrent(request) && failSetCurrent) {
+        failSetCurrent = false;
+        return errorResponse(500, 'INTERNAL');
+      }
+      return api.handle(request);
+    });
+    renderDashboard();
+
+    const item = await findTask('Flaky');
+    clickIn(item, 'Set as current');
+    expect(await within(item).findByText(SERVER_ERROR)).not.toBeNull();
+
+    clickIn(item, 'Rename');
+    fireEvent.change(within(item).getByLabelText('Task title'), {
+      target: { value: 'Flaky renamed' },
+    });
+    clickIn(item, 'Save');
+
+    const renamed = await findTask('Flaky renamed');
+    expect(api.tasks[0]?.title).toBe('Flaky renamed');
+    expect(within(renamed).queryByText(SERVER_ERROR)).toBeNull();
+    expect(within(renamed).queryByRole('alert')).toBeNull();
+  });
+
+  it('a successful "Mark complete" clears an earlier failed "Clear current task"', async () => {
+    const api = createFakeTaskApi();
+    const task = api.addTask('Current');
+    api.setCurrentTaskId(task.id);
+    let failSetCurrent = true;
+    stubFetch((request) => {
+      if (isSetCurrent(request) && failSetCurrent) {
+        failSetCurrent = false;
+        return errorResponse(500, 'INTERNAL');
+      }
+      return api.handle(request);
+    });
+    renderDashboard();
+    const section = await currentTaskSection();
+    await within(section).findByText('Current');
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Clear current task' }));
+    expect(await within(section).findByText(SERVER_ERROR)).not.toBeNull();
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Mark complete' }));
+
+    expect(await within(section).findByText(/No current task/)).not.toBeNull();
+    expect(api.tasks[0]?.completedAt).not.toBeNull();
+    expect(within(section).queryByText(SERVER_ERROR)).toBeNull();
+    expect(within(section).queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('best-effort user resync after a successful mutation (FE-4)', () => {
+  it('a completed current task stays a success when the follow-up GET /me fails', async () => {
+    const api = createFakeTaskApi();
+    const task = api.addTask('Finish me');
+    api.setCurrentTaskId(task.id);
+    let meFails = false;
+    const calls = stubFetch((request) =>
+      isMe(request) && meFails ? errorResponse(500, 'INTERNAL') : api.handle(request),
+    );
+    renderDashboard();
+    const section = await currentTaskSection();
+    await within(section).findByText('Finish me');
+    await findTask('Finish me');
+    const meReadsBefore = requestsTo(calls, mePaths.self).length;
+    meFails = true;
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Mark complete' }));
+
+    // The mutation succeeded on the server and is shown as a success, with only a
+    // non-blocking notice about the failed resync...
+    expect(await within(section).findByText(SYNC_FAILED)).not.toBeNull();
+    expect(requestsTo(calls, mePaths.self)).toHaveLength(meReadsBefore + 1);
+    expect(api.tasks[0]?.completedAt).not.toBeNull();
+    expect(within(section).queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(SERVER_ERROR)).toBeNull();
+    // ...and the task lists were still refreshed.
+    expect(await screen.findByText('No open tasks. Add one above.')).not.toBeNull();
+
+    // Retrying once the API recovers brings the card up to date.
+    meFails = false;
+    fireEvent.click(within(section).getByRole('button', { name: 'Retry' }));
+
+    expect(await within(section).findByText(/No current task/)).not.toBeNull();
+    expect(within(section).queryByText(SYNC_FAILED)).toBeNull();
+  });
+
+  it('deleting the current task stays a success when the follow-up GET /me fails', async () => {
+    const api = createFakeTaskApi();
+    const task = api.addTask('Delete me');
+    api.setCurrentTaskId(task.id);
+    let meFails = false;
+    stubFetch((request) =>
+      isMe(request) && meFails ? errorResponse(500, 'INTERNAL') : api.handle(request),
+    );
+    renderDashboard();
+    await within(await currentTaskSection()).findByText('Delete me');
+    const item = await findTask('Delete me');
+    meFails = true;
+
+    clickIn(item, 'Delete');
+    clickIn(item, 'Confirm delete');
+
+    expect(await screen.findByText('No open tasks. Add one above.')).not.toBeNull();
+    expect(api.tasks[0]?.deletedAt).not.toBeNull();
+    expect(await within(await currentTaskSection()).findByText(SYNC_FAILED)).not.toBeNull();
+    expect(screen.queryByText(SERVER_ERROR)).toBeNull();
+  });
+
+  it('a follow-up GET /me that finds the session revoked signs the user out', async () => {
+    const api = createFakeTaskApi();
+    const task = api.addTask('Finish me');
+    api.setCurrentTaskId(task.id);
+    let revoked = false;
+    stubFetch((request) =>
+      isMe(request) && revoked
+        ? errorResponse(401, 'SESSION_REVOKED', 'This session has been revoked.')
+        : api.handle(request),
+    );
+    renderDashboard();
+    const section = await currentTaskSection();
+    await within(section).findByText('Finish me');
+    revoked = true;
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Mark complete' }));
+
+    expect(await screen.findByText(LOGIN_TEXT)).not.toBeNull();
+    expect(api.tasks[0]?.completedAt).not.toBeNull();
   });
 });

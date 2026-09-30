@@ -79,6 +79,10 @@ function useInvalidateTasks(): () => Promise<void> {
 /**
  * Task writes share one rule: refresh the lists afterwards, including after a
  * TASK_NOT_FOUND (the task was deleted elsewhere, so the list on screen is stale).
+ *
+ * `afterSuccess` is a best-effort follow-up (for example re-reading the user) and must
+ * not throw: a mutation that the server accepted is a success whatever happens next, and
+ * the lists are refreshed regardless (`finally`).
  */
 function useTaskMutation<TVariables, TResult>(
   mutationFn: (variables: TVariables) => Promise<TResult>,
@@ -88,8 +92,11 @@ function useTaskMutation<TVariables, TResult>(
   return useMutation({
     mutationFn,
     onSuccess: async (result, variables) => {
-      await afterSuccess?.(result, variables);
-      await invalidate();
+      try {
+        await afterSuccess?.(result, variables);
+      } finally {
+        await invalidate();
+      }
     },
     onError: async (error) => {
       if (isTaskNotFound(error)) {
@@ -116,6 +123,8 @@ export function useReopenTask() {
 /**
  * Completing or deleting the current task makes the server clear it (D43, D38). The
  * client does not guess: it re-reads `GET /me` so the user it shows matches the server.
+ * `reloadUser` is best effort and never throws; a failure is surfaced as
+ * `userSyncFailed` (a non-blocking notice), not as a failed mutation.
  */
 function useClearsCurrentTask() {
   const { user, reloadUser } = useAuth();
