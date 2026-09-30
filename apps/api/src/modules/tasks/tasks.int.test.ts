@@ -1,6 +1,8 @@
 import {
   API_BASE_PATH,
   errorBodySchema,
+  mePaths,
+  meResponseSchema,
   type TaskId,
   taskIdSchema,
   taskListResponseSchema,
@@ -80,12 +82,12 @@ const currentTaskIdOf = async (user: TestUser): Promise<string | null | undefine
   return row?.currentTaskId;
 };
 
-/** Phase 2's PUT /me/current-task arrives in the next commit; until then set it directly. */
-const setCurrentTaskInDb = async (user: TestUser, taskId: string | null): Promise<void> => {
-  await requireHarness()
-    .db.update(users)
-    .set({ currentTaskId: taskId })
-    .where(eq(users.id, user.userId));
+const putCurrentTask = (user: TestUser, taskId: string | null): Promise<ApiResult> =>
+  call(user, 'PUT', mePaths.currentTask, { taskId });
+
+const makeCurrent = async (user: TestUser, taskId: TaskId): Promise<void> => {
+  const result = await putCurrentTask(user, taskId);
+  expect(result.status).toBe(200);
 };
 
 beforeAll(async () => {
@@ -211,7 +213,7 @@ describe('current task clearing (D38, D43)', () => {
   it('completing the current task clears it; reopening does not restore it', async () => {
     const user = await signUpTestUser(requireHarness());
     const task = await createTask(user, 'Current');
-    await setCurrentTaskInDb(user, task.id);
+    await makeCurrent(user, task.id);
 
     await call(user, 'POST', completePath(task.id));
     expect(await currentTaskIdOf(user)).toBeNull();
@@ -223,7 +225,7 @@ describe('current task clearing (D38, D43)', () => {
   it('deleting the current task clears it', async () => {
     const user = await signUpTestUser(requireHarness());
     const task = await createTask(user, 'Current');
-    await setCurrentTaskInDb(user, task.id);
+    await makeCurrent(user, task.id);
 
     await call(user, 'DELETE', itemPath(task.id));
 
@@ -235,7 +237,7 @@ describe('current task clearing (D38, D43)', () => {
     const current = await createTask(user, 'Current');
     const other = await createTask(user, 'Other');
     const third = await createTask(user, 'Third');
-    await setCurrentTaskInDb(user, current.id);
+    await makeCurrent(user, current.id);
 
     await call(user, 'POST', completePath(other.id));
     await call(user, 'DELETE', itemPath(third.id));
@@ -451,5 +453,156 @@ describe('isolation between users', () => {
 
     const [row] = await requireHarness().db.select().from(tasks).where(eq(tasks.id, task.id));
     expect(row?.userId).toBe(alice.userId);
+  });
+});
+
+const meOf = async (user: TestUser) => {
+  const result = await call(user, 'GET', mePaths.self);
+  expect(result.status).toBe(200);
+  return meResponseSchema.parse(result.body).user;
+};
+
+describe('PUT /me/current-task (D3, D43)', () => {
+  it('starts with no current task', async () => {
+    const user = await signUpTestUser(requireHarness());
+
+    expect((await meOf(user)).currentTaskId).toBeNull();
+  });
+
+  it('sets an open task as current and returns the updated user', async () => {
+    const user = await signUpTestUser(requireHarness());
+    const task = await createTask(user, 'Focus on this');
+
+    const result = await putCurrentTask(user, task.id);
+
+    expect(result.status).toBe(200);
+    expect(meResponseSchema.parse(result.body).user.currentTaskId).toBe(task.id);
+    expect((await meOf(user)).currentTaskId).toBe(task.id);
+  });
+
+  it('is repeatable, switches between tasks, and clears with null', async () => {
+    const user = await signUpTestUser(requireHarness());
+    const first = await createTask(user, 'first');
+    const second = await createTask(user, 'second');
+
+    await makeCurrent(user, first.id);
+    await makeCurrent(user, first.id);
+    expect((await meOf(user)).currentTaskId).toBe(first.id);
+
+    await makeCurrent(user, second.id);
+    expect((await meOf(user)).currentTaskId).toBe(second.id);
+
+    const cleared = await putCurrentTask(user, null);
+    expect(cleared.status).toBe(200);
+    expect(meResponseSchema.parse(cleared.body).user.currentTaskId).toBeNull();
+    expect((await putCurrentTask(user, null)).status).toBe(200);
+  });
+
+  it('rejects a completed task with 409 TASK_NOT_OPEN and keeps the previous choice', async () => {
+    const user = await signUpTestUser(requireHarness());
+    const current = await createTask(user, 'current');
+    const done = await createTask(user, 'done');
+    await makeCurrent(user, current.id);
+    await call(user, 'POST', completePath(done.id));
+
+    const result = await putCurrentTask(user, done.id);
+
+    expect(result.status).toBe(409);
+    expect(errorCode(result)).toBe('TASK_NOT_OPEN');
+    expect((await meOf(user)).currentTaskId).toBe(current.id);
+  });
+
+  it('answers TASK_NOT_FOUND alike for a deleted, a nonexistent and another user’s task', async () => {
+    const user = await signUpTestUser(requireHarness(), 'owner');
+    const other = await signUpTestUser(requireHarness(), 'other');
+    const deleted = await createTask(user, 'deleted');
+    await call(user, 'DELETE', itemPath(deleted.id));
+    const othersTask = await createTask(other, 'not yours');
+
+    const results = [
+      await putCurrentTask(user, deleted.id),
+      await putCurrentTask(user, uuidv7()),
+      await putCurrentTask(user, othersTask.id),
+    ];
+
+    for (const result of results) {
+      expect(result.status).toBe(404);
+      expect(errorCode(result)).toBe('TASK_NOT_FOUND');
+    }
+    expect(results[0]?.body).toEqual(results[1]?.body);
+    expect(results[1]?.body).toEqual(results[2]?.body);
+    expect((await meOf(user)).currentTaskId).toBeNull();
+    expect((await meOf(other)).currentTaskId).toBeNull();
+  });
+
+  it('validates the body strictly', async () => {
+    const user = await signUpTestUser(requireHarness());
+    const task = await createTask(user, 'task');
+
+    for (const body of [{}, { taskId: 'nope' }, { taskId: task.id, userId: user.userId }]) {
+      const result = await call(user, 'PUT', mePaths.currentTask, body);
+      expect(result.status).toBe(400);
+      expect(errorCode(result)).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('requires authentication', async () => {
+    const result = await call(null, 'PUT', mePaths.currentTask, { taskId: null });
+
+    expect(result.status).toBe(401);
+    expect(errorCode(result)).toBe('UNAUTHENTICATED');
+  });
+});
+
+describe('current task under concurrency', () => {
+  // Each round races "make this task current" against "complete" (or "delete") of the
+  // same task. Whichever wins, the invariant must hold afterwards: the current task is
+  // never a completed or deleted task. Neither request may fail with a server error.
+  const ROUNDS = 25;
+
+  const assertCurrentIsOpenOrNull = async (user: TestUser): Promise<void> => {
+    const currentTaskId = (await meOf(user)).currentTaskId;
+    if (currentTaskId === null) {
+      return;
+    }
+    const [row] = await requireHarness().db.select().from(tasks).where(eq(tasks.id, currentTaskId));
+    expect(row?.completedAt).toBeNull();
+    expect(row?.deletedAt).toBeNull();
+  };
+
+  it('set-current racing complete never leaves a completed task current', async () => {
+    const user = await signUpTestUser(requireHarness());
+
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const task = await createTask(user, `race ${String(round)}`);
+
+      const [setResult, completeResult] = await Promise.all([
+        putCurrentTask(user, task.id),
+        call(user, 'POST', completePath(task.id)),
+      ]);
+
+      expect(completeResult.status).toBe(200);
+      expect([200, 409]).toContain(setResult.status);
+      expect((await meOf(user)).currentTaskId).toBeNull();
+      await assertCurrentIsOpenOrNull(user);
+    }
+  });
+
+  it('set-current racing delete never leaves a deleted task current', async () => {
+    const user = await signUpTestUser(requireHarness());
+
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const task = await createTask(user, `race ${String(round)}`);
+
+      const [setResult, deleteResult] = await Promise.all([
+        putCurrentTask(user, task.id),
+        call(user, 'DELETE', itemPath(task.id)),
+      ]);
+
+      expect(deleteResult.status).toBe(204);
+      expect([200, 404]).toContain(setResult.status);
+      expect((await meOf(user)).currentTaskId).toBeNull();
+      await assertCurrentIsOpenOrNull(user);
+    }
   });
 });

@@ -2,6 +2,7 @@ import { and, desc, eq, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 
 import type { Executor } from '../../db/client.js';
 import { tasks, users } from '../../db/schema.js';
+import type { UserRow } from '../auth/queries.js';
 
 export type TaskRow = typeof tasks.$inferSelect;
 
@@ -125,6 +126,34 @@ export const markTaskDeleted = async (
     .update(tasks)
     .set({ deletedAt: sql`now()` })
     .where(liveOwnedBy(userId, taskId))
+    .returning();
+  return row;
+};
+
+/**
+ * Reads the user's task (deleted or not) with a FOR SHARE row lock, for the current-task
+ * check. The lock makes a concurrent complete/delete of the same task wait for this
+ * transaction (and vice versa): under READ COMMITTED a locking read returns the latest
+ * committed version, so the open / not-deleted check cannot act on a stale row.
+ */
+export const lockOwnedTaskForShare = async (
+  db: Executor,
+  userId: string,
+  taskId: string,
+): Promise<TaskRow | undefined> => {
+  const [row] = await db.select().from(tasks).where(ownedBy(userId, taskId)).limit(1).for('share');
+  return row;
+};
+
+export const setUserCurrentTask = async (
+  db: Executor,
+  userId: string,
+  taskId: string | null,
+): Promise<UserRow | undefined> => {
+  const [row] = await db
+    .update(users)
+    .set({ currentTaskId: taskId })
+    .where(eq(users.id, userId))
     .returning();
   return row;
 };

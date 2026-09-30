@@ -1,4 +1,9 @@
-import { identityProviderSchema, userIdSchema, type UserView } from '@focus-flow/contracts';
+import {
+  identityProviderSchema,
+  taskIdSchema,
+  userIdSchema,
+  type UserView,
+} from '@focus-flow/contracts';
 import { z } from 'zod';
 
 import type { Db } from '../../db/client.js';
@@ -20,6 +25,7 @@ export const toUserView = async (db: Db, user: UserRow): Promise<UserView> => {
     emailVerified: user.emailVerifiedAt !== null,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
+    currentTaskId: user.currentTaskId === null ? null : taskIdSchema.parse(user.currentTaskId),
     identities: identityProvidersSchema.parse(providers),
   };
 };
