@@ -8,8 +8,10 @@ import type { Logger } from 'pino';
 import pinoHttp from 'pino-http';
 
 import { createAuthRouter } from '../../modules/auth/http.js';
+import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
+import { createTasksRouter } from '../../modules/tasks/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
 import type { AppConfig } from '../config.js';
 import { getRequestId } from '../request-context.js';
@@ -47,6 +49,10 @@ export const createApp = ({ config, logger, pool, redis, authDeps }: AppDeps): E
   app.use(API_BASE_PATH, createSystemRouter({ pool, redis }));
   app.use(API_BASE_PATH, createAuthRouter(authDeps));
   app.use(API_BASE_PATH, createUsersRouter(authDeps));
+  app.use(
+    API_BASE_PATH,
+    createTasksRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
 
   app.use(notFoundHandler);
 

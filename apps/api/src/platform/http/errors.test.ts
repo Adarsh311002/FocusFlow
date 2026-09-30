@@ -12,6 +12,7 @@ import {
   notFound,
   notFoundHandler,
   parseRequestBody,
+  parseRequestInput,
   RequestValidationError,
 } from './errors.js';
 
@@ -92,6 +93,21 @@ describe('parseRequestBody', () => {
 
   it('throws a RequestValidationError on failure', () => {
     expect(() => parseRequestBody(schema, { title: 42 })).toThrow(RequestValidationError);
+  });
+});
+
+describe('parseRequestInput', () => {
+  // Query-string shaped input: every value arrives as a string.
+  const schema = z.strictObject({ limit: z.coerce.number().int().min(1).default(10) });
+
+  it('returns the schema output, with coercion and defaults applied', () => {
+    expect(parseRequestInput(schema, { limit: '5' })).toEqual({ limit: 5 });
+    expect(parseRequestInput(schema, {})).toEqual({ limit: 10 });
+  });
+
+  it('throws a RequestValidationError (a 400), never a bare ZodError', () => {
+    expect(() => parseRequestInput(schema, { limit: 'many' })).toThrow(RequestValidationError);
+    expect(() => parseRequestInput(schema, { other: '1' })).toThrow(RequestValidationError);
   });
 });
 
