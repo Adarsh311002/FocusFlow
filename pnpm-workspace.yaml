@@ -13,6 +13,8 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+  # Optional native encoder pulled in by BullMQ (msgpackr); the pure-JS fallback is fine.
+  msgpackr-extract: false
 
 # pnpm delays adoption of freshly published versions; these are pinned deliberately.
 minimumReleaseAgeExclude:
@@ -27,6 +29,7 @@ catalog:
   globals: ^17.12.0
   jiti: ^2.7.0
   prettier: ^3.9.8
+  socket.io-client: ^4.8.1
   tsx: ^4.23.14
   typescript: 6.0.3
   typescript-eslint: ^8.70.0
