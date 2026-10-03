@@ -12,10 +12,11 @@ import { closeAllSockets, openSocket, waitForConnect } from '../../../test/socke
 import { startTcpProxy, type TcpProxy } from '../../../test/tcp-proxy.js';
 import { logOutTestUser, signUpTestUser, type TestUser } from '../../../test/users.js';
 
-// Review finding R-1 against real stores: one API instance reaches Redis and PostgreSQL
-// through TCP proxies, so each store can become unreachable for that instance alone.
-// Whenever its revocation check cannot get an answer from either store, REST and the
-// Socket.IO handshake must refuse (503 / INTERNAL), never treat the session as valid.
+// The revocation check against real stores (review findings R-1 and R-2): one API
+// instance reaches Redis and PostgreSQL through TCP proxies, so each store can become
+// unreachable for that instance alone. A Redis marker refuses at once; otherwise
+// PostgreSQL decides; and whenever PostgreSQL is needed but unreachable, REST and the
+// Socket.IO handshake refuse (503 / INTERNAL) — never treat the session as valid.
 
 let harness: TestHarness | undefined;
 let proxied: TestInstance | undefined;
@@ -143,6 +144,23 @@ describe('revocation check during store outages', () => {
     expect(await getMe(revoked)).toEqual({ status: 503, code: 'INTERNAL' });
     expect(await handshake(active)).toMatchObject({ connected: false, code: 'INTERNAL' });
     expect(await handshake(revoked)).toMatchObject({ connected: false, code: 'INTERNAL' });
+  });
+
+  it('Redis healthy, PostgreSQL unavailable: a marker still refuses, no marker fails closed', async () => {
+    const { h, proxied: instance, postgresProxy: postgresLink } = requireAll();
+    const active = await signUpTestUser(h, 'active');
+    const revoked = await signUpTestUser(h, 'revoked');
+    await logOutTestUser(h, revoked);
+    await waitFor(() => instance.runtime.redis.status === 'ready');
+
+    await postgresLink.cut();
+
+    // The marker is enough to refuse without PostgreSQL.
+    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+    expect(await handshake(revoked)).toMatchObject({ connected: false, code: 'SESSION_REVOKED' });
+    // No marker never means "not revoked": with PostgreSQL down the check refuses.
+    expect(await getMe(active)).toEqual({ status: 503, code: 'INTERNAL' });
+    expect(await handshake(active)).toMatchObject({ connected: false, code: 'INTERNAL' });
   });
 
   it('recovers once the stores are reachable again', async () => {

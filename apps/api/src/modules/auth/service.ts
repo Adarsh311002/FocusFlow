@@ -288,4 +288,4 @@ export const logout = async (deps: AuthDeps, cookieValue: string | undefined): P
 };
 
 export const checkAccessTokenRevoked = (deps: AuthDeps, sid: string): Promise<boolean> =>
-  isSessionRevoked(deps.redis, deps.db, sid, deps.logger, deps.accessTokenTtlSeconds * 1_000);
+  isSessionRevoked(deps.redis, deps.db, sid, deps.logger);

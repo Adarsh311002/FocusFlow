@@ -16,7 +16,7 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 
 | Key | Type | Contents | Lifetime |
 |---|---|---|---|
-| `ff:epoch` | String | `{uuid}.{createdAtMs}` (Redis TIME), set once with `SET NX` (R3) | Permanent; its disappearance means Redis lost its data; its age drives the revocation trust window |
+| `ff:epoch` | String | `{uuid}.{createdAtMs}` (Redis TIME), set once with `SET NX` (R3) | Permanent; its disappearance means Redis lost its data. Its creation time is recorded but no longer affects revocation (R3, revised) |
 | `ff:instances` | Sorted set | `instanceId` scored by its last heartbeat (Redis TIME, ms) (R1) | Refreshed every heartbeat; dead ones removed by the reconciler (the score survives the instance) |
 | `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; deleted by clean shutdown or the reconciler |
 | `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; entries of dead instances ignored at read time and removed by the reconciler |
@@ -69,4 +69,4 @@ The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the chan
 | Knocks | Expire client-side; the requester can knock again |
 | Queued jobs | Recreated by the reconciler from PostgreSQL (solo) or not needed (room timers restarted) |
 | Rate limits, chat de-duplication | Harmless to lose |
-| Revoked-session list | Lost markers are covered by the trust-loss window (R3): until the new epoch is one access-token lifetime old, revocation checks go to PostgreSQL, so a revoked session never becomes trusted |
+| Revoked-session list | Harmless to lose: the marker is only a positive shortcut, and without it the revocation check asks PostgreSQL (R3, revised), so a revoked session never becomes trusted |

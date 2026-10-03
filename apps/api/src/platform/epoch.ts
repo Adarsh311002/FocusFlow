@@ -12,9 +12,9 @@ import { redisKeys } from './redis-keys.js';
 // replica), so every instance compares the epoch it last saw with the current one at
 // startup, on every heartbeat and on every reconnect.
 //
-// The value also records when it was created (`{uuid}.{createdAtMs}`, Redis TIME). That
-// timestamp is what the revocation check uses to know how long ago the cache it reads
-// was (re)started — see modules/auth/revocation.ts.
+// The value also records when it was created (`{uuid}.{createdAtMs}`, Redis TIME), for
+// diagnostics. Revocation does not depend on it: a missing revocation marker always sends
+// the check to PostgreSQL (modules/auth/revocation.ts).
 
 export type EpochValue = { readonly id: string; readonly createdAtMs: number };
 

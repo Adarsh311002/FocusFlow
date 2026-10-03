@@ -25,7 +25,9 @@ import {
   type TestUser,
 } from '../../../test/users.js';
 import { authSessions, users } from '../../db/schema.js';
+import { formatEpoch, parseEpoch } from '../../platform/epoch.js';
 import { redisTimeMs } from '../../platform/redis.js';
+import { redisKeys } from '../../platform/redis-keys.js';
 import { issueAccessToken } from '../auth/jwt.js';
 import { sessionRoom, userRoom } from './types.js';
 
@@ -176,7 +178,37 @@ describe('handshake authentication', () => {
   });
 });
 
-describe('revocation after Redis data loss (trust-loss window)', () => {
+describe('revocation when the Redis marker is missing (R-2)', () => {
+  it('refuses a session revoked in PostgreSQL whose marker was never written', async () => {
+    const h = requireHarness();
+    const user = await signUpTestUser(h, 'unmarked');
+    // The revocation commits in PostgreSQL but no marker reaches Redis (a failed write),
+    // while Redis keeps its data and an epoch older than one access-token lifetime (what
+    // R3 used to trust): PostgreSQL still decides at the handshake.
+    const epoch = parseEpoch(await h.redis.get(redisKeys.epoch));
+    if (epoch === undefined) {
+      throw new Error('expected an epoch');
+    }
+    await h.redis.set(
+      redisKeys.epoch,
+      formatEpoch({
+        id: epoch.id,
+        createdAtMs: epoch.createdAtMs - h.config.ACCESS_TOKEN_TTL_SECONDS * 1_000 - 1_000,
+      }),
+    );
+    await h.db
+      .update(authSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(authSessions.id, await sidOf(user)));
+
+    expect(await waitForConnect(openSocket(h.baseUrl, { token: user.accessToken }))).toMatchObject({
+      connected: false,
+      code: 'SESSION_REVOKED',
+    });
+  });
+});
+
+describe('revocation after Redis data loss', () => {
   it('still refuses a revoked session at the handshake after FLUSHALL, before and after recovery', async () => {
     const h = requireHarness();
     const user = await signUpTestUser(h, 'revoked-then-flushed');
@@ -194,7 +226,7 @@ describe('revocation after Redis data loss (trust-loss window)', () => {
         await waitForConnect(openSocket(h.baseUrl, { token: user.accessToken })),
       ).toMatchObject({ connected: false, code: 'SESSION_REVOKED' });
 
-      // After recovery the new epoch is inside the window: PostgreSQL still decides.
+      // After recovery the marker is still gone: PostgreSQL still decides.
       await h.runtime.epoch.check('tick');
       expect(
         await waitForConnect(openSocket(h.baseUrl, { token: user.accessToken })),

@@ -18,7 +18,7 @@ import { redisTimeMs } from './redis.js';
 import { redisKeys } from './redis-keys.js';
 
 // Phase 3 Redis coordination against a real Redis: the epoch, instance heartbeats,
-// recovery after data loss, and the revocation trust-loss window (approved security fix).
+// recovery after data loss, and revocation decisions surviving Redis data loss (R-2).
 
 const HEARTBEAT_MS = 200;
 
@@ -70,23 +70,31 @@ const getMe = async (user: TestUser): Promise<{ status: number; code?: string }>
     : { status: response.status };
 };
 
-/** Revokes a user's (only) session exactly as logout does: PostgreSQL, then Redis. */
-const revoke = async (user: TestUser): Promise<void> => {
-  const h = requireHarness();
-  const [session] = await h.db
-    .select({ id: authSessions.id })
+const sidOf = async (user: TestUser): Promise<string> => {
+  const [session] = await requireHarness()
+    .db.select({ id: authSessions.id })
     .from(authSessions)
     .where(eq(authSessions.userId, user.userId));
   if (session === undefined) {
     throw new Error('no auth session for the test user');
   }
-  await revokeAuthSession(h.db, session.id);
-  await markSessionRevoked(
-    h.redis,
-    session.id,
-    h.config.ACCESS_TOKEN_TTL_SECONDS,
-    h.authDeps.logger,
-  );
+  return session.id;
+};
+
+/**
+ * Revokes a user's (only) session exactly as logout does: PostgreSQL, then the Redis
+ * marker — or, with `writeMarker: false`, as a logout whose marker write failed.
+ */
+const revoke = async (
+  user: TestUser,
+  { writeMarker = true }: { writeMarker?: boolean } = {},
+): Promise<void> => {
+  const h = requireHarness();
+  const sid = await sidOf(user);
+  await revokeAuthSession(h.db, sid);
+  if (writeMarker) {
+    await markSessionRevoked(h.redis, sid, h.config.ACCESS_TOKEN_TTL_SECONDS, h.authDeps.logger);
+  }
 };
 
 beforeAll(async () => {
@@ -191,45 +199,10 @@ describe('Redis reconnect (restart with data kept)', () => {
   });
 });
 
-describe('revocation trust-loss window (approved security fix)', () => {
-  it('never trusts an emptied revocation cache for one access-token lifetime', async () => {
+describe('revocation: a missing Redis marker is never proof (review finding R-2)', () => {
+  /** Ages the epoch past one access-token lifetime: what R3 used to treat as "trusted". */
+  const ageEpoch = async (): Promise<void> => {
     const h = requireHarness();
-    const revoked = await signUpTestUser(h, 'revoked');
-    const active = await signUpTestUser(h, 'active');
-    await revoke(revoked);
-
-    // Normal operation: the Redis marker rejects the revoked session.
-    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
-    expect((await getMe(active)).status).toBe(200);
-
-    // Redis loses its data and recovery has not run yet (heartbeat stopped, so nothing
-    // recreates the epoch): the marker is gone, but the missing epoch sends the check to
-    // PostgreSQL, which still knows the session is revoked.
-    await h.runtime.heartbeat.stop();
-    for (const extra of h.extraInstances) {
-      await extra.runtime.heartbeat.stop();
-    }
-    await h.redis.flushall();
-    expect(await h.redis.get(redisKeys.epoch)).toBeNull();
-
-    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
-    expect((await getMe(active)).status).toBe(200);
-
-    // Recovery recreates the epoch. Inside the window PostgreSQL still decides.
-    const result = await h.runtime.epoch.check('tick');
-    expect(result.created).toBe(true);
-    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
-    expect((await getMe(active)).status).toBe(200);
-
-    // Revocations made after the loss are in the new cache and apply immediately.
-    const lateRevoked = await signUpTestUser(h, 'late');
-    await revoke(lateRevoked);
-    expect(await getMe(lateRevoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
-
-    // Once the epoch is one access-token lifetime old, Redis answers alone again. The
-    // `revoked` user's token is accepted here only because this test ages the epoch
-    // without waiting 15 minutes: in reality that token, issued before the loss, has
-    // expired by then, which is exactly why one token lifetime is the window.
     const epoch = parseEpoch(await h.redis.get(redisKeys.epoch));
     if (epoch === undefined) {
       throw new Error('expected an epoch');
@@ -239,10 +212,63 @@ describe('revocation trust-loss window (approved security fix)', () => {
       redisKeys.epoch,
       formatEpoch({ id: epoch.id, createdAtMs: epoch.createdAtMs - windowMs - 1_000 }),
     );
-    expect((await getMe(revoked)).status).toBe(200);
-    expect(await getMe(lateRevoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+  };
+
+  it('refuses a session revoked in PostgreSQL whose marker was never written, however old the epoch', async () => {
+    const h = requireHarness();
+    const revoked = await signUpTestUser(h, 'unmarked');
+    const active = await signUpTestUser(h, 'active');
+    // The revocation commits in PostgreSQL, but the marker write fails (simulated by
+    // never writing it) while Redis keeps its data and its long-lived epoch.
+    await revoke(revoked, { writeMarker: false });
+    await ageEpoch();
+    expect(await h.redis.exists(`auth:revoked:${await sidOf(revoked)}`)).toBe(0);
+
+    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+    expect((await getMe(active)).status).toBe(200);
+  });
+
+  it('refuses a revoked session after Redis loses its data, before and after recovery', async () => {
+    const h = requireHarness();
+    const revoked = await signUpTestUser(h, 'revoked');
+    const active = await signUpTestUser(h, 'active');
+    await revoke(revoked);
+
+    // Normal operation: the Redis marker rejects the revoked session.
+    expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
     expect((await getMe(active)).status).toBe(200);
 
-    await h.runtime.heartbeat.start();
+    // Redis loses its data and recovery has not run yet (heartbeats stopped, so nothing
+    // recreates the epoch): the marker is gone, and PostgreSQL decides.
+    await h.runtime.heartbeat.stop();
+    for (const extra of h.extraInstances) {
+      await extra.runtime.heartbeat.stop();
+    }
+    try {
+      await h.redis.flushall();
+      expect(await h.redis.get(redisKeys.epoch)).toBeNull();
+
+      expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+      expect((await getMe(active)).status).toBe(200);
+
+      // Recovery recreates the epoch; its age no longer matters for revocation, even
+      // once it is older than one access-token lifetime.
+      const result = await h.runtime.epoch.check('tick');
+      expect(result.created).toBe(true);
+      expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+      await ageEpoch();
+      expect(await getMe(revoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+      expect((await getMe(active)).status).toBe(200);
+
+      // Revocations made after the loss are marked in the new cache and apply at once.
+      const lateRevoked = await signUpTestUser(h, 'late');
+      await revoke(lateRevoked);
+      expect(await getMe(lateRevoked)).toEqual({ status: 401, code: 'SESSION_REVOKED' });
+    } finally {
+      await h.runtime.heartbeat.start();
+      for (const extra of h.extraInstances) {
+        await extra.runtime.heartbeat.start();
+      }
+    }
   });
 });

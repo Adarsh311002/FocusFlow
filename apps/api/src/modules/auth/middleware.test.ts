@@ -9,8 +9,9 @@ import { issueAccessToken } from './jwt.js';
 import { requireAuth } from './middleware.js';
 import type { AuthDeps } from './service.js';
 
-// The REST side of review finding R-1: `requireAuth` must surface the revocation check's
-// fail-closed 503 and never reach the route when neither Redis nor PostgreSQL can answer.
+// The REST side of the revocation check (review findings R-1 and R-2): a Redis marker
+// refuses at once; otherwise PostgreSQL decides; and when PostgreSQL is needed but
+// unavailable, `requireAuth` surfaces the fail-closed 503 and never reaches the route.
 
 const JWT = {
   keys: [{ kid: 'k1', secret: 'a'.repeat(32) }],
@@ -20,26 +21,16 @@ const JWT = {
 const TTL_SECONDS = 900;
 const USER_ID = '018f8f3e-0f1a-7c2b-9f4a-2f1b6c9d0e11';
 const SID = '018f8f3e-0000-7000-8000-000000000001';
-const NOW_MS = Date.now();
-const SETTLED_EPOCH = `01a0ed0d-0000-7000-8000-00000000e0c0.${String(NOW_MS - TTL_SECONDS * 1_000 - 60_000)}`;
-
-const redisFake = (mode: 'healthy' | 'down'): Redis => {
-  const pipeline = {
-    get: () => pipeline,
-    time: () => pipeline,
-    exec: () =>
+/** The one Redis call the check makes: GET of the revocation marker. */
+const redisFake = (mode: 'marker' | 'no-marker' | 'down'): Redis =>
+  ({
+    get: () =>
       mode === 'down'
         ? Promise.reject(
             new Error("Stream isn't writeable and enableOfflineQueue options is false"),
           )
-        : Promise.resolve([
-            [null, null],
-            [null, SETTLED_EPOCH],
-            [null, [String(Math.floor(NOW_MS / 1_000)), '0']],
-          ]),
-  };
-  return { pipeline: () => pipeline } as unknown as Redis;
-};
+        : Promise.resolve(mode === 'marker' ? '1' : null),
+  }) as unknown as Redis;
 
 /** The `select().from().where().limit()` chain `findAuthSessionById` uses. */
 const dbFake = (mode: 'healthy' | 'revoked' | 'down'): { db: Db; queries: () => number } => {
@@ -92,31 +83,49 @@ const authenticate = async (deps: AuthDeps): Promise<{ error: unknown; req: Requ
 };
 
 describe('requireAuth revocation check', () => {
-  it('Redis and PostgreSQL healthy: answers from Redis and lets the request through', async () => {
-    const { db, queries } = dbFake('healthy');
+  it('marker present: SESSION_REVOKED without querying PostgreSQL', async () => {
+    const { db, queries } = dbFake('down');
 
-    const { error, req } = await authenticate(depsWith(redisFake('healthy'), db));
+    const { error, req } = await authenticate(depsWith(redisFake('marker'), db));
 
-    expect(error).toBeUndefined();
-    expect(req.authUser).toEqual({ userId: USER_ID, sid: SID });
+    expect(error).toMatchObject({ code: 'SESSION_REVOKED', status: 401 });
+    expect(req.authUser).toBeUndefined();
     expect(queries()).toBe(0);
   });
 
-  it('Redis unavailable, PostgreSQL healthy: PostgreSQL decides', async () => {
+  it('marker absent: PostgreSQL decides, both ways', async () => {
     const live = dbFake('healthy');
     const revoked = dbFake('revoked');
+
+    const allowed = await authenticate(depsWith(redisFake('no-marker'), live.db));
+    expect(allowed.error).toBeUndefined();
+    expect(allowed.req.authUser).toEqual({ userId: USER_ID, sid: SID });
+    expect(live.queries()).toBe(1);
+
+    const refused = await authenticate(depsWith(redisFake('no-marker'), revoked.db));
+    expect(refused.error).toMatchObject({ code: 'SESSION_REVOKED', status: 401 });
+  });
+
+  it('marker absent, PostgreSQL unavailable: fails closed with a 503', async () => {
+    const { error, req } = await authenticate(depsWith(redisFake('no-marker'), dbFake('down').db));
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({ code: 'INTERNAL', status: 503 });
+    expect(req.authUser).toBeUndefined();
+  });
+
+  it('Redis unavailable: PostgreSQL decides, both ways', async () => {
+    const live = dbFake('healthy');
 
     expect((await authenticate(depsWith(redisFake('down'), live.db))).error).toBeUndefined();
     expect(live.queries()).toBe(1);
 
-    const { error } = await authenticate(depsWith(redisFake('down'), revoked.db));
+    const { error } = await authenticate(depsWith(redisFake('down'), dbFake('revoked').db));
     expect(error).toMatchObject({ code: 'SESSION_REVOKED', status: 401 });
   });
 
   it('Redis and PostgreSQL unavailable: fails closed with a 503, never reaches the route', async () => {
-    const { db } = dbFake('down');
-
-    const { error, req } = await authenticate(depsWith(redisFake('down'), db));
+    const { error, req } = await authenticate(depsWith(redisFake('down'), dbFake('down').db));
 
     expect(error).toBeInstanceOf(AppError);
     expect(error).toMatchObject({ code: 'INTERNAL', status: 503 });

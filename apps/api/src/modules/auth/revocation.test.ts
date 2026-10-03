@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from '../../db/client.js';
 import { AppError } from '../../platform/http/errors.js';
 import type { AuthSessionRow } from './queries.js';
-import { decideRevocation, isSessionRevoked, markSessionRevoked } from './revocation.js';
+import { isSessionRevoked, markSessionRevoked } from './revocation.js';
 
 const SID = '018f8f3e-0f1a-7c2b-9f4a-2f1b6c9d0e11';
 
@@ -105,41 +105,26 @@ describe('markSessionRevoked', () => {
   });
 });
 
-const TRUST_WINDOW_MS = 900_000;
-const NOW_MS = 1_790_000_000_000;
-const EPOCH_ID = '01a0ed0d-0000-7000-8000-00000000e0c0';
-/** Created more than one access-token lifetime ago: the cache is trustworthy. */
-const SETTLED_EPOCH = `${EPOCH_ID}.${String(NOW_MS - TRUST_WINDOW_MS - 1)}`;
-/** Created a second ago (Redis just lost its data): the cache is not trustworthy yet. */
-const FRESH_EPOCH = `${EPOCH_ID}.${String(NOW_MS - 1_000)}`;
+/** A structural fake of the one Redis call the check makes: GET of the marker. */
+const markerRedis = (marker: string | null): Redis =>
+  ({ get: () => Promise.resolve(marker) }) as unknown as Redis;
 
-const timeReply = (ms: number): [string, string] => [
-  String(Math.floor(ms / 1_000)),
-  String((ms % 1_000) * 1_000),
-];
+const unavailableRedis = (error: Error): Redis =>
+  ({ get: () => Promise.reject(error) }) as unknown as Redis;
 
-type PipelineReplies = [Error | null, unknown][];
-
-/** A structural fake of the one pipeline isSessionRevoked issues: GET, GET, TIME. */
-const pipelineRedis = (exec: () => Promise<PipelineReplies | null>): Redis => {
-  const pipeline = {
-    get: () => pipeline,
-    time: () => pipeline,
-    exec,
+/** Counts PostgreSQL lookups, so tests can prove when PostgreSQL was (not) asked. */
+const countingDb = (db: Db): { db: Db; queries: () => number } => {
+  let queries = 0;
+  return {
+    db: {
+      select: (...args: unknown[]) => {
+        queries += 1;
+        return (db.select as (...a: unknown[]) => unknown)(...args);
+      },
+    } as unknown as Db,
+    queries: () => queries,
   };
-  return { pipeline: () => pipeline } as unknown as Redis;
 };
-
-const cacheRedis = (state: { marker: string | null; epoch: string | null }): Redis =>
-  pipelineRedis(() =>
-    Promise.resolve([
-      [null, state.marker],
-      [null, state.epoch],
-      [null, timeReply(NOW_MS)],
-    ]),
-  );
-
-const failingCacheRedis = (error: Error): Redis => pipelineRedis(() => Promise.reject(error));
 
 const createFullLogger = () => {
   const warnings: LoggedWarning[] = [];
@@ -155,110 +140,67 @@ const createFullLogger = () => {
   return { logger, warnings, errors };
 };
 
-const mustNotQuery = (): Db => dbThatThrows(new Error('PostgreSQL must not be queried'));
+const revokedSession = (): Db => dbReturning([{ ...baseSession, revokedAt: new Date() }]);
+const liveSession = (): Db => dbReturning([{ ...baseSession, revokedAt: null }]);
 
 const check = (redis: Redis, db: Db, logger: Logger): Promise<boolean> =>
-  isSessionRevoked(redis, db, SID, logger, TRUST_WINDOW_MS);
-
-describe('decideRevocation', () => {
-  const at = (epoch: string | null, marker: string | null = null) =>
-    decideRevocation({ revokedMarker: marker, epoch, redisNowMs: NOW_MS }, TRUST_WINDOW_MS);
-
-  it('trusts a present marker regardless of the epoch', () => {
-    expect(at(SETTLED_EPOCH, '1')).toBe('revoked');
-    expect(at(FRESH_EPOCH, '1')).toBe('revoked');
-    expect(at(null, '1')).toBe('revoked');
-  });
-
-  it('answers not-revoked from Redis alone once the epoch is older than the window', () => {
-    expect(at(SETTLED_EPOCH)).toBe('not_revoked');
-  });
-
-  it('consults PostgreSQL inside the window after the epoch was (re)created', () => {
-    expect(at(FRESH_EPOCH)).toBe('consult_postgres');
-  });
-
-  it('consults PostgreSQL when the epoch is missing (data lost, recovery not yet run)', () => {
-    expect(at(null)).toBe('consult_postgres');
-  });
-
-  it('consults PostgreSQL when the epoch is unreadable', () => {
-    expect(at('garbage')).toBe('consult_postgres');
-    expect(at(`${EPOCH_ID}.not-a-number`)).toBe('consult_postgres');
-  });
-
-  it('trusts the cache from exactly one window after the epoch was created', () => {
-    const createdAtMs = NOW_MS - TRUST_WINDOW_MS;
-    expect(at(`${EPOCH_ID}.${String(createdAtMs)}`)).toBe('not_revoked');
-    expect(at(`${EPOCH_ID}.${String(createdAtMs + 1)}`)).toBe('consult_postgres');
-  });
-});
+  isSessionRevoked(redis, db, SID, logger);
 
 describe('isSessionRevoked', () => {
-  it('reports revoked when the Redis marker is present, without touching PostgreSQL', async () => {
-    const { logger, warnings } = createFullLogger();
+  describe('Redis healthy', () => {
+    it('marker present: revoked, without querying PostgreSQL', async () => {
+      const { logger, warnings } = createFullLogger();
+      const { db, queries } = countingDb(dbThatThrows(new Error('must not be queried')));
 
-    await expect(
-      check(cacheRedis({ marker: '1', epoch: SETTLED_EPOCH }), mustNotQuery(), logger),
-    ).resolves.toBe(true);
-    expect(warnings).toHaveLength(0);
-  });
-
-  it('stays on the fast path outside the trust window: not revoked, no PostgreSQL query', async () => {
-    const { logger, warnings, errors } = createFullLogger();
-
-    await expect(
-      check(cacheRedis({ marker: null, epoch: SETTLED_EPOCH }), mustNotQuery(), logger),
-    ).resolves.toBe(false);
-    expect(warnings).toHaveLength(0);
-    expect(errors).toHaveLength(0);
-  });
-
-  describe('inside the trust-loss window', () => {
-    it.each([
-      ['a freshly created epoch', FRESH_EPOCH],
-      ['a missing epoch', null],
-    ])('asks PostgreSQL with %s and keeps a revoked session revoked', async (_label, epoch) => {
-      const { logger } = createFullLogger();
-      const db = dbReturning([{ ...baseSession, revokedAt: new Date() }]);
-
-      await expect(check(cacheRedis({ marker: null, epoch }), db, logger)).resolves.toBe(true);
+      await expect(check(markerRedis('1'), db, logger)).resolves.toBe(true);
+      expect(queries()).toBe(0);
+      expect(warnings).toHaveLength(0);
     });
 
-    it('asks PostgreSQL and lets a session that was never revoked through', async () => {
+    it('marker absent, PostgreSQL says revoked: revoked (a missing marker proves nothing)', async () => {
       const { logger } = createFullLogger();
-      const db = dbReturning([{ ...baseSession, revokedAt: null }]);
+      const { db, queries } = countingDb(revokedSession());
 
-      await expect(
-        check(cacheRedis({ marker: null, epoch: FRESH_EPOCH }), db, logger),
-      ).resolves.toBe(false);
+      await expect(check(markerRedis(null), db, logger)).resolves.toBe(true);
+      expect(queries()).toBe(1);
     });
 
-    it('fails closed with a 503 when PostgreSQL is unavailable, rather than trusting the cache', async () => {
+    it('marker absent, PostgreSQL says not revoked: not revoked', async () => {
+      const { logger, warnings } = createFullLogger();
+      const { db, queries } = countingDb(liveSession());
+
+      await expect(check(markerRedis(null), db, logger)).resolves.toBe(false);
+      expect(queries()).toBe(1);
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('marker absent, no such session in PostgreSQL: not revoked', async () => {
+      const { logger } = createFullLogger();
+
+      await expect(check(markerRedis(null), dbReturning([]), logger)).resolves.toBe(false);
+    });
+
+    it('marker absent, PostgreSQL unavailable: fails closed with a 503', async () => {
+      const pgError = new Error('pool exhausted');
       const { logger, errors } = createFullLogger();
-      const db = dbThatThrows(new Error('pool exhausted'));
 
-      const failure = check(cacheRedis({ marker: null, epoch: FRESH_EPOCH }), db, logger);
+      const failure = check(markerRedis(null), dbThatThrows(pgError), logger);
 
       await expect(failure).rejects.toBeInstanceOf(AppError);
       await expect(failure).rejects.toMatchObject({ code: 'INTERNAL', status: 503 });
       expect(errors).toHaveLength(1);
-      expect(errors[0]?.message).toContain('Revocation cache untrusted');
+      expect((errors[0]?.details as { err?: unknown }).err).toBe(pgError);
     });
   });
 
-  describe('when Redis itself fails', () => {
-    it('falls back to PostgreSQL and reports revoked when the session is revoked there', async () => {
+  describe('Redis unavailable', () => {
+    it('PostgreSQL says revoked: revoked', async () => {
       const redisError = new Error('connection lost');
       const { logger, warnings } = createFullLogger();
 
-      await expect(
-        check(
-          failingCacheRedis(redisError),
-          dbReturning([{ ...baseSession, revokedAt: new Date() }]),
-          logger,
-        ),
-      ).resolves.toBe(true);
+      await expect(check(unavailableRedis(redisError), revokedSession(), logger)).resolves.toBe(
+        true,
+      );
 
       expect(warnings).toHaveLength(1);
       expect(warnings[0]?.message).toContain(
@@ -269,46 +211,20 @@ describe('isSessionRevoked', () => {
       expect(details.err).toBe(redisError);
     });
 
-    it('treats a failed command inside the pipeline like a Redis failure', async () => {
-      const { logger, warnings } = createFullLogger();
-      const redis = pipelineRedis(() =>
-        Promise.resolve([
-          [new Error('WRONGTYPE'), null],
-          [null, SETTLED_EPOCH],
-          [null, timeReply(NOW_MS)],
-        ]),
-      );
-
-      await expect(
-        check(redis, dbReturning([{ ...baseSession, revokedAt: new Date() }]), logger),
-      ).resolves.toBe(true);
-      expect(warnings).toHaveLength(1);
-    });
-
-    it('reports not-revoked when PostgreSQL says not revoked or has no such session', async () => {
+    it('PostgreSQL says not revoked: not revoked', async () => {
       const { logger } = createFullLogger();
 
       await expect(
-        check(
-          failingCacheRedis(new Error('x')),
-          dbReturning([{ ...baseSession, revokedAt: null }]),
-          logger,
-        ),
+        check(unavailableRedis(new Error('connection lost')), liveSession(), logger),
       ).resolves.toBe(false);
-      await expect(check(failingCacheRedis(new Error('x')), dbReturning([]), logger)).resolves.toBe(
-        false,
-      );
     });
 
-    it('fails closed with a 503 when PostgreSQL is unavailable too, never "not revoked"', async () => {
-      const pgError = new Error('pool exhausted');
+    it('PostgreSQL unavailable too: fails closed with a 503, never "not revoked"', async () => {
       const { logger, warnings, errors } = createFullLogger();
 
-      // Review finding R-1: with both stores down nothing can prove the session is still
-      // valid, so the request is refused with a temporary 503 instead of being let through.
       const failure = check(
-        failingCacheRedis(new Error('connection lost')),
-        dbThatThrows(pgError),
+        unavailableRedis(new Error('connection lost')),
+        dbThatThrows(new Error('connection refused')),
         logger,
       );
 
@@ -316,23 +232,6 @@ describe('isSessionRevoked', () => {
       await expect(failure).rejects.toMatchObject({ code: 'INTERNAL', status: 503 });
       expect(warnings).toHaveLength(1);
       expect(errors).toHaveLength(1);
-      const details = errors[0]?.details as { sid?: string; err?: unknown };
-      expect(details.err).toBe(pgError);
-    });
-
-    it('fails closed the same way when a command inside the pipeline fails', async () => {
-      const { logger } = createFullLogger();
-      const redis = pipelineRedis(() =>
-        Promise.resolve([
-          [new Error('LOADING Redis is loading the dataset in memory'), null],
-          [null, SETTLED_EPOCH],
-          [null, timeReply(NOW_MS)],
-        ]),
-      );
-
-      await expect(
-        check(redis, dbThatThrows(new Error('connection refused')), logger),
-      ).rejects.toMatchObject({ code: 'INTERNAL', status: 503 });
     });
   });
 });

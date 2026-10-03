@@ -20,7 +20,7 @@ export type HandshakeResult =
 /**
  * Socket authentication (docs/architecture/auth.md, "Socket authentication"). Exactly the
  * checks `requireAuth` runs for REST — the same JWT verification and the same revocation
- * check (including the Phase 3 trust-loss window) — plus "the user still exists". No new
+ * check (a Redis marker, otherwise PostgreSQL) — plus "the user still exists". No new
  * identity mechanism: `socket.data` is derived only from the verified token.
  */
 export const authenticateHandshake = async (
@@ -41,8 +41,8 @@ export const authenticateHandshake = async (
     return { ok: false, code: 'UNAUTHENTICATED' };
   }
 
-  // Throws a 503 only when the revocation cache is untrusted and PostgreSQL is down: the
-  // client must retry later, not treat its session as over.
+  // Throws a 503 when PostgreSQL is needed for the decision and is down: the client must
+  // retry later, not treat its session as over.
   if (await checkAccessTokenRevoked(deps, verified.sid)) {
     return { ok: false, code: 'SESSION_REVOKED' };
   }

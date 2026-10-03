@@ -51,8 +51,10 @@ The client performs at most one refresh at a time (single-flight), and calls ref
 
 - `POST /api/v1/auth/logout` revokes the current session (safe to repeat) and clears the cookie.
 - On any revocation (logout or reuse detection), the session ID is written to Redis (`ff:auth:revoked:{sid}`) for one access-token lifetime, and that session's sockets are disconnected (`session:{sid}` channel).
-- REST authentication and socket handshakes both reject tokens whose `sid` is on the revoked list, so a revoked session stops working immediately rather than when its access token expires.
-- When Redis cannot answer (unreachable, or the cache is untrusted inside the R3 trust-loss window), PostgreSQL decides. When PostgreSQL cannot answer either, the check fails closed: REST returns `503 INTERNAL` and the handshake refuses with `INTERNAL` (temporary; the client retries). A session is never treated as valid because neither store could be asked.
+- REST authentication and socket handshakes both run the same revocation check, so a revoked session stops working immediately rather than when its access token expires:
+  - Redis marker present → revoked, without a PostgreSQL query (the marker is only a positive shortcut).
+  - No marker, or Redis unreachable → PostgreSQL decides from `auth_sessions.revoked_at` (one primary-key lookup). A missing marker never proves "not revoked": the write may have failed or Redis may have lost it.
+  - PostgreSQL needed but unavailable → the check fails closed: REST returns `503 INTERNAL` and the handshake refuses with `INTERNAL` (temporary; the client retries). A session is never treated as valid because a store could not be asked.
 
 ## Cookie and deployment rules
 
@@ -67,7 +69,7 @@ The client performs at most one refresh at a time (single-flight), and calls ref
 - Handshake middleware verifies the JWT, rejects revoked `sid`s, loads the user, and stores `socket.data = { userId, sid, displayName, avatarUrl, tokenExpiresAtMs, joinedRooms }`.
 - Each socket joins `user:{userId}` (per-user notifications) and `session:{sid}` (revocation).
 - Payloads never carry identity. Every handler uses `socket.data`.
-- The handshake runs exactly the REST checks (the same JWT verification and revocation check, including the trust-loss window, R3) plus "the user still exists". A refusal carries `err.data.code`: `UNAUTHENTICATED` (refresh once, reconnect), `SESSION_REVOKED` (session over) or `INTERNAL` (temporary; retry later).
+- The handshake runs exactly the REST checks (the same JWT verification and revocation check, R3) plus "the user still exists". A refusal carries `err.data.code`: `UNAUTHENTICATED` (refresh once, reconnect), `SESSION_REVOKED` (session over) or `INTERNAL` (temporary; retry later).
 - Revocation (logout, refresh-token reuse) disconnects `session:{sid}` on every instance through the Socket.IO Redis emitter, after the PostgreSQL and Redis writes.
 - When the access token expires, the server disconnects the socket. The Socket.IO client's `auth` option is a function that fetches a fresh token (via single-flight refresh), so reconnection re-authenticates automatically. After reconnecting, the client sends `room:join` again for any room it was in.
 

@@ -10,9 +10,10 @@ import type { AuthDeps } from '../auth/service.js';
 import { createHandshakeMiddleware } from './handshake.js';
 import type { AppSocket } from './types.js';
 
-// The Socket.IO side of review finding R-1: the handshake runs the same revocation check
-// as REST and must refuse with INTERNAL (retry later) when neither Redis nor PostgreSQL
-// can answer, instead of connecting a possibly revoked session.
+// The Socket.IO side of the revocation check (review findings R-1 and R-2): the handshake
+// runs the same check as REST — a Redis marker refuses at once, otherwise PostgreSQL
+// decides — and refuses with INTERNAL (retry later) when PostgreSQL is needed but
+// unavailable, instead of connecting a possibly revoked session.
 
 const JWT = {
   keys: [{ kid: 'k1', secret: 'a'.repeat(32) }],
@@ -22,26 +23,16 @@ const JWT = {
 const TTL_SECONDS = 900;
 const USER_ID = '018f8f3e-0f1a-7c2b-9f4a-2f1b6c9d0e11';
 const SID = '018f8f3e-0000-7000-8000-000000000001';
-const NOW_MS = Date.now();
-const SETTLED_EPOCH = `01a0ed0d-0000-7000-8000-00000000e0c0.${String(NOW_MS - TTL_SECONDS * 1_000 - 60_000)}`;
-
-const redisFake = (mode: 'healthy' | 'down'): Redis => {
-  const pipeline = {
-    get: () => pipeline,
-    time: () => pipeline,
-    exec: () =>
+/** The one Redis call the check makes: GET of the revocation marker. */
+const redisFake = (mode: 'marker' | 'no-marker' | 'down'): Redis =>
+  ({
+    get: () =>
       mode === 'down'
         ? Promise.reject(
             new Error("Stream isn't writeable and enableOfflineQueue options is false"),
           )
-        : Promise.resolve([
-            [null, null],
-            [null, SETTLED_EPOCH],
-            [null, [String(Math.floor(NOW_MS / 1_000)), '0']],
-          ]),
-  };
-  return { pipeline: () => pipeline } as unknown as Redis;
-};
+        : Promise.resolve(mode === 'marker' ? '1' : null),
+  }) as unknown as Redis;
 
 /**
  * The `select().from().where().limit()` chain both `findAuthSessionById` and
@@ -112,19 +103,33 @@ const handshake = async (deps: AuthDeps): Promise<{ code: unknown; socket: AppSo
 };
 
 describe('socket handshake revocation check', () => {
-  it('Redis and PostgreSQL healthy: connects, with the revocation answered by Redis', async () => {
+  it('marker present: SESSION_REVOKED without querying PostgreSQL', async () => {
+    const { logger } = recordingLogger();
+    const { db, queries } = dbFake('down');
+
+    const { code, socket } = await handshake(depsWith(redisFake('marker'), db, logger));
+
+    expect(code).toBe('SESSION_REVOKED');
+    expect(socket.data).toBeUndefined();
+    expect(queries()).toBe(0);
+  });
+
+  it('marker absent: PostgreSQL decides, both ways', async () => {
     const { logger } = recordingLogger();
     const { db, queries } = dbFake('healthy');
 
-    const { code, socket } = await handshake(depsWith(redisFake('healthy'), db, logger));
-
+    const { code, socket } = await handshake(depsWith(redisFake('no-marker'), db, logger));
     expect(code).toBeUndefined();
     expect(socket.data).toMatchObject({ userId: USER_ID, sid: SID });
-    // Only the user lookup touched PostgreSQL.
-    expect(queries()).toBe(1);
+    // The revocation lookup, then the user lookup.
+    expect(queries()).toBe(2);
+
+    expect(
+      (await handshake(depsWith(redisFake('no-marker'), dbFake('revoked').db, logger))).code,
+    ).toBe('SESSION_REVOKED');
   });
 
-  it('Redis unavailable, PostgreSQL healthy: PostgreSQL decides', async () => {
+  it('Redis unavailable: PostgreSQL decides, both ways', async () => {
     const { logger } = recordingLogger();
 
     expect((await handshake(depsWith(redisFake('down'), dbFake('healthy').db, logger))).code).toBe(
@@ -135,18 +140,24 @@ describe('socket handshake revocation check', () => {
     );
   });
 
-  it('Redis and PostgreSQL unavailable: refuses with INTERNAL from the revocation check itself', async () => {
-    const { logger, warned } = recordingLogger();
-    const { db, queries } = dbFake('down');
+  it.each([
+    ['marker absent', 'no-marker'],
+    ['Redis unavailable', 'down'],
+  ] as const)(
+    '%s, PostgreSQL unavailable: refuses with INTERNAL from the revocation check itself',
+    async (_label, redisMode) => {
+      const { logger, warned } = recordingLogger();
+      const { db, queries } = dbFake('down');
 
-    const { code, socket } = await handshake(depsWith(redisFake('down'), db, logger));
+      const { code, socket } = await handshake(depsWith(redisFake(redisMode), db, logger));
 
-    expect(code).toBe('INTERNAL');
-    expect(socket.data).toBeUndefined();
-    // The refusal comes from the fail-closed revocation check (a 503 AppError), not from
-    // the later user lookup: PostgreSQL was asked exactly once, for the revocation.
-    expect(queries()).toBe(1);
-    expect(warned.at(-1)).toBeInstanceOf(AppError);
-    expect(warned.at(-1)).toMatchObject({ code: 'INTERNAL', status: 503 });
-  });
+      expect(code).toBe('INTERNAL');
+      expect(socket.data).toBeUndefined();
+      // The refusal comes from the fail-closed revocation check (a 503 AppError), not from
+      // the later user lookup: PostgreSQL was asked exactly once, for the revocation.
+      expect(queries()).toBe(1);
+      expect(warned.at(-1)).toBeInstanceOf(AppError);
+      expect(warned.at(-1)).toMatchObject({ code: 'INTERNAL', status: 503 });
+    },
+  );
 });
