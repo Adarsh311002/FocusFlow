@@ -19,7 +19,7 @@ describe('issueAccessToken / verifyAccessToken', () => {
 
     const verified = await verifyAccessToken(token, OPTIONS);
 
-    expect(verified).toEqual(CLAIMS);
+    expect(verified).toEqual({ ...CLAIMS, expiresAtMs: expiresAt.getTime() });
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
@@ -37,7 +37,7 @@ describe('issueAccessToken / verifyAccessToken', () => {
       keys: [{ kid: 'k2', secret: 'c'.repeat(32) }, ...OPTIONS.keys],
     };
 
-    expect(await verifyAccessToken(token, rotatedOptions)).toEqual(CLAIMS);
+    expect(await verifyAccessToken(token, rotatedOptions)).toMatchObject(CLAIMS);
   });
 
   it('rejects an expired token', async () => {

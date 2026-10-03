@@ -77,7 +77,11 @@ export function onSessionEnded(listener: SessionEndedListener): () => void {
   return () => sessionEndedListeners.delete(listener);
 }
 
-function notifySessionEnded(reason: SessionEndedCode): void {
+/**
+ * Ends the session everywhere in the app (for example when a socket handshake is refused
+ * with SESSION_REVOKED): listeners (the AuthProvider) sign the UI out and clear caches.
+ */
+export function notifySessionEnded(reason: SessionEndedCode): void {
   for (const listener of sessionEndedListeners) {
     listener(reason);
   }

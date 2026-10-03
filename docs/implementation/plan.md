@@ -8,8 +8,9 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 
 - Implementation plan: **approved** (I1–I12, P1–P3, D43, D44).
 - Phase 0 (foundation) and Phase 1 (accounts): **merged** into `main` (Phase 1 checkpoint: tag `phase-1-accounts`).
-- Phase 2 (tasks): **implemented** on branch `v2/phase-2-tasks`, pending review; see "Phase 2" below.
-- Phase 1b and Phase 3 onwards: **not started**. Each phase begins only when explicitly instructed.
+- Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
+- Phase 3 (real-time foundation): **implemented** on branch `v2/phase-3-realtime`, pending review; see "Phase 3" below.
+- Phase 1b and Phase 4 onwards: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
@@ -142,7 +143,7 @@ focus-flow/
 | Owner | Variables | Secret |
 |---|---|---|
 | web (browser-visible) | `VITE_GOOGLE_CLIENT_ID` (from Phase 1b). No API URL: the app is same-origin. | No |
-| api: runtime | `APP_ENV` (the application setting; `NODE_ENV` is left to Node and tooling and is not validated), `HOST` (default `127.0.0.1`), `PORT`, `ROLE` (from Phase 3), `LOG_LEVEL`, `SHUTDOWN_TIMEOUT_MS` | No |
+| api: runtime | `APP_ENV` (the application setting; `NODE_ENV` is left to Node and tooling and is not validated), `HOST` (default `127.0.0.1`), `PORT`, `ROLE` (`all` \| `api` \| `worker`, Phase 3), `LOG_LEVEL`, `SHUTDOWN_TIMEOUT_MS`, `INSTANCE_ID` (tests only), `INSTANCE_HEARTBEAT_MS`, `INSTANCE_TTL_MS`, `SOCKET_PING_INTERVAL_MS`, `SOCKET_PING_TIMEOUT_MS`, `RECONCILER_INTERVAL_MS` | No |
 | api: database | `DATABASE_URL`; `MIGRATION_DATABASE_URL` (migration step) | Yes |
 | api: Redis | `REDIS_URL`, `REDIS_KEY_PREFIX` (default `ff:`) | Yes (URL) |
 | api: auth (Phase 1) | `JWT_ACCESS_SECRETS` (with key IDs for rotation), `JWT_ISSUER`, `JWT_AUDIENCE`, `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_TOKEN_TTL_SECONDS`, `REFRESH_OVERLAP_SECONDS`, `GOOGLE_CLIENT_ID` | Yes (JWT secrets) |
@@ -287,6 +288,20 @@ Branch: `v2/phase-2-tasks`. Decisions D3, D38, D43, P1 and T1–T6 (`decisions/d
 - **Web:** `features/tasks` on `/dashboard`: current-task card, new-task form, open/completed tabs with "Load more", rename, complete/reopen, confirmed delete. The query cache is cleared whenever the session changes.
 - **Tests:** database behaviour (constraints, composite FK, no `ON DELETE` action, cascade when deleting a user with a current task), API integration (lifecycle, idempotency, soft delete, pagination, validation, authentication, cross-user isolation, current-task rules, set-current vs complete/delete races), and web client, cache and dashboard-flow tests.
 - **Not in Phase 2:** optimistic updates (T4), restore (D45), task descriptions (D29), `Idempotency-Key`, a per-user task cap, security headers and rate limiting (production hardening), strict Phase 1 auth schemas (separate fix PR).
+
+## Phase 3 — Real-time foundation
+
+Branch: `v2/phase-3-realtime`. Decisions I5, I7, F7, D23, P3 and R1–R8 (`decisions/decision-log.md`). No PostgreSQL migration.
+
+- **Contracts:** handshake auth, connect-error codes, the acknowledgement envelope, typed events (`time:sync`), `SocketData`, `AuthSessionId`, and the versioned reconcile job payload.
+- **Redis:** connection roles (general with `keyPrefix` and fail-fast; BullMQ and pub/sub without `keyPrefix`, waiting for reconnects); Redis TIME as the protocol clock; the epoch with its creation time; instance heartbeats in a sorted set; revocation decided by PostgreSQL whenever the Redis marker is absent (R3, revised after review).
+- **Sockets:** Socket.IO on the API's HTTP server with the Redis adapter and emitter; handshake authentication reusing the REST checks; `user:`/`session:` rooms; token-expiry disconnects; revocation disconnects the session everywhere.
+- **Presence:** per-socket, instance-tagged entries with a reverse index, read-time liveness filtering, an offline hook for Phase 4, re-assertion after reconnect or data loss, clean-shutdown removal.
+- **Jobs:** `ROLE`; BullMQ `maintenance` queue with one idempotent scheduler, startup and recovery runs; reconciler step 1 (dead instances); an instance wrongly declared dead re-joins on its next heartbeat.
+- **Runtime:** one `createRuntime` for `main.ts` and the tests, following the planned startup order; shutdown closes Socket.IO first, then the HTTP server, the heartbeat and this instance's presence, the worker, the queue, Redis and PostgreSQL, each step with a share of the budget.
+- **Web:** a realtime client (handshake token, refresh-then-reconnect, revoked → session ended, backoff on temporary errors), clock offset from `time:sync`, a provider bound to the signed-in user, and a small connection status line. No Zustand.
+- **Tests:** unit tests for the revocation check (every marker / Redis / PostgreSQL combination, REST and handshake) and every pure piece (epoch, clock, reconnection policy); integration tests with Testcontainers and two API instances for the handshake, token expiry, revocation (including a missing marker, Redis data loss and store outages) over REST and sockets, cross-instance delivery and isolation, presence, instance death, FLUSHALL and reconnect recovery, schedules, jobs and the worker-only role.
+- **Not in Phase 3:** product events (R8), a per-user socket cap (R4), worker health endpoints (R7), solo focus sessions and timers (Phase 4), rooms (Phase 6), rate limiting and security headers (hardening).
 
 ## Phase 0 review follow-ups
 

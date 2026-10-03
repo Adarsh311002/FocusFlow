@@ -198,6 +198,41 @@ Approved at the start of Phase 2 from the Phase 2 reconnaissance.
 ### T6 — Task limits
 - **Decision:** title 1–200 characters after trimming; list limit default 50, maximum 100; no per-user task count cap for now.
 
+## Real-time foundation decisions (Phase 3)
+
+Approved at the start of Phase 3 from the Phase 3 reconnaissance.
+
+### R1 — Presence keys
+- **Decision:** one presence entry per socket in `ff:user:{userId}:sockets` (`{instanceId}:{socketId}`) and in the reverse index `ff:instance:{instanceId}:sockets` (`{userId}:{socketId}`); `ff:instances` is a sorted set scored by each instance's last heartbeat (Redis TIME).
+- **Why:** dead-instance cleanup reads exactly one instance's entries without scanning user sets, and the last heartbeat time survives the instance's death ("disconnected at the last heartbeat").
+- **Consequences:** supersedes the earlier sketch of a TTL string per instance plus a plain set.
+
+### R2 — Redis TIME is the protocol clock
+- **Decision:** Redis TIME is authoritative for `time:sync`, instance heartbeats and the future room timer. API `Date.now()` is not used for these calculations.
+
+### R3 — Revocation decision (required security fix; revised after the Phase 3 review)
+- **Current decision (review fix R-2, Option A):** the Redis marker is a positive shortcut only. Marker present → revoked, no PostgreSQL query. No marker, or Redis unreachable → PostgreSQL (`auth_sessions.revoked_at`, one primary-key lookup) decides. PostgreSQL needed but unavailable → fail closed with a temporary 503 / `INTERNAL`. REST and the Socket.IO handshake share the check.
+- **Why it was revised:** the absence of a key in a non-durable cache cannot prove a write never happened. A marker can be missing while the epoch survives — its write failed while Redis was briefly unreachable, or Redis lost the last second of writes (AOF `everysec`) or failed over to a lagging replica — and the original rule then trusted "no marker" behind an old epoch. Only PostgreSQL can answer "not revoked". Option B (keep the Redis fast path and repair markers from PostgreSQL with a `LISTEN/NOTIFY` watermark) was rejected: far more machinery, and it only narrows the window.
+- **Consequences:** every authenticated REST request and socket handshake makes one primary-key lookup on `auth_sessions` (both already query PostgreSQL, so availability is unchanged in practice; connected sockets are not re-checked per event). The epoch remains for Redis data-loss detection and recovery; its creation time no longer affects revocation.
+- **Review fix R-1 (part of the current decision):** when Redis itself is unreachable PostgreSQL decides, and if PostgreSQL is also unavailable the check returns the temporary 503 / `INTERNAL` instead of "not revoked" (the Phase 1 fallback had let the request through).
+- **History (superseded, not in effect):** the first Phase 3 version trusted "no marker" once `ff:epoch` was at least one access-token lifetime old (a "trust-loss window" covering only the loss of all Redis data), and consulted PostgreSQL only while the epoch was missing or younger. Review finding R-2 showed a single missing marker behind an old epoch was still trusted, which led to the current decision.
+
+### R4 — Per-user socket cap
+- **Decision:** deferred to the abuse/rate-limiting hardening work.
+
+### R5 — Socket.IO transports
+- **Decision:** keep the default polling → WebSocket upgrade; do not force WebSocket-only.
+- **Consequences:** more than one API instance behind a load balancer needs sticky sessions (Phase 9).
+
+### R6 — Real-time timing defaults
+- **Decision:** `pingInterval` 10 s, `pingTimeout` 10 s, heartbeat 10 s, instance TTL 30 s, reconciler every 30 s plus at startup; all configurable.
+
+### R7 — Worker-only role
+- **Decision:** `ROLE=all` is the normal mode; `ROLE=worker` runs workers without an HTTP listener. Worker health endpoints are revisited when there is a real separate worker deployment.
+
+### R8 — No user-facing events in Phase 3
+- **Decision:** Phase 3 is infrastructure only: no `tasks:changed` or other product events.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

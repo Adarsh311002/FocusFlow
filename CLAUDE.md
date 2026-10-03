@@ -8,7 +8,7 @@ The existing repository contains an older JavaScript/MERN implementation. We are
 
 Product/domain/architecture design is complete and the implementation plan is approved (see `docs/implementation/plan.md`).
 
-**Phase state:** Phase 0 (foundation) and Phase 1 (accounts) are merged into `main` (Phase 1 checkpoint: tag `phase-1-accounts`). Phase 2 (tasks) is implemented on branch `v2/phase-2-tasks`, pending review. Phase 1b (Google sign-in) and Phase 3 onwards have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
+**Phase state:** Phases 0 (foundation), 1 (accounts) and 2 (tasks) are merged into `main` (checkpoints: tags `phase-1-accounts`, `phase-2-tasks`). Phase 3 (real-time foundation) is implemented on branch `v2/phase-3-realtime`, pending review. Phase 1b (Google sign-in) and Phase 4 onwards have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
 
 Do not change the architectural direction again unless a genuine contradiction appears during implementation; if one does, explain it rather than silently changing the design.
 
@@ -208,9 +208,22 @@ There is one meaning of "completed" across solo and room sessions. A FocusSessio
 - **T6:** Title 1–200 characters after trimming; list limit default 50, maximum 100; no per-user task count cap for now.
 - Tasks are always scoped by `req.authUser.userId`; another user's, a deleted and a nonexistent task all answer `404 TASK_NOT_FOUND`. Completed tasks may be renamed; reopening never makes a task current. Task CRUD uses no Redis.
 
+### Real-time foundation decisions (Phase 3: R1–R8)
+- **R1 Presence keys:** per-socket entries in `user:{userId}:sockets` (`{instanceId}:{socketId}`) plus the reverse index `instance:{instanceId}:sockets`; `instances` is a sorted set scored by each instance's last heartbeat (Redis TIME). Dead-instance cleanup never scans user sets and the last heartbeat survives the instance.
+- **R2 Clock:** Redis TIME is authoritative for `time:sync`, heartbeats and the future room timer. API `Date.now()` is not used for protocol arithmetic.
+- **R3 Revocation decision (security; revised by review fix R-2):** the Redis marker `auth:revoked:{sid}` is a positive shortcut only: present → revoked, without a PostgreSQL query. A missing marker is never proof of "not revoked": PostgreSQL (`auth_sessions.revoked_at`, one primary-key lookup) decides, and it also decides when Redis is unreachable. When PostgreSQL is needed and unavailable the check fails closed (503 / `INTERNAL`) for REST and the socket handshake alike. A revoked session never becomes trusted because Redis lost, failed to persist or temporarily lacks its marker. The epoch's age no longer affects revocation (the original trust-loss window is superseded); the epoch itself stays for data-loss detection and recovery.
+- **R4 Per-user socket cap:** deferred to abuse/rate-limiting hardening.
+- **R5 Transports:** Socket.IO's default polling → WebSocket upgrade; not WebSocket-only.
+- **R6 Timing defaults (configurable):** `pingInterval` 10 s, `pingTimeout` 10 s, heartbeat 10 s, instance TTL 30 s, reconciler every 30 s plus startup.
+- **R7 Roles:** `ROLE=all` (default), `api` or `worker`; a worker-only process has no HTTP listener. Worker health endpoints are revisited with a real separate worker deployment.
+- **R8 No product events in Phase 3:** infrastructure only; `user:{userId}` gets its first product event in Phase 4.
+- Socket identity comes only from the verified handshake token (the same JWT verification and revocation check as REST); `user:{userId}` and `session:{sid}` are server-derived rooms; token expiry disconnects the socket; revocation disconnects `session:{sid}` on every instance through the Redis emitter; PostgreSQL stays the only durable store.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
+- A per-user socket cap (R4) belongs to the same abuse/rate-limiting hardening.
+- Worker health endpoints (R7) are revisited when the worker becomes a separate deployment.
 
 ## Important Architecture Principles
 

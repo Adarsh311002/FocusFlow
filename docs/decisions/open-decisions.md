@@ -41,10 +41,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Stale solo session cleanup window | How long a solo session may stay in progress (measured from `started_at`; in practice a paused one) before `abandoned(expired)` (e.g. 12 h). |
 | Duration bounds | Room phase durations and solo planned time (e.g. 1–240 min). |
 | Knock TTL | e.g. 120 s. |
-| Socket.IO ping settings | Tighten so silent disconnects are detected quickly (e.g. `pingInterval` 10 s, `pingTimeout` 10 s). The 60 s grace counts from when the server detects the disconnect. |
-| Reconciler interval | e.g. every 30 s, plus on startup. |
 | Redis hosting | Must support AOF persistence and `maxmemory-policy noeviction`. |
-| Socket.IO transports | If long-polling fallback is enabled and more than one API instance runs, the load balancer needs sticky sessions. |
 | `Idempotency-Key` support | For create endpoints; not required for the MVP. |
 | Rate-limit values | Chat, knocks, auth endpoints. |
 | API bundler | esbuild directly or via `tsdown`. |
@@ -61,6 +58,8 @@ Known work that is deliberately outside the phase that surfaced it.
 | Security headers (e.g. `helmet`, `Cache-Control: no-store`), rate limiting, `/readyz` caching | The production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.** |
 | Optimistic updates for tasks (T4) | Later, if the pending states feel slow |
 | A per-user task count cap (T6) | Later, if abuse or scale requires it |
+| A per-user socket cap (R4) | Abuse/rate-limiting hardening |
+| Worker health endpoints for `ROLE=worker` (R7) | When the worker becomes a separate deployment |
 
 ## Resolved
 
@@ -76,6 +75,7 @@ Known work that is deliberately outside the phase that surfaced it.
 | P3 — Redis key prefix | Configurable `REDIS_KEY_PREFIX`, default `ff:`; BullMQ uses the same prefix (approved) |
 | D43 — Completing the current task | Clears it as the current task (approved) |
 | D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
+| R1–R8 — Phase 3 real-time foundation | Presence keys with reverse index and heartbeat sorted set; Redis TIME as protocol clock; revocation decided by PostgreSQL whenever the Redis marker is absent (R3, revised); socket cap deferred; default transports (sticky sessions needed with several instances); ping 10 s/10 s, heartbeat 10 s, TTL 30 s, reconciler 30 s; worker role without HTTP; no product events yet (approved; see `decision-log.md`) |
 | T1–T6 — Phase 2 task details | Single-task read, `id DESC` ordering with one full index, `GET /me` re-read after clearing, no optimistic updates yet, tasks on `/dashboard`, limits (approved; see `decision-log.md`) |
 
 ## Later product phases

@@ -3,6 +3,8 @@ import { z } from 'zod';
 const appEnvSchema = z.enum(['development', 'test', 'production']);
 const logLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']);
 const requiredUrl = z.string().min(1, 'must be a non-empty connection string');
+/** A duration in milliseconds: 100 ms (tests) to 10 minutes. */
+const durationMs = z.coerce.number().int().min(100).max(600_000);
 
 export type JwtSigningKey = { readonly kid: string; readonly secret: string };
 
@@ -58,26 +60,53 @@ const jwtAccessSecretsSchema = z
     return keys;
   });
 
-const configSchema = z.object({
-  APP_ENV: appEnvSchema.default('development'),
-  // Loopback by default so a development API is not exposed on the local network;
-  // a container or production deployment sets HOST=0.0.0.0 explicitly.
-  HOST: z.string().min(1).default('127.0.0.1'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  LOG_LEVEL: logLevelSchema.default('info'),
-  DATABASE_URL: requiredUrl,
-  REDIS_URL: requiredUrl,
-  REDIS_KEY_PREFIX: z.string().min(1).default('ff:'),
-  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1).max(120_000).default(10_000),
+const configSchema = z
+  .object({
+    APP_ENV: appEnvSchema.default('development'),
+    // Loopback by default so a development API is not exposed on the local network;
+    // a container or production deployment sets HOST=0.0.0.0 explicitly.
+    HOST: z.string().min(1).default('127.0.0.1'),
+    PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    LOG_LEVEL: logLevelSchema.default('info'),
+    DATABASE_URL: requiredUrl,
+    REDIS_URL: requiredUrl,
+    REDIS_KEY_PREFIX: z.string().min(1).default('ff:'),
+    SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1).max(120_000).default(10_000),
 
-  // Auth (Phase 1, docs/architecture/auth.md).
-  JWT_ACCESS_SECRETS: jwtAccessSecretsSchema,
-  JWT_ISSUER: z.string().min(1).default('focus-flow'),
-  JWT_AUDIENCE: z.string().min(1).default('focus-flow'),
-  ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
-  REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().min(3_600).max(31_536_000).default(2_592_000),
-  REFRESH_OVERLAP_SECONDS: z.coerce.number().int().min(5).max(120).default(20),
-});
+    // Auth (Phase 1, docs/architecture/auth.md).
+    JWT_ACCESS_SECRETS: jwtAccessSecretsSchema,
+    JWT_ISSUER: z.string().min(1).default('focus-flow'),
+    JWT_AUDIENCE: z.string().min(1).default('focus-flow'),
+    ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
+    REFRESH_TOKEN_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(3_600)
+      .max(31_536_000)
+      .default(2_592_000),
+    REFRESH_OVERLAP_SECONDS: z.coerce.number().int().min(5).max(120).default(20),
+
+    // Real-time foundation (Phase 3, docs/architecture/redis-keys.md). All durations are
+    // configurable so tests can run the same code with short intervals.
+    /** Fixed instance id; normally unset, so every process start is a new instance. */
+    INSTANCE_ID: z.uuid().optional(),
+    INSTANCE_HEARTBEAT_MS: durationMs.default(10_000),
+    /** An instance whose last heartbeat is older than this is dead. */
+    INSTANCE_TTL_MS: durationMs.default(30_000),
+    /** Socket.IO ping settings: a silently dropped client is detected within their sum. */
+    SOCKET_PING_INTERVAL_MS: durationMs.default(10_000),
+    SOCKET_PING_TIMEOUT_MS: durationMs.default(10_000),
+    /**
+     * What this process runs (I7): `all` (HTTP + Socket.IO + workers, the normal mode),
+     * `api` (no workers) or `worker` (workers only, no HTTP listener).
+     */
+    ROLE: z.enum(['all', 'api', 'worker']).default('all'),
+    RECONCILER_INTERVAL_MS: durationMs.default(30_000),
+  })
+  .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
+    path: ['INSTANCE_TTL_MS'],
+    message: 'must be at least twice INSTANCE_HEARTBEAT_MS, so one late heartbeat is not a death',
+  });
 
 export type AppConfig = z.infer<typeof configSchema>;
 

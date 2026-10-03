@@ -29,6 +29,48 @@ describe('loadConfig', () => {
       ACCESS_TOKEN_TTL_SECONDS: 900,
       REFRESH_TOKEN_TTL_SECONDS: 2_592_000,
       REFRESH_OVERLAP_SECONDS: 20,
+      INSTANCE_HEARTBEAT_MS: 10_000,
+      INSTANCE_TTL_MS: 30_000,
+      SOCKET_PING_INTERVAL_MS: 10_000,
+      SOCKET_PING_TIMEOUT_MS: 10_000,
+      ROLE: 'all',
+      RECONCILER_INTERVAL_MS: 30_000,
+    });
+  });
+
+  describe('real-time settings', () => {
+    it('accepts an explicit instance id and intervals', () => {
+      const config = loadConfig({
+        ...baseEnv,
+        INSTANCE_ID: '01a0ed0d-55de-7d1b-8495-82fb5050d815',
+        INSTANCE_HEARTBEAT_MS: '500',
+        INSTANCE_TTL_MS: '1500',
+      });
+      expect(config.INSTANCE_ID).toBe('01a0ed0d-55de-7d1b-8495-82fb5050d815');
+      expect(config.INSTANCE_HEARTBEAT_MS).toBe(500);
+      expect(config.INSTANCE_TTL_MS).toBe(1500);
+    });
+
+    it('rejects an instance id that is not a UUID', () => {
+      expect(() => loadConfig({ ...baseEnv, INSTANCE_ID: 'api-1' })).toThrow(/INSTANCE_ID/);
+    });
+
+    it('rejects a TTL shorter than two heartbeats', () => {
+      expect(() =>
+        loadConfig({ ...baseEnv, INSTANCE_HEARTBEAT_MS: '10000', INSTANCE_TTL_MS: '15000' }),
+      ).toThrow(/INSTANCE_TTL_MS/);
+    });
+
+    it('accepts each role and rejects anything else', () => {
+      expect(loadConfig({ ...baseEnv, ROLE: 'worker' }).ROLE).toBe('worker');
+      expect(loadConfig({ ...baseEnv, ROLE: 'api' }).ROLE).toBe('api');
+      expect(() => loadConfig({ ...baseEnv, ROLE: 'scheduler' })).toThrow(/ROLE/);
+    });
+
+    it('rejects durations below 100 ms', () => {
+      expect(() => loadConfig({ ...baseEnv, INSTANCE_HEARTBEAT_MS: '50' })).toThrow(
+        /INSTANCE_HEARTBEAT_MS/,
+      );
     });
   });
 

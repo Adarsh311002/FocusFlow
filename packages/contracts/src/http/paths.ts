@@ -6,6 +6,12 @@ import type { TaskId } from '../ids';
  */
 export const API_BASE_PATH = '/api/v1';
 
+/**
+ * Where the Socket.IO server listens and the client connects. Same origin as the app (the
+ * Vite dev proxy and, later, Nginx forward it to the API), so no CORS is involved.
+ */
+export const SOCKET_IO_PATH = '/socket.io';
+
 export const healthPaths = {
   liveness: '/healthz',
   readiness: '/readyz',

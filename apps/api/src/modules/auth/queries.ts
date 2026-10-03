@@ -68,6 +68,22 @@ export const findAuthSessionById = async (
 };
 
 /**
+ * The revocation check's PostgreSQL lookup: one primary-key read (`pk_auth_sessions`) of
+ * a single column, no joins. `undefined` when the session does not exist.
+ */
+export const findSessionRevokedAt = async (
+  db: Db,
+  id: string,
+): Promise<{ readonly revokedAt: Date | null } | undefined> => {
+  const [row] = await db
+    .select({ revokedAt: authSessions.revokedAt })
+    .from(authSessions)
+    .where(eq(authSessions.id, id))
+    .limit(1);
+  return row;
+};
+
+/**
  * Atomic compare-and-swap rotation: succeeds only if `currentTokenHash` still equals
  * `expectedCurrentHash` at the moment PostgreSQL applies the UPDATE. `previousTokenHash`
  * is set from the row's OWN pre-update `currentTokenHash` column (not the JS value),

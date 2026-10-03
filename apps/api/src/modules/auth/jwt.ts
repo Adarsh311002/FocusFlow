@@ -49,6 +49,8 @@ export const issueAccessToken = async (
 export type VerifiedAccessToken = {
   readonly userId: string;
   readonly sid: string;
+  /** From the `exp` claim; the socket server disconnects at this moment. */
+  readonly expiresAtMs: number;
 };
 
 /**
@@ -82,10 +84,11 @@ export const verifyAccessToken = async (
 
     const userId = payload.sub;
     const sid = payload.sid;
-    if (typeof userId !== 'string' || typeof sid !== 'string') {
+    const exp = payload.exp;
+    if (typeof userId !== 'string' || typeof sid !== 'string' || typeof exp !== 'number') {
       return undefined;
     }
-    return { userId, sid };
+    return { userId, sid, expiresAtMs: exp * 1_000 };
   } catch {
     return undefined;
   }

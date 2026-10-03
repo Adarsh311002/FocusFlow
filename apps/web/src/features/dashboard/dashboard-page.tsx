@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { useAuth } from '../auth/auth-context';
 import { authErrorMessage } from '../auth/auth-messages';
+import { ConnectionStatus } from '../realtime/connection-status';
 import { CurrentTask } from '../tasks/current-task';
 import { TasksPanel } from '../tasks/tasks-panel';
 
@@ -49,6 +50,7 @@ export function DashboardPage() {
               </div>
             </dl>
           )}
+          {user !== null && <ConnectionStatus />}
         </div>
 
         <button

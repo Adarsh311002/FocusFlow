@@ -427,7 +427,8 @@ describe('refresh', () => {
       expect(errorBodySchema.parse(await replay.json()).error.code).toBe('SESSION_REVOKED');
 
       // The access token from signup has not expired, but its session is revoked —
-      // this must be rejected immediately (Redis fast path), not after 15 minutes.
+      // this must be rejected immediately (Redis marker, or PostgreSQL without it), not
+      // after 15 minutes.
       const me = await fetch(url(mePaths.self), {
         headers: { Authorization: `Bearer ${accessToken}` },
       });

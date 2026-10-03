@@ -2,7 +2,7 @@
 
 This folder is the long-term source of truth for the Focus Flow v2 design. `CLAUDE.md` at the repository root holds the short list of rules and approved decisions; these documents hold the full design behind them.
 
-Focus Flow v2 has completed design and its implementation plan is approved. **Implemented so far:** Phase 0 (foundation: workspace tooling, shared contracts, the API platform layer with health checks, the web shell, local infrastructure and CI) and Phase 1 (email/password accounts with per-device sessions), both merged into `main`; and Phase 2 (tasks and the current task) on branch `v2/phase-2-tasks`, pending review. Nothing beyond that is implemented yet; each later phase begins only when explicitly started (see `implementation/plan.md`). Unless a document says otherwise, what it describes is the design, not the code.
+Focus Flow v2 has completed design and its implementation plan is approved. **Implemented so far:** Phase 0 (foundation: workspace tooling, shared contracts, the API platform layer with health checks, the web shell, local infrastructure and CI) Phase 1 (email/password accounts with per-device sessions) and Phase 2 (tasks and the current task), all merged into `main`; and Phase 3 (the real-time foundation: authenticated sockets, presence, jobs, the reconciler and clock sync) on branch `v2/phase-3-realtime`, pending review. Nothing beyond that is implemented yet; each later phase begins only when explicitly started (see `implementation/plan.md`). Unless a document says otherwise, what it describes is the design, not the code.
 
 ## Status labels
 

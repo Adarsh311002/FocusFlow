@@ -38,6 +38,11 @@ export type AuthDeps = {
   readonly accessTokenTtlSeconds: number;
   readonly refreshTokenTtlSeconds: number;
   readonly refreshOverlapSeconds: number;
+  /**
+   * Disconnects every socket of an auth session, on every API instance (through the
+   * Socket.IO Redis emitter). Called after a revocation is committed.
+   */
+  readonly disconnectSession: (sid: string) => void;
 };
 
 const jwtOptions = (deps: AuthDeps) => ({
@@ -155,9 +160,20 @@ export type RefreshResult =
 
 const MAX_ROTATION_ATTEMPTS = 3;
 
+/**
+ * Every revocation (logout, refresh-token reuse) goes through here, in the persist-then-
+ * emit order: PostgreSQL, then the Redis marker, then live sockets. Disconnecting is best
+ * effort: if it is lost, a reconnect is still refused at the handshake, and an existing
+ * socket lasts at most until its access token expires.
+ */
 const revokeAndMark = async (deps: AuthDeps, sid: string): Promise<void> => {
   await revokeAuthSession(deps.db, sid);
   await markSessionRevoked(deps.redis, sid, deps.accessTokenTtlSeconds, deps.logger);
+  try {
+    deps.disconnectSession(sid);
+  } catch (error) {
+    deps.logger.warn({ err: error, sid }, 'Could not disconnect the revoked session sockets');
+  }
 };
 
 /**
