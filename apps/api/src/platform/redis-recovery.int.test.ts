@@ -136,7 +136,7 @@ describe('instance heartbeat', () => {
 });
 
 describe('Redis data loss (FLUSHALL)', () => {
-  it('recreates the epoch on exactly one instance and re-publishes every heartbeat', async () => {
+  it('recreates the epoch through one SET NX winner and re-publishes every heartbeat', async () => {
     const h = requireHarness();
     const second = await startInstance(h, {
       INSTANCE_HEARTBEAT_MS: String(HEARTBEAT_MS),

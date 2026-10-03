@@ -35,7 +35,7 @@ How Focus Flow v2 behaves when things go wrong. Status: **Architecture**, consis
 | **Invalid payloads** | Rejected by Zod at every entry point; nothing unvalidated reaches business logic. |
 | **Unauthorized room actions** | Identity only from `socket.data`; membership required to join; host checked against PostgreSQL; knock results only to the target user. |
 | **Access token expires while connected** | The socket is disconnected; the client reconnects with a fresh token and rejoins. |
-| **Refresh token stolen and reused** | Reuse detection revokes the session; revoked-session list stops its access tokens and sockets immediately. |
+| **Refresh token stolen and reused** | Reuse detection revokes the session in PostgreSQL; the revocation check (Redis marker, otherwise PostgreSQL) stops its access tokens immediately and its sockets are disconnected. |
 | **Clock skew** | Timer arithmetic uses Redis time; stored timestamps use PostgreSQL time; clients correct their display with a measured offset. |
 
 ## When an outbox becomes worth building

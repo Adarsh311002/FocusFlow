@@ -34,7 +34,7 @@ Focus Flow helps people do focused work, alone or together. The core loop is: **
 | `api` | Express REST API and Socket.IO server in one Node.js 24 process (`apps/api`). Authentication, authorization, validation, all PostgreSQL writes, request-driven socket emits. | Approved (I5) |
 | `worker` | BullMQ consumers: room phase ends, solo session ends, grace expiry, run settlement, reconciler. Same codebase as `api` (`apps/api`) with its own entry point/role; runs inside the `api` process initially and can become a separate deployment later. Sends socket events through the Socket.IO Redis emitter. | Approved (I7) |
 | PostgreSQL 18 | Users, auth identities and sessions, tasks, focus sessions, rooms, memberships. Accessed through Drizzle ORM. | Approved (F1, I6) |
-| Redis | Presence, room timer state and settings copy, focus run ledger, knocks, queues, Socket.IO adapter, rate limits, revoked-session list. | Approved (F2) |
+| Redis | Presence, room timer state and settings copy, focus run ledger, knocks, queues, Socket.IO adapter, rate limits, revocation markers (a shortcut only; PostgreSQL decides revocation). | Approved (F2) |
 | Python AI service | AI orchestration and LLM calls. Not part of the MVP. | Later (F4) |
 
 ## Communication rules
