@@ -58,7 +58,7 @@ The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the chan
 
 **Redis restarts with data (the normal case).** The epoch value is unchanged. Overdue phase-end and session-end jobs run on startup; the reconciler reschedules anything missing. Up to about one second of changes may be lost; version checks and the reconciler absorb it (for example, a lost pause leaves the timer running and the host can pause again; a lost opt-in entry becomes an orphan and is abandoned as `timer_lost`).
 
-**Redis lost its data.** Detected when an API instance reconnects and `ff:epoch` is missing. The instance that succeeds in setting a new epoch runs **global recovery**; every instance runs **local recovery**.
+**Redis lost its data.** Detected when an API instance reconnects and `ff:epoch` is missing. The instance that succeeds in setting a new epoch runs **global recovery** — on at most one instance per epoch, not guaranteed (the winner can crash first), so its handlers are idempotent and everything they do is also covered by the reconciler; every instance runs **local recovery**, which is idempotent.
 
 | Lost | Handling |
 |---|---|

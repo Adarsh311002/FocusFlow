@@ -15,11 +15,11 @@ import { findAuthSessionById } from './queries.js';
 const revokedSessionKey = (sid: string): string => `auth:revoked:${sid}`;
 
 /**
- * Fails open (does not throw) if Redis cannot be reached: the write is best-effort.
- * PostgreSQL's `revoked_at` is already committed by the caller before this runs, so
- * it remains the source of truth even if this mark never lands; `isSessionRevoked`
- * below falls back to it when Redis is unavailable, so the fast path being briefly
- * unwritable never fully disables revocation.
+ * Does not throw if Redis cannot be reached: the write is best-effort. PostgreSQL's
+ * `revoked_at` is already committed by the caller before this runs and stays the source
+ * of truth. While Redis is unreachable, `isSessionRevoked` below asks PostgreSQL. A
+ * marker that never lands while Redis later answers with a trusted epoch is a known gap
+ * (review finding R-2), handled separately.
  */
 export const markSessionRevoked = async (
   redis: Redis,
@@ -117,13 +117,12 @@ const revokedInPostgres = async (db: Db, sid: string): Promise<boolean> => {
  *
  * - Redis answers on its own whenever it can (`decideRevocation`), so normal requests
  *   stay on the fast path.
- * - Inside the trust-loss window PostgreSQL decides, and if PostgreSQL cannot be
- *   reached the check **fails closed** with a temporary 503: a previously revoked
- *   session must never become trusted just because Redis lost its keys, and a
- *   database blip must not sign a legitimate user out either.
- * - Redis itself failing keeps the Phase 1 behaviour: fall back to PostgreSQL, and if
- *   that also fails, log and treat the session as not revoked (at most one
- *   access-token lifetime of exposure while both stores are down).
+ * - Inside the trust-loss window, or when Redis itself fails, PostgreSQL decides.
+ * - Whenever PostgreSQL is needed and cannot be reached, the check **fails closed** with
+ *   a temporary 503: a revoked session must never become trusted because Redis lost its
+ *   keys or is unavailable, and a database blip must not sign a legitimate user out
+ *   either (a 503 is retried, not treated as the end of the session). REST requests and
+ *   the Socket.IO handshake both go through here.
  */
 export const isSessionRevoked = async (
   redis: Redis,
@@ -137,15 +136,7 @@ export const isSessionRevoked = async (
     decision = decideRevocation(await readRevocationCache(redis, sid), trustWindowMs);
   } catch (error) {
     logger.warn({ err: error, sid }, 'Redis revocation check failed; falling back to PostgreSQL');
-    try {
-      return await revokedInPostgres(db, sid);
-    } catch (fallbackError) {
-      logger.warn(
-        { err: fallbackError, sid },
-        'PostgreSQL revocation fallback also failed; treating the session as not revoked',
-      );
-      return false;
-    }
+    decision = 'consult_postgres';
   }
 
   if (decision !== 'consult_postgres') {
@@ -157,7 +148,7 @@ export const isSessionRevoked = async (
   } catch (error) {
     logger.error(
       { err: error, sid },
-      'Revocation cache untrusted and PostgreSQL unavailable; refusing the request',
+      'Revocation cache untrusted or unavailable and PostgreSQL unavailable; refusing the request',
     );
     throw new AppError('INTERNAL', 503, 'The session check is temporarily unavailable.');
   }

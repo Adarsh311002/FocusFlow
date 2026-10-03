@@ -64,8 +64,12 @@ export type EpochMonitor = {
   /** Serialised: concurrent callers share one check. */
   readonly check: (reason: EpochCheckReason) => Promise<EpochCheckResult>;
   /**
-   * Runs on exactly one instance (the SET NX winner) when an epoch is created, whether on
-   * the very first startup or after data loss. Handlers must be idempotent.
+   * Runs on at most one instance per epoch (the SET NX winner) when an epoch is created,
+   * whether on the very first startup or after data loss. It is not guaranteed: the winner
+   * can crash before its handlers run, and a failed handler is not retried. (Replacing a
+   * malformed epoch can even run it on more than one instance.) Handlers must therefore be
+   * idempotent, and anything that must happen after data loss is also covered by the
+   * reconciler.
    */
   readonly onGlobalRecovery: (handler: RecoveryHandler) => void;
   /**

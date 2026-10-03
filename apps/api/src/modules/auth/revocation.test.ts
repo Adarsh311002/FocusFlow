@@ -247,7 +247,7 @@ describe('isSessionRevoked', () => {
     });
   });
 
-  describe('when Redis itself fails (Phase 1 behaviour, unchanged)', () => {
+  describe('when Redis itself fails', () => {
     it('falls back to PostgreSQL and reports revoked when the session is revoked there', async () => {
       const redisError = new Error('connection lost');
       const { logger, warnings } = createFullLogger();
@@ -300,20 +300,39 @@ describe('isSessionRevoked', () => {
       );
     });
 
-    it('treats the session as not revoked when both Redis and the PostgreSQL fallback fail', async () => {
+    it('fails closed with a 503 when PostgreSQL is unavailable too, never "not revoked"', async () => {
       const pgError = new Error('pool exhausted');
-      const { logger, warnings } = createFullLogger();
+      const { logger, warnings, errors } = createFullLogger();
 
-      // The documented worst case: both stores are down, so the request is let through
-      // rather than the API going fully unavailable. It never throws up to the caller.
+      // Review finding R-1: with both stores down nothing can prove the session is still
+      // valid, so the request is refused with a temporary 503 instead of being let through.
+      const failure = check(
+        failingCacheRedis(new Error('connection lost')),
+        dbThatThrows(pgError),
+        logger,
+      );
+
+      await expect(failure).rejects.toBeInstanceOf(AppError);
+      await expect(failure).rejects.toMatchObject({ code: 'INTERNAL', status: 503 });
+      expect(warnings).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      const details = errors[0]?.details as { sid?: string; err?: unknown };
+      expect(details.err).toBe(pgError);
+    });
+
+    it('fails closed the same way when a command inside the pipeline fails', async () => {
+      const { logger } = createFullLogger();
+      const redis = pipelineRedis(() =>
+        Promise.resolve([
+          [new Error('LOADING Redis is loading the dataset in memory'), null],
+          [null, SETTLED_EPOCH],
+          [null, timeReply(NOW_MS)],
+        ]),
+      );
+
       await expect(
-        check(failingCacheRedis(new Error('connection lost')), dbThatThrows(pgError), logger),
-      ).resolves.toBe(false);
-
-      expect(warnings).toHaveLength(2);
-      expect(warnings[1]?.message).toContain('PostgreSQL revocation fallback also failed');
-      const secondDetails = warnings[1]?.details as { sid?: string; err?: unknown };
-      expect(secondDetails.err).toBe(pgError);
+        check(redis, dbThatThrows(new Error('connection refused')), logger),
+      ).rejects.toMatchObject({ code: 'INTERNAL', status: 503 });
     });
   });
 });

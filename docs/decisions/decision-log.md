@@ -214,6 +214,7 @@ Approved at the start of Phase 3 from the Phase 3 reconnaissance.
 - **Decision:** `ff:epoch` holds `{uuid}.{createdAtMs}` (Redis TIME). A revocation check reads the marker, the epoch and Redis TIME in one pipelined round trip. A marker is always trusted. "No marker" is trusted only when the epoch exists and is at least one access-token lifetime old; otherwise PostgreSQL decides, and if PostgreSQL cannot be reached the check fails closed with a temporary 503.
 - **Why:** losing Redis's keys also loses every revocation marker; a revoked session must never become trusted because of that. Every token issued before the loss expires within one token lifetime of the new epoch, and revocations after the loss are in the new cache.
 - **Consequences:** normal requests stay on the Redis fast path; lowering `ACCESS_TOKEN_TTL_SECONDS` in a deploy would shorten the window below older tokens' lifetimes.
+- **Review fix (R-1):** the same fail-closed rule applies when Redis itself is unreachable: PostgreSQL decides, and if PostgreSQL is also unavailable the check returns the temporary 503 / `INTERNAL` instead of "not revoked" (previously the Phase 1 fallback let the request through). REST and the Socket.IO handshake share this check.
 
 ### R4 — Per-user socket cap
 - **Decision:** deferred to the abuse/rate-limiting hardening work.

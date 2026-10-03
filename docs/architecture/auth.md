@@ -52,6 +52,7 @@ The client performs at most one refresh at a time (single-flight), and calls ref
 - `POST /api/v1/auth/logout` revokes the current session (safe to repeat) and clears the cookie.
 - On any revocation (logout or reuse detection), the session ID is written to Redis (`ff:auth:revoked:{sid}`) for one access-token lifetime, and that session's sockets are disconnected (`session:{sid}` channel).
 - REST authentication and socket handshakes both reject tokens whose `sid` is on the revoked list, so a revoked session stops working immediately rather than when its access token expires.
+- When Redis cannot answer (unreachable, or the cache is untrusted inside the R3 trust-loss window), PostgreSQL decides. When PostgreSQL cannot answer either, the check fails closed: REST returns `503 INTERNAL` and the handshake refuses with `INTERNAL` (temporary; the client retries). A session is never treated as valid because neither store could be asked.
 
 ## Cookie and deployment rules
 
