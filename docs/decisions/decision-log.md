@@ -233,6 +233,25 @@ Approved at the start of Phase 3 from the Phase 3 reconnaissance.
 ### R8 — No user-facing events in Phase 3
 - **Decision:** Phase 3 is infrastructure only: no `tasks:changed` or other product events.
 
+## Presence hardening decisions (Phase 4A)
+
+Approved at the start of Phase 4 to close the Phase 3 presence findings P-1 (a missed disconnect leaves a stale entry), P-2 (re-assertion races a disconnect and is not retried) and P-3 (the offline signal is lossy).
+
+### H1 — Two-way presence sync on every heartbeat
+- **Decision:** each instance reconciles its live Socket.IO sockets against its reverse index after every heartbeat, and at once after a reconnect, an epoch change or a rejoin. It adds missing entries and removes stale ones from both sets in one transaction, queued in the same synchronous step that reads the live sockets. Single-flight; a failed sync or rejoin is retried by the next heartbeat.
+- **Consequences:** any missed presence write is repaired within one heartbeat interval. No Lua, no per-entry TTLs, no new keys.
+
+### H2 — Offline events are hints carrying `disconnectedAtMs`
+- **Decision:** the offline event is `{ userId, reason, disconnectedAtMs }` with reason `disconnect`, `missed_disconnect` or `instance_dead`; `disconnectedAtMs` is the Redis TIME of the removal, of the detecting sync, or the dead instance's last heartbeat. Events may be missed, repeated (with the same key) or stale, so no Solo Focus outcome is decided from one: every decision re-checks presence (`checkUser`, one atomic read with Redis TIME) and is retried rather than taken when that check fails.
+- **Consequences:** consumers collapse repeats by `(userId, disconnectedAtMs)`; the reconciler's sweep of running solo sessions is the durable backstop. No presence tables, log, outbox or streams.
+
+### H3 — Late grace for a missed disconnect
+- **Decision:** when the reconciler finds a running solo session whose user is offline with no disconnect marker, and Redis has **not** lost its data during the running stretch (the current epoch was not created after `running_since`), it starts a normal 60-second grace from the detection time instead of marking the session `expired`. `expired` remains for the case where the epoch changed during the stretch.
+- **Consequences:** an infrastructure fault no longer discards a user's focused stretch; recorded time can be over-counted by at most the detection delay. Implemented with Solo Focus (Phase 4B); Phase 4A supplies `checkUser` and the event timestamps it needs.
+
+### H4 — Online hint
+- **Decision:** presence emits an online event when a socket of a user is newly recorded (connect, or a sync re-adding it), so the future disconnect marker can be cleared early. Like the offline event it is a hint; grace expiry re-checks presence regardless.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

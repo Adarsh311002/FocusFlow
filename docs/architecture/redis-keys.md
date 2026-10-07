@@ -18,8 +18,8 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 |---|---|---|---|
 | `ff:epoch` | String | `{uuid}.{createdAtMs}` (Redis TIME), set once with `SET NX` (R3) | Permanent; its disappearance means Redis lost its data. Its creation time is recorded but no longer affects revocation (R3, revised) |
 | `ff:instances` | Sorted set | `instanceId` scored by its last heartbeat (Redis TIME, ms) (R1) | Refreshed every heartbeat; dead ones removed by the reconciler (the score survives the instance) |
-| `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; deleted by clean shutdown or the reconciler |
-| `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; entries of dead instances ignored at read time and removed by the reconciler |
+| `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; kept equal to the instance's live sockets by its sync on every heartbeat (H1); emptied by clean shutdown or the reconciler |
+| `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; stale entries of a live instance removed by its sync (H1); entries of dead instances ignored at read time and removed by the reconciler. Always changed together with the reverse index in one transaction |
 | `ff:user:{userId}:disconnected` | String | `disconnectedAtMs` while a running solo session is in grace | Deleted on reconnect or settlement; safety TTL |
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
@@ -52,7 +52,7 @@ BullMQ keys use the same configured prefix (P3): with the default, queues live u
 
 The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the channel prefix is `{REDIS_KEY_PREFIX}socket.io` (P3). Their connections (and BullMQ's) carry no ioredis `keyPrefix` and wait for a reconnect instead of rejecting, because the adapter and emitter do not await their commands.
 
-**Implemented in Phase 3:** `ff:epoch`, `ff:instances`, `ff:instance:{instanceId}:sockets`, `ff:user:{userId}:sockets`, `ff:auth:revoked:{sid}` (Phase 1), and the `maintenance` queue with its reconcile scheduler. The other keys and queues arrive with their phases.
+**Hardened in Phase 4A:** the presence sets above are synchronised with each instance's live sockets on every heartbeat (H1); no new keys. **Implemented in Phase 3:** `ff:epoch`, `ff:instances`, `ff:instance:{instanceId}:sockets`, `ff:user:{userId}:sockets`, `ff:auth:revoked:{sid}` (Phase 1), and the `maintenance` queue with its reconcile scheduler. The other keys and queues arrive with their phases.
 
 ## Restart semantics
 

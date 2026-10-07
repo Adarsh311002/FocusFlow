@@ -156,7 +156,7 @@ solo, while in_progress:  running ⇄ paused   (D6)
 | Reason | Applies to | When |
 |---|---|---|
 | `stopped` | solo | The user stopped early |
-| `expired` | solo | Unresolved too long (still in progress beyond the cleanup window, typically because it was left paused), or running while the user is gone and the disconnect time is unknown |
+| `expired` | solo | Unresolved too long (still in progress beyond the cleanup window, typically because it was left paused), or running while the user is gone and the disconnect time is unknown because Redis lost its data during the running stretch (a merely missed disconnect gets late grace instead, H3) |
 | `grace_expired` | solo, room | Disconnected while running and did not reconnect within 60 s |
 | `opted_out` | room | Left the room's focus but stayed in the room |
 | `left_room` | room | Intentionally left the room (D19) |

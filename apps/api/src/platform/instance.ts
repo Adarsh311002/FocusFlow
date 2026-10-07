@@ -17,16 +17,26 @@ export type InstanceHeartbeat = {
   readonly start: () => Promise<void>;
   /** Stops publishing and removes this instance from the live set (clean shutdown). */
   readonly stop: () => Promise<void>;
-  /** One tick: check the epoch, then publish. Used on reconnect. */
+  /**
+   * One tick: check the epoch, publish, then run the tick handlers. Used on reconnect.
+   * Never rejects: a failed step is logged and runs again on the next tick.
+   */
   readonly tick: (reason: 'tick' | 'reconnect') => Promise<void>;
   /** Publishes a heartbeat without an epoch check (used by local recovery). */
   readonly publish: () => Promise<void>;
   /**
    * Runs when a heartbeat finds this instance missing from the live set although it had
    * published before: another instance's reconciler declared it dead (for example after a
-   * long pause) and removed its presence. The handler re-adds what was removed.
+   * long pause) and removed its presence. The handler re-adds what was removed. If a
+   * handler fails, the rejoin stays pending and runs again on the next heartbeat (the
+   * ZADD itself reports the missing member only once).
    */
-  readonly onRejoined: (handler: () => Promise<void> | void) => void;
+  readonly onRejoined: (handler: () => unknown) => void;
+  /**
+   * Runs after every successful heartbeat (the presence sync, Phase 4A). A failure is
+   * logged and the handler runs again on the next tick.
+   */
+  readonly onTick: (handler: () => unknown) => void;
 };
 
 type HeartbeatDeps = {
@@ -46,19 +56,24 @@ export const createInstanceHeartbeat = ({
 }: HeartbeatDeps): InstanceHeartbeat => {
   let timer: NodeJS.Timeout | undefined;
   let published = false;
-  const rejoinHandlers: (() => Promise<void> | void)[] = [];
+  let rejoinPending = false;
+  const rejoinHandlers: (() => unknown)[] = [];
+  const tickHandlers: (() => unknown)[] = [];
 
   const publish = async (): Promise<void> => {
     const nowMs = await redisTimeMs(redis);
     // ZADD answers 1 only when the member was not in the set.
     const added = (await redis.zadd(redisKeys.instances, nowMs, instanceId)) === 1;
-    const rejoined = added && published;
-    published = true;
-    if (rejoined) {
+    if (added && published) {
       logger.warn({ instanceId }, 'Instance was missing from the live set; re-adding its state');
+      rejoinPending = true;
+    }
+    published = true;
+    if (rejoinPending) {
       for (const handler of rejoinHandlers) {
         await handler();
       }
+      rejoinPending = false;
     }
   };
 
@@ -70,6 +85,17 @@ export const createInstanceHeartbeat = ({
       // Redis is down or flaky: the next tick (or the reconnect) tries again. Other
       // instances may briefly see this one as dead, which only hides its presence.
       logger.warn({ err: error, instanceId, reason }, 'Instance heartbeat failed');
+      return;
+    }
+    for (const handler of tickHandlers) {
+      try {
+        await handler();
+      } catch (error) {
+        logger.warn(
+          { err: error, instanceId, reason },
+          'Heartbeat step failed; retrying next tick',
+        );
+      }
     }
   };
 
@@ -86,6 +112,7 @@ export const createInstanceHeartbeat = ({
       clearInterval(timer);
       timer = undefined;
       published = false;
+      rejoinPending = false;
       try {
         await redis.zrem(redisKeys.instances, instanceId);
       } catch (error) {
@@ -96,6 +123,9 @@ export const createInstanceHeartbeat = ({
     publish,
     onRejoined: (handler) => {
       rejoinHandlers.push(handler);
+    },
+    onTick: (handler) => {
+      tickHandlers.push(handler);
     },
   };
 };

@@ -9,7 +9,7 @@ import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
 import type { AuthDeps } from '../modules/auth/service.js';
-import { createPresence, type Presence } from '../modules/presence/presence.js';
+import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
@@ -207,12 +207,17 @@ export const createRuntime = async (
 
   const presence = createPresence({
     store: createPresenceStore({ redis, instanceId, instanceTtlMs: config.INSTANCE_TTL_MS }),
-    io,
+    listLocalSockets: () => localSocketRefs(io),
     logger,
   });
   onSocketConnect.push(presence.track);
-  epoch.onLocalRecovery(() => presence.reassertLocal());
-  heartbeat.onRejoined(() => presence.reassertLocal());
+  // Presence is synchronised with the live sockets on every heartbeat, so any missed
+  // write is repaired within one interval; data loss and a rejoin sync at once.
+  heartbeat.onTick(() => presence.syncLocal());
+  epoch.onLocalRecovery(async () => {
+    await presence.syncLocal();
+  });
+  heartbeat.onRejoined(() => presence.syncLocal());
 
   const reconciler = createReconciler({
     redis,
@@ -231,16 +236,11 @@ export const createRuntime = async (
         });
 
   // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
-  // back empty), re-publish the heartbeat, and re-add this instance's sockets (writes made
-  // while Redis was unreachable were lost; adding is idempotent).
+  // back empty), re-publish the heartbeat, and sync this instance's sockets (presence
+  // writes made while Redis was unreachable failed). The tick never rejects.
   redis.on('ready', () => {
     if (started) {
-      void heartbeat
-        .tick('reconnect')
-        .then(() => presence.reassertLocal())
-        .catch((error: unknown) => {
-          logger.warn({ err: error, instanceId }, 'Presence re-assertion after reconnect failed');
-        });
+      void heartbeat.tick('reconnect');
     }
   });
 

@@ -10,7 +10,8 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Phase 0 (foundation) and Phase 1 (accounts): **merged** into `main` (Phase 1 checkpoint: tag `phase-1-accounts`).
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
 - Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
-- Phase 1b and Phase 4 onwards: **not started**. Each phase begins only when explicitly instructed.
+- Phase 4A (presence hardening): **implemented** on branch `v2/phase-4a-presence-hardening`, pending review; see "Phase 4A" below.
+- Phase 1b, Phase 4B (Solo Focus) and later phases: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
@@ -302,6 +303,17 @@ Branch: `v2/phase-3-realtime`. Decisions I5, I7, F7, D23, P3 and R1–R8 (`decis
 - **Web:** a realtime client (handshake token, refresh-then-reconnect, revoked → session ended, backoff on temporary errors), clock offset from `time:sync`, a provider bound to the signed-in user, and a small connection status line. No Zustand.
 - **Tests:** unit tests for the revocation check (every marker / Redis / PostgreSQL combination, REST and handshake) and every pure piece (epoch, clock, reconnection policy); integration tests with Testcontainers and two API instances for the handshake, token expiry, revocation (including a missing marker, Redis data loss and store outages) over REST and sockets, cross-instance delivery and isolation, presence, instance death, FLUSHALL and reconnect recovery, schedules, jobs and the worker-only role.
 - **Not in Phase 3:** product events (R8), a per-user socket cap (R4), worker health endpoints (R7), solo focus sessions and timers (Phase 4), rooms (Phase 6), rate limiting and security headers (hardening).
+
+## Phase 4A — Presence hardening
+
+Branch: `v2/phase-4a-presence-hardening`. Decisions H1–H4 (`decisions/decision-log.md`). Closes the Phase 3 presence findings P-1 (missed disconnect), P-2 (re-assertion race and missing retry) and P-3 (lossy offline signal). No PostgreSQL migration, no new Redis keys, no contract changes.
+
+- **Sync (H1):** `syncLocal()` replaces the add-only `reassertLocal()`: it reconciles the live namespace against the instance's reverse index in both directions, single-flight, after every heartbeat and at once after a reconnect, an epoch change or a rejoin. Stale removals report affected users as `missed_disconnect`.
+- **Heartbeat:** tick handlers run after every successful heartbeat; a failed one is retried next tick. A rejoin whose handler fails stays pending until a later heartbeat completes it (the rejoin was previously lost).
+- **Events (H2, H4):** offline events carry `reason` and `disconnectedAtMs` (Redis TIME of the removal, of the detecting sync, or the dead instance's last heartbeat); only the path that removed an entry reports it; dead-instance cleanup reports before removing, so an interrupted run reports again with the same key; an online hint on newly recorded sockets; `checkUser` returns `{ online, checkedAtMs }` from one atomic read.
+- **Store:** every write that can change whether a user is online runs in one MULTI with Redis TIME and the heartbeats; dead-instance cleanup removes only the members it read instead of deleting the index.
+- **Tests:** unit tests for the sync plan, the liveness rule, event reporting and collapse, single-flight and retry, and heartbeat retries; integration tests for sync against Redis, both orderings of a disconnect racing a sync, many tabs closing during re-assertion, `disconnectedAtMs`, a missed disconnect on one of two instances (Redis cut through a TCP proxy), Redis reconnect repair, dead-instance timestamps and concurrent cleanup.
+- **Not in Phase 4A:** focus sessions, their migration, endpoints, queue, grace/end jobs and the reconciler sweep that implements late grace (H3) — Phase 4B.
 
 ## Phase 0 review follow-ups
 

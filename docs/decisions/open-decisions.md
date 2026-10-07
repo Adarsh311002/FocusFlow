@@ -76,6 +76,7 @@ Known work that is deliberately outside the phase that surfaced it.
 | D43 — Completing the current task | Clears it as the current task (approved) |
 | D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
 | R1–R8 — Phase 3 real-time foundation | Presence keys with reverse index and heartbeat sorted set; Redis TIME as protocol clock; revocation decided by PostgreSQL whenever the Redis marker is absent (R3, revised); socket cap deferred; default transports (sticky sessions needed with several instances); ping 10 s/10 s, heartbeat 10 s, TTL 30 s, reconciler 30 s; worker role without HTTP; no product events yet (approved; see `decision-log.md`) |
+| H1–H4 — Phase 4A presence hardening | Two-way presence sync on every heartbeat; offline events are hints with `disconnectedAtMs` and every decision re-checks presence; late grace instead of `expired` for a missed disconnect without an epoch change; online hint (approved; see `decision-log.md`) |
 | T1–T6 — Phase 2 task details | Single-task read, `id DESC` ordering with one full index, `GET /me` re-read after clearing, no optimistic updates yet, tasks on `/dashboard`, limits (approved; see `decision-log.md`) |
 
 ## Later product phases
