@@ -4,7 +4,7 @@ import type { Logger } from 'pino';
 
 import { redisTimeMs } from '../../platform/redis.js';
 import { redisKeys } from '../../platform/redis-keys.js';
-import type { OfflineReason } from '../presence/presence.js';
+import type { InstanceRemovalReason } from '../presence/presence.js';
 
 // The reconciler (docs/architecture/focus-timing-protocol.md, "Reconciler"): repairs what
 // the event-driven path can miss. It runs at startup, after Redis recovery and every
@@ -20,7 +20,7 @@ import type { OfflineReason } from '../presence/presence.js';
 //   7. orphaned room sessions → timer_lost                    (Phase 8)
 
 export type InstanceCleanup = {
-  readonly removeInstance: (instanceId: string, reason: OfflineReason) => Promise<void>;
+  readonly removeInstance: (instanceId: string, reason: InstanceRemovalReason) => Promise<void>;
 };
 
 export type ReconcileSummary = { readonly deadInstances: readonly string[] };
@@ -36,9 +36,11 @@ export const createReconciler = ({ redis, presence, instanceTtlMs, logger }: Rec
   /**
    * Step 1: instances whose heartbeat is older than the TTL (Redis TIME) are dead. Their
    * presence entries are removed through the reverse index, and each user left without a
-   * live socket is reported offline (`instance_dead`). The instance leaves the live set
-   * last, so a crash midway is simply repeated by the next run. An instance wrongly
-   * declared dead (a long pause) re-adds itself and its sockets on its next heartbeat.
+   * live socket is reported offline (`instance_dead`, disconnected at the instance's last
+   * heartbeat) before the entries go. The instance leaves the live set last, so a crash
+   * midway is simply repeated by the next run, which reports again with the same time. An
+   * instance wrongly declared dead (a long pause) re-adds its sockets on its next sync and
+   * itself on its next heartbeat.
    */
   const removeDeadInstances = async (): Promise<string[]> => {
     const cutoffMs = (await redisTimeMs(redis)) - instanceTtlMs;

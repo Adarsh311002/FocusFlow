@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { RECONCILE_JOB, type ReconcileJob } from '@focus-flow/contracts';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
@@ -12,8 +14,10 @@ import {
 import { closeAllSockets, connectSocket } from '../../../test/sockets.js';
 import { signUpTestUser } from '../../../test/users.js';
 import { RECONCILE_SCHEDULER_ID } from '../../platform/queues.js';
+import { redisTimeMs } from '../../platform/redis.js';
 import { redisKeys } from '../../platform/redis-keys.js';
 import { createRuntime } from '../../platform/runtime.js';
+import type { UserOfflineEvent } from '../presence/presence.js';
 
 // BullMQ worker role and reconciler (approved Phase 3 decisions 6 and 7) against real
 // Redis, with two worker-running API instances and short intervals.
@@ -64,6 +68,19 @@ const queue = () => requireHarness().runtime.maintenanceQueue;
 const jobState = async (jobId: string) => (await queue().getJob(jobId))?.getState();
 const userEntries = (userId: string) =>
   requireHarness().redis.smembers(redisKeys.userSockets(userId));
+
+/** Offline reports for one user from either worker-running instance. */
+const collectOfflineEvents = (userId: string): UserOfflineEvent[] => {
+  const events: UserOfflineEvent[] = [];
+  for (const runtime of [requireHarness().runtime, requireSecond().runtime]) {
+    runtime.presence.onUserOffline((event) => {
+      if (event.userId === userId) {
+        events.push(event);
+      }
+    });
+  }
+  return events;
+};
 
 beforeAll(async () => {
   harness = await startTestHarness(TIMINGS);
@@ -118,7 +135,7 @@ describe('dead-instance cleanup', () => {
     await waitFor(async () => (await userEntries(survivor.userId)).length === 2);
     const offline: string[] = [];
     for (const runtime of [h.runtime, requireSecond().runtime]) {
-      runtime.presence.onUserOffline((userId, reason) => {
+      runtime.presence.onUserOffline(({ userId, reason }) => {
         offline.push(`${userId}:${reason}`);
       });
     }
@@ -141,6 +158,7 @@ describe('dead-instance cleanup', () => {
     const h = requireHarness();
     const ghost = '01a0ed0d-0000-7000-8000-00000000d0d0';
     const user = await signUpTestUser(h, 'ghosted');
+    const events = collectOfflineEvents(user.userId);
     await h.redis
       .multi()
       .zadd(redisKeys.instances, 1, ghost)
@@ -159,6 +177,39 @@ describe('dead-instance cleanup', () => {
     expect(await h.redis.zscore(redisKeys.instances, ghost)).toBeNull();
     expect(await userEntries(user.userId)).toEqual([]);
     expect(await h.redis.exists(redisKeys.instanceSockets(ghost))).toBe(0);
+    // Concurrent runs may each report the user; every report carries the same key, so a
+    // consumer collapses them to one.
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(
+      new Set(events.map((event) => `${event.userId}@${String(event.disconnectedAtMs)}`)),
+    ).toEqual(new Set([`${user.userId}@1`]));
+  });
+
+  it('reports a dead instance’s users as disconnected at its last heartbeat', async () => {
+    const h = requireHarness();
+    const dead = randomUUID();
+    const user = await signUpTestUser(h, 'crashed');
+    const events = collectOfflineEvents(user.userId);
+    const lastHeartbeatMs = (await redisTimeMs(h.redis)) - 60_000;
+    await h.redis
+      .multi()
+      .zadd(redisKeys.instances, lastHeartbeatMs, dead)
+      .sadd(redisKeys.userSockets(user.userId), `${dead}:socket-1`)
+      .sadd(redisKeys.instanceSockets(dead), `${user.userId}:socket-1`)
+      .exec();
+
+    // The scheduled run (every 500 ms here) or this one, whichever comes first.
+    await h.runtime.reconciler.run({ schemaVersion: 1, trigger: 'recovery', correlationId: 't' });
+
+    await waitFor(() => Promise.resolve(events.length >= 1));
+    for (const event of events) {
+      expect(event).toEqual({
+        userId: user.userId,
+        reason: 'instance_dead',
+        disconnectedAtMs: lastHeartbeatMs,
+      });
+    }
+    expect(await userEntries(user.userId)).toEqual([]);
   });
 
   it('re-adds an instance wrongly declared dead, with its sockets, on its next heartbeat', async () => {
@@ -172,11 +223,16 @@ describe('dead-instance cleanup', () => {
     await h.redis.zrem(redisKeys.instances, h.runtime.instanceId);
     expect(await userEntries(user.userId)).toEqual([]);
 
-    await waitFor(async () => (await userEntries(user.userId)).length === 1);
+    // The sockets may come back first (the per-heartbeat sync), the instance on its next
+    // heartbeat; both must.
+    await waitFor(
+      async () =>
+        (await userEntries(user.userId)).length === 1 &&
+        (await h.redis.zscore(redisKeys.instances, h.runtime.instanceId)) !== null,
+    );
     expect(await userEntries(user.userId)).toEqual([
       `${h.runtime.instanceId}:${String(socket.id)}`,
     ]);
-    expect(await h.redis.zscore(redisKeys.instances, h.runtime.instanceId)).not.toBeNull();
   });
 });
 
