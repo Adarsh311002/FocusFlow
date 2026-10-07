@@ -9,7 +9,7 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Implementation plan: **approved** (I1–I12, P1–P3, D43, D44).
 - Phase 0 (foundation) and Phase 1 (accounts): **merged** into `main` (Phase 1 checkpoint: tag `phase-1-accounts`).
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
-- Phase 3 (real-time foundation): **implemented** on branch `v2/phase-3-realtime`, pending review; see "Phase 3" below.
+- Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
 - Phase 1b and Phase 4 onwards: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
