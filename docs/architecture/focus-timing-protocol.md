@@ -16,11 +16,11 @@ Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19,
 | What | Clock |
 |---|---|
 | Room timer arithmetic, `serverNowMs` sent with timer state | Redis server time, read with `TIME` immediately before each change is computed (I8) |
-| Stored timestamps; solo session arithmetic (`started_at`, `running_since`, `ended_at`, `focused_seconds`, `T_end`) | PostgreSQL `now()` (E9) |
+| Stored timestamps; solo session arithmetic (`started_at`, `running_since`, `ended_at`, `focused_seconds`, `T_end`) | PostgreSQL `clock_timestamp()`, sampled after the session row lock is held (E9) |
 | Presence and epoch instants (`disconnectedAtMs`, `checkedAtMs`, the epoch's creation time) | Redis `TIME` (R2, H2, E9) |
 | API server clocks | Never used for these |
 
-All hosts run NTP. Room session `ended_at` values come from the focus run's close time. Solo timestamps are written at millisecond precision (`date_trunc('milliseconds', now())`), so a value read back into JavaScript compares exactly.
+All hosts run NTP. Room session `ended_at` values come from the focus run's close time. Solo timestamps are written at millisecond precision (`date_trunc('milliseconds', clock_timestamp())`), so a value read back into JavaScript compares exactly. The clock is `clock_timestamp()`, not `now()`: `now()` is fixed when the transaction begins, so a request that begins a transaction, waits on `SELECT … FOR UPDATE`, and then acquires the lock after another transaction changed `running_since` would compute with an instant earlier than that `running_since` (and fail with a clock error). Sampled after the lock is held, `clock_timestamp()` is still the PostgreSQL clock (E9) and is never earlier than anything committed before it.
 
 ### Comparing the two clocks (E9)
 
@@ -203,7 +203,7 @@ Solo session state lives entirely in PostgreSQL (D6): `planned_seconds` (P), `fo
 
 ### Timing formulas
 
-All values come from PostgreSQL `now()` (E9). Partial seconds are always **rounded down** at a pause, stop or settlement (E14), so focused time is never over-counted; a session paused and resumed many times may be under-counted by up to one second per pause.
+All values come from the PostgreSQL clock, `date_trunc('milliseconds', clock_timestamp())` sampled after the session row lock is held (E9). Partial seconds are always **rounded down** at a pause, stop or settlement (E14), so focused time is never over-counted; a session paused and resumed many times may be under-counted by up to one second per pause.
 
 | Quantity | Formula |
 |---|---|
@@ -222,9 +222,9 @@ Every action runs in one PostgreSQL transaction that locks the session row (`SEL
 
 | Action | Rule | Effect |
 |---|---|---|
-| Start (`POST /focus-sessions`) | `plannedSeconds` is an integer 60–14,400 (E1). User connected (`checkUser`, else `409 NOT_CONNECTED`). No in-progress session (the partial unique index; else `409 SESSION_IN_PROGRESS` with the existing session). Optional `taskId`: the user's own, not deleted, and open, locked `FOR SHARE` (E3; else `404 TASK_NOT_FOUND` / `409 TASK_NOT_OPEN`). The server never fills in `users.current_task_id`. | Insert `in_progress`, `R = started_at = now()`, `F = 0`; enqueue the end job |
+| Start (`POST /focus-sessions`) | `plannedSeconds` is an integer 60–14,400 (E1). User connected (`checkUser`, else `409 NOT_CONNECTED`). No in-progress session (the partial unique index; else `409 SESSION_IN_PROGRESS` with the existing session). Optional `taskId`: the user's own, not deleted, and open, locked `FOR SHARE` (E3; else `404 TASK_NOT_FOUND` / `409 TASK_NOT_OPEN`). The server never fills in `users.current_task_id`. | Insert `in_progress`, `R = started_at =` the PostgreSQL clock, `F = 0`; enqueue the end job |
 | Pause | Running and `now < T_end` | Pause formula; clear this session's marker (only if it still belongs to this session, E10). At or after `T_end` the completion decision runs first (E7); if it does not complete the session, the pause applies with `F` capped at `P`. |
-| Resume | Paused; user connected (else `409 NOT_CONNECTED`) | `R := now()`; clear this session's marker if still present; enqueue the end job |
+| Resume | Paused; user connected (else `409 NOT_CONNECTED`) | `R :=` the PostgreSQL clock; clear this session's marker if still present; enqueue the end job |
 | Stop | In progress | At or after `T_end` the completion decision runs first (E7). Otherwise early stop; clear this session's marker (only if it still belongs to this session). |
 
 Repeats are harmless: pause on a paused session, resume on a running one, and pause, resume or stop on an ended session all answer `200` with the session unchanged (E11). There is no "complete" endpoint: completion is decided by the server.
@@ -265,7 +265,7 @@ The marker is changed only with `WATCH`/`MULTI` and a bounded number of retries 
 
 ### The decision for a running session
 
-One procedure decides every running solo session, whether called by the end job, a grace job, the reconciler sweep, or a pause or stop at or after `T_end`. It reads, in this order: the session row (locked), PostgreSQL `now()` and `T_end`, the marker (ignoring one from before the current stretch), `checkUser` (`online`, `checkedAtMs`), and the current epoch's creation time. If `checkUser` fails or the epoch is unknown, it decides nothing and is retried (H2). "Through the end" (observed evidence only) and "definite Redis loss" use the clock-comparison rules above.
+One procedure decides every running solo session, whether called by the end job, a grace job, the reconciler sweep, or a pause or stop at or after `T_end`. It reads, in this order: the session row (locked), the PostgreSQL clock (`clock_timestamp()`, after the lock) and `T_end`, the marker (ignoring one from before the current stretch), `checkUser` (`online`, `checkedAtMs`), and the current epoch's creation time. If `checkUser` fails or the epoch is unknown, it decides nothing and is retried (H2). "Through the end" (observed evidence only) and "definite Redis loss" use the clock-comparison rules above.
 
 | Before `T_end` | Outcome |
 |---|---|
@@ -306,7 +306,7 @@ In both cases only the time accumulated before the current running stretch is ke
 |---|---|---|---|
 | `room-timer` | Phase end | room ID + version | Version changed or not running |
 | `focus-session` | Room participant grace | room + run + user + `disconnectedAtMs` | Participant reconnected or already settled |
-| `focus-session` | Solo end | session ID + `running_since` (ms) | Session paused, resumed again, or ended. Fired early (PostgreSQL `now() < T_end`) → enqueued again for `T_end` |
+| `focus-session` | Solo end | session ID + `running_since` (ms) | Session paused, resumed again, or ended. Fired early (PostgreSQL `clock_timestamp() < T_end`) → enqueued again for `T_end` |
 | `focus-session` | Solo grace | session ID + `disconnectedAtMs` | Session no longer running, or the marker no longer holds exactly this session and `disconnectedAtMs` (E10) |
 | `maintenance` | Reconciler (repeating) | — | — |
 

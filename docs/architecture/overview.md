@@ -43,7 +43,7 @@ Focus Flow helps people do focused work, alone or together. The core loop is: **
 - **Socket.IO** for live state (presence, timer, knocks, chat) and for notifying users of durable changes.
 - **Identity** on sockets comes only from the authenticated connection (F7).
 - **Server authority** for shared room state (F6): clients render the room timer from server timestamps.
-- **Clocks:** room timer arithmetic uses Redis server time (read with `TIME` before each change is computed, I8); stored timestamps and solo session arithmetic use PostgreSQL `now()`. API servers never use their own clocks for these. All hosts run NTP.
+- **Clocks:** room timer arithmetic uses Redis server time (read with `TIME` before each change is computed, I8); stored timestamps and solo session arithmetic use the PostgreSQL clock (`clock_timestamp()`, sampled after the session row lock is held, E9). API servers never use their own clocks for these. All hosts run NTP.
 
 ## Node ↔ Python boundary (later phase)
 

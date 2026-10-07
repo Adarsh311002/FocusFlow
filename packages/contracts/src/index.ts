@@ -1,5 +1,6 @@
 export * from './errors';
 export * from './http/auth';
+export * from './http/focus-sessions';
 export * from './http/health';
 export * from './http/paths';
 export * from './http/tasks';

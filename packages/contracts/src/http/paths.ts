@@ -1,4 +1,4 @@
-import type { TaskId } from '../ids';
+import type { FocusSessionId, TaskId } from '../ids';
 
 /**
  * Route paths the API serves and the web app calls. Owning them here means the two
@@ -42,6 +42,23 @@ export type TaskPathTemplate = Exclude<(typeof taskPaths)[keyof typeof taskPaths
 /** Builds a concrete task URL path from one of the `taskPaths` templates. */
 export const taskPath = (template: TaskPathTemplate, taskId: TaskId): string =>
   template.replace(':taskId', encodeURIComponent(taskId));
+
+/** Solo focus sessions (Phase 4B, docs/api/rest.md "Focus sessions"). */
+export const focusSessionPaths = {
+  collection: '/focus-sessions',
+  current: '/focus-sessions/current',
+  pause: '/focus-sessions/:sessionId/pause',
+  resume: '/focus-sessions/:sessionId/resume',
+  stop: '/focus-sessions/:sessionId/stop',
+} as const;
+
+export type FocusSessionPathTemplate = (typeof focusSessionPaths)['pause' | 'resume' | 'stop'];
+
+/** Builds a concrete focus-session URL path from one of the per-session templates. */
+export const focusSessionPath = (
+  template: FocusSessionPathTemplate,
+  sessionId: FocusSessionId,
+): string => template.replace(':sessionId', encodeURIComponent(sessionId));
 
 /**
  * Required on every refresh/logout request in addition to the refresh cookie: a

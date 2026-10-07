@@ -15,6 +15,13 @@
       "when": 1790751057684,
       "tag": "0001_create_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791361896590,
+      "tag": "0002_create_focus_sessions",
+      "breakpoints": true
     }
   ]
 }

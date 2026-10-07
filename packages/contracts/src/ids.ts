@@ -14,3 +14,7 @@ export type TaskId = z.infer<typeof taskIdSchema>;
 /** An auth session (one logged-in device, D23): the access token's `sid` claim. */
 export const authSessionIdSchema = z.uuid().brand<'AuthSessionId'>();
 export type AuthSessionId = z.infer<typeof authSessionIdSchema>;
+
+/** A focus session (solo in Phase 4B; room sessions arrive in Phase 6). */
+export const focusSessionIdSchema = z.uuid().brand<'FocusSessionId'>();
+export type FocusSessionId = z.infer<typeof focusSessionIdSchema>;

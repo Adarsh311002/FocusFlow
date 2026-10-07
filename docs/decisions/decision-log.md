@@ -288,7 +288,7 @@ Approved after the Phase 4B reconnaissance (E1–E14) and its follow-up review (
   - `disconnectedAtMs + tolerance ≥ T_end`, with `observed` evidence (E10) ⇒ present through the end;
   - `epochCreatedAtMs > runningSinceMs + tolerance` ⇒ definite Redis loss during the stretch;
   - otherwise: not definite — prefer grace (or "unknown, retry") over `expired`.
-- **Consequences:** a Redis instant stored as `ended_at` is first clamped into `[running_since, T_end]`.
+- **Consequences:** a Redis instant stored as `ended_at` is first clamped into `[running_since, T_end]`. The PostgreSQL clock is read as `date_trunc('milliseconds', clock_timestamp())` after the session row lock is held — not `now()`, which is fixed at transaction start and could predate a `running_since` committed while the request waited for the lock.
 
 ### E10 — Monotonic disconnect marker
 - **Decision:** one key per user, `ff:user:{userId}:disconnected`, value `{sessionId}:{latestDisconnectedAtMs}:{evidence}`. `evidence` is `observed` for a direct socket disconnect, and `detected` for `missed_disconnect`, `instance_dead` (the last heartbeat does not prove when the socket went away), `instance_shutdown` (a new offline reason for a clean shutdown's cleanup, which reports the cleanup time) and late grace. Only observed evidence can prove presence through `T_end` (E8); detected evidence can start or extend a grace. Updated only with `WATCH`/`MULTI` and bounded retry (no Lua, not `SET NX` alone): an older disconnect for the same session changes nothing; an equal one can only upgrade `detected` to `observed`, never the reverse; a newer one replaces it (with its own evidence); a marker of another session is replaced, because only one session per user can be in progress. An event or marker whose Redis timestamp predates the session's current running stretch (`t + 2000 < runningSinceMs`, E9) is ignored. A grace job settles only if the marker still holds exactly its payload's session and `disconnectedAtMs`.
@@ -327,4 +327,4 @@ The following are accepted as the design direction but were not approved as indi
 - Redis-loss detection through an epoch marker key, with `timer_lost` recovery.
 - Knock approval over REST; knocks themselves over Socket.IO with a TTL.
 - Same-origin deployment (frontend, `/api` and `/socket.io` behind one origin).
-- Clock sources: Redis server time for room timer arithmetic (read with `TIME`, see I8); PostgreSQL `now()` for stored timestamps and solo session arithmetic.
+- Clock sources: Redis server time for room timer arithmetic (read with `TIME`, see I8); the PostgreSQL clock for stored timestamps and solo session arithmetic (`date_trunc('milliseconds', clock_timestamp())`, sampled after the session row lock is held, E9).

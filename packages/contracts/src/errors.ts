@@ -18,6 +18,9 @@ export const errorCodes = [
   // Tasks (Phase 2, docs/api/rest.md)
   'TASK_NOT_FOUND',
   'TASK_NOT_OPEN',
+  // Focus sessions (Phase 4B, docs/api/rest.md)
+  'SESSION_IN_PROGRESS',
+  'NOT_CONNECTED',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);
