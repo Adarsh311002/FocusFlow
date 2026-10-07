@@ -36,7 +36,32 @@ Presence is tracked at two levels, both in Redis and both keyed by `{instanceId}
 - Closing a tab is detected immediately. On mobile, a locked screen usually drops the socket (accepted consequence of D14/15/35).
 - `room:leave` is sent only for an explicit "Leave room" action. Navigating elsewhere in the app does not leave the room.
 - If an API instance dies, its sockets never run their disconnect handlers. Its entries stop counting as soon as its heartbeat (the `ff:instances` score, Redis TIME) is older than the TTL, and the reconciler removes them through the `ff:instance:{instanceId}:sockets` index and treats affected users as disconnected at the instance's last heartbeat. A normal deploy, where clients reconnect within 60 seconds, therefore does not abandon anyone's focus.
-- **Implemented in Phase 3** (user level): per-socket entries, read-time liveness filtering, the "user went offline" hook (Phase 4 attaches grace to it), re-assertion after reconnect or epoch change, and reconciler step 1. Room-level presence arrives with rooms.
+- **Implemented in Phase 3** (user level): per-socket entries, read-time liveness filtering, the "user went offline" hook, and reconciler step 1. **Hardened in Phase 4A** (H1–H4): the two-way sync, `disconnectedAtMs`, the online hook and offline-as-hint semantics below. Room-level presence arrives with rooms.
+
+### Synchronisation (H1)
+
+Every presence write is best effort: when Redis is unreachable, a socket's add or removal simply fails. Each API instance therefore **synchronises** its own entries with its live sockets, in both directions:
+
+- It reads its reverse index, then — in the same synchronous step, with nothing awaited in between — reads Socket.IO's live socket map and queues one transaction that adds the missing entries and removes the stale ones from **both** sets.
+- Socket.IO removes a socket from that map in the same synchronous step that emits `disconnect`, and every presence write goes through one Redis connection in order. A socket that disconnects during a sync is therefore never re-added: either its removal is already applied and it is absent from the map, or its removal is queued after the sync's write.
+- The sync runs **after every heartbeat** (so any missed write is repaired within one interval) and immediately after a Redis reconnect, an epoch change (data loss) or a rejoin. It is single-flight: a request while a sync runs is served by one more sync after it. A failed sync is retried by the next heartbeat; a failed rejoin stays pending until a later heartbeat completes it.
+- The sync compares against the reverse index. The two sets are only ever changed together in one transaction, so they cannot drift apart except through writes outside the application.
+
+### Offline and online hints (H2, H4)
+
+When a user's last live socket goes away, presence emits an **offline event** `{ userId, reason, disconnectedAtMs }`:
+
+| `reason` | When | `disconnectedAtMs` (Redis TIME) |
+|---|---|---|
+| `disconnect` | The disconnect handler removed the user's last entry (or the instance shut down cleanly) | Of the removal, read in the same transaction |
+| `missed_disconnect` | A sync removed a stale entry whose disconnect was never recorded | Of the detecting sync (the real moment is unknown and earlier) |
+| `instance_dead` | The reconciler removed a dead instance's entries | The instance's last heartbeat score |
+
+Whether a removal left the user offline is judged in the same transaction as the removal. Only the path that actually removed an entry reports it, so a disconnect and a sync never both report the same socket. Dead-instance cleanup reports **before** it removes the entries: a run that dies in between is repeated by the next run, which reports again with the same last-heartbeat time.
+
+An **online event** `userId` is emitted when a socket of the user is newly recorded (connect, or a sync re-adding it). Phase 4 uses it to clear the disconnect marker early.
+
+**Both are hints, never decisions.** An offline event can be missed (a crash, a failing handler), repeated (always with the same `(userId, disconnectedAtMs)`, so consumers collapse repeats by that key, e.g. with `SET NX`), or stale (the user may already be connected through another instance, for example during a rolling deploy). No Solo Focus outcome is decided from an event alone: every decision (grace expiry, the end job, the reconciler) first re-checks **`checkUser`**, which reads the user's entries, the heartbeats and Redis TIME in one transaction and returns `{ online, checkedAtMs }`. If that check fails, the decision is retried, never taken on an unknown state. The reconciler's sweep of running solo sessions (steps 4–6) is the durable backstop for every lost hint.
 
 ## Room timer
 
@@ -183,9 +208,9 @@ The end job fires at `T_end = running_since + (planned_seconds − focused_secon
 
 ### Disconnect while running
 
-- When the user's last socket anywhere drops while a solo session is **running**, a disconnect marker is recorded and a grace job is scheduled for 60 seconds later.
-- Reconnecting within grace removes the marker. If `T_end` passed during the grace period, the session completes immediately (`ended_at = T_end`).
-- If the grace expires, the session is `abandoned(grace_expired)` with `focused_seconds += min(disconnectedAt, T_end) − running_since` and `ended_at = disconnectedAt`.
+- When the user's last socket anywhere drops while a solo session is **running**, a disconnect marker is recorded with the offline event's `disconnectedAtMs` (`SET NX`, so repeated events keep the first time) and a grace job is scheduled for 60 seconds later.
+- Reconnecting within grace removes the marker (the online hint). If `T_end` passed during the grace period, the session completes immediately (`ended_at = T_end`).
+- At grace expiry the job re-checks presence (H2): if the user is online after all (for example, they reconnected through another instance before the marker was written), the marker is removed and the session continues, or completes if `T_end` has passed. Only if the user is still offline is the session `abandoned(grace_expired)`, with `focused_seconds += min(disconnectedAt, T_end) − running_since` and `ended_at = disconnectedAt`.
 
 ### Paused solo sessions
 
@@ -195,7 +220,9 @@ A disconnect does **not** start the grace for a paused solo session (D14/15/35).
 
 A solo session is `abandoned(expired)` when:
 - it has been in progress longer than the cleanup window; or
-- it is running, the user is not connected, and no disconnect marker exists, so the server cannot tell when the user left (for example, after Redis state loss). Only the time accumulated before the current running stretch is kept.
+- it is running, the user is not connected, no disconnect marker exists, **and Redis lost its data during the current running stretch** (the current epoch was created after `running_since`), so the marker may have been lost and the server cannot tell when the user left. Only the time accumulated before the current running stretch is kept.
+
+**Late grace (H3, approved).** If the reconciler finds a running solo session whose user is not connected and has no disconnect marker, but the epoch has **not** changed during the running stretch, the disconnect was simply missed or its hint lost. The reconciler then starts a normal 60-second grace from the detection time (`checkedAtMs`, written with `SET NX`) instead of expiring the session. This can over-count focused time by at most the detection delay (about one reconciler interval), which is preferred over discarding the whole stretch because of an infrastructure fault.
 
 ## Scheduled jobs
 
@@ -211,10 +238,10 @@ A solo session is `abandoned(expired)` when:
 
 Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 30 seconds, R6), so exactly one worker takes each scheduled run. Every step is safe to repeat. Phase 3 implements step 1; the others arrive with the phases that own their state.
 
-1. Remove presence entries of dead API instances; treat their users and room participants as disconnected at the instance's last heartbeat, and schedule grace.
+1. Remove presence entries of dead API instances; treat their users and room participants as disconnected at the instance's last heartbeat, and schedule grace. Users are reported before the entries are removed, so an interrupted run is repeated (H2).
 2. Room timers that are running past `endsAtMs`: run the phase end. Running timers without a pending job: schedule it.
 3. Closed runs in the unsettled set: settle them.
-4. Room participants and solo users past their grace: apply `grace_expired`.
+4. Room participants and solo users past their grace, still offline when re-checked: apply `grace_expired`. Running solo sessions whose user is offline with no marker: start late grace (H3), unless the epoch changed during the stretch.
 5. Running solo sessions past `T_end` with the user connected: complete. Missing end jobs: schedule them.
 6. Solo sessions for the `expired` cases above.
 7. Room sessions `in_progress` whose `(room_id, focus_run_id)` has no ledger entry and that are older than 2 minutes: `abandoned(timer_lost)`.

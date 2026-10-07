@@ -8,7 +8,7 @@ The existing repository contains an older JavaScript/MERN implementation. We are
 
 Product/domain/architecture design is complete and the implementation plan is approved (see `docs/implementation/plan.md`).
 
-**Phase state:** Phases 0 (foundation), 1 (accounts), 2 (tasks) and 3 (real-time foundation) are merged into `main` (checkpoints: tags `phase-1-accounts`, `phase-2-tasks`, `phase-3-realtime`). Phase 1b (Google sign-in) and Phase 4 onwards have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
+**Phase state:** Phases 0 (foundation), 1 (accounts), 2 (tasks) and 3 (real-time foundation) are merged into `main` (checkpoints: tags `phase-1-accounts`, `phase-2-tasks`, `phase-3-realtime`). Phase 4A (presence hardening) is implemented on branch `v2/phase-4a-presence-hardening`, pending review. Phase 1b (Google sign-in), Phase 4B (Solo Focus) and later phases have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
 
 Do not change the architectural direction again unless a genuine contradiction appears during implementation; if one does, explain it rather than silently changing the design.
 
@@ -218,6 +218,13 @@ There is one meaning of "completed" across solo and room sessions. A FocusSessio
 - **R7 Roles:** `ROLE=all` (default), `api` or `worker`; a worker-only process has no HTTP listener. Worker health endpoints are revisited with a real separate worker deployment.
 - **R8 No product events in Phase 3:** infrastructure only; `user:{userId}` gets its first product event in Phase 4.
 - Socket identity comes only from the verified handshake token (the same JWT verification and revocation check as REST); `user:{userId}` and `session:{sid}` are server-derived rooms; token expiry disconnects the socket; revocation disconnects `session:{sid}` on every instance through the Redis emitter; PostgreSQL stays the only durable store.
+
+### Presence hardening decisions (Phase 4A: H1–H4)
+- **H1 Two-way sync:** each instance reconciles its live Socket.IO sockets against its reverse index after every heartbeat and at once after a reconnect, an epoch change or a rejoin: missing entries are added and stale ones removed from both sets in one transaction, queued in the same synchronous step that reads the live sockets. Single-flight; failed syncs and rejoins are retried by the next heartbeat.
+- **H2 Offline events are hints:** `{ userId, reason: disconnect | missed_disconnect | instance_dead, disconnectedAtMs }`, with Redis TIME of the removal, of the detecting sync, or the dead instance's last heartbeat. They may be missed, repeated (same key) or stale. Never decide a Solo Focus outcome from one: re-check `checkUser` (one atomic read with Redis TIME) and retry when it fails. Consumers collapse repeats by `(userId, disconnectedAtMs)`.
+- **H3 Late grace:** a running solo session whose user is offline with no disconnect marker gets a normal 60-second grace from the detection time, unless Redis lost its data during the running stretch (epoch created after `running_since`), in which case it is `abandoned(expired)`. Implemented with Solo Focus (Phase 4B).
+- **H4 Online hint:** emitted when a user's socket is newly recorded, so the disconnect marker can be cleared early; grace expiry re-checks presence regardless.
+- No presence tables, presence log, outbox, Redis streams, Lua, per-entry TTLs or Socket.IO connection-state recovery.
 
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
