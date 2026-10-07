@@ -10,6 +10,8 @@ import pinoHttp from 'pino-http';
 import { createAuthRouter } from '../../modules/auth/http.js';
 import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
+import { createFocusSessionsRouter } from '../../modules/focus-sessions/http.js';
+import type { FocusSessionsDeps } from '../../modules/focus-sessions/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
 import { createTasksRouter } from '../../modules/tasks/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
@@ -24,9 +26,17 @@ type AppDeps = {
   pool: Pool;
   redis: Redis;
   authDeps: AuthDeps;
+  focusSessions: Omit<FocusSessionsDeps, 'db'>;
 };
 
-export const createApp = ({ config, logger, pool, redis, authDeps }: AppDeps): Express => {
+export const createApp = ({
+  config,
+  logger,
+  pool,
+  redis,
+  authDeps,
+  focusSessions,
+}: AppDeps): Express => {
   const app = express();
 
   app.disable('x-powered-by');
@@ -52,6 +62,14 @@ export const createApp = ({ config, logger, pool, redis, authDeps }: AppDeps): E
   app.use(
     API_BASE_PATH,
     createTasksRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createFocusSessionsRouter({
+      ...focusSessions,
+      db: authDeps.db,
+      authenticate: requireAuth(authDeps),
+    }),
   );
 
   app.use(notFoundHandler);

@@ -9,13 +9,17 @@ import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
 import type { AuthDeps } from '../modules/auth/service.js';
+import {
+  createFocusSessionChanges,
+  type FocusSessionChanges,
+} from '../modules/focus-sessions/changes.js';
 import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
-import { createEpochMonitor, type EpochMonitor } from './epoch.js';
+import { createEpochMonitor, type EpochMonitor, parseEpoch } from './epoch.js';
 import { createApp } from './http/app.js';
 import { createInstanceHeartbeat, type InstanceHeartbeat } from './instance.js';
 import { createLogger } from './logger.js';
@@ -89,6 +93,8 @@ export type Runtime = {
   readonly onSocketConnect: ((socket: AppSocket) => void)[];
   /** Per-user presence: which users have a live socket on a live instance. */
   readonly presence: Presence;
+  /** After-commit focus-session changes (events and jobs attach here in later milestones). */
+  readonly focusSessionChanges: FocusSessionChanges;
   /** The `maintenance` queue (every role can enqueue; only workers process). */
   readonly maintenanceQueue: MaintenanceQueue;
   /** Present when the role runs workers. */
@@ -190,9 +196,29 @@ export const createRuntime = async (
     },
   };
 
+  // The presence store needs only Redis, so it exists before the HTTP app: focus-session
+  // routes use its authoritative presence check (H2). Socket tracking comes later.
+  const presenceStore = createPresenceStore({
+    redis,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+  });
+  const focusSessionChanges = createFocusSessionChanges(logger);
+
   // Built for every role so the process is wired the same way; a worker-only process
   // simply never listens, so it serves no HTTP and accepts no sockets.
-  const app = createApp({ config, logger, pool, redis, authDeps });
+  const app = createApp({
+    config,
+    logger,
+    pool,
+    redis,
+    authDeps,
+    focusSessions: {
+      checkUser: presenceStore.checkUser,
+      epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
+      changes: focusSessionChanges,
+    },
+  });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
   const io = createSocketServer({
@@ -206,7 +232,7 @@ export const createRuntime = async (
   });
 
   const presence = createPresence({
-    store: createPresenceStore({ redis, instanceId, instanceTtlMs: config.INSTANCE_TTL_MS }),
+    store: presenceStore,
     listLocalSockets: () => localSocketRefs(io),
     logger,
   });
@@ -336,6 +362,7 @@ export const createRuntime = async (
     socketEmitter,
     onSocketConnect,
     presence,
+    focusSessionChanges,
     maintenanceQueue,
     maintenanceWorker,
     reconciler,
