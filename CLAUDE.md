@@ -8,7 +8,7 @@ The existing repository contains an older JavaScript/MERN implementation. We are
 
 Product/domain/architecture design is complete and the implementation plan is approved (see `docs/implementation/plan.md`).
 
-**Phase state:** Phases 0 (foundation), 1 (accounts), 2 (tasks) and 3 (real-time foundation) are merged into `main` (checkpoints: tags `phase-1-accounts`, `phase-2-tasks`, `phase-3-realtime`). Phase 4A (presence hardening) is implemented on branch `v2/phase-4a-presence-hardening`, pending review. Phase 1b (Google sign-in), Phase 4B (Solo Focus) and later phases have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
+**Phase state:** Phases 0 (foundation), 1 (accounts), 2 (tasks) and 3 (real-time foundation) are merged into `main` (checkpoints: tags `phase-1-accounts`, `phase-2-tasks`, `phase-3-realtime`). Phase 4A (presence hardening) is merged into `main` (checkpoint: tag `phase-4a-presence-hardening`). Phase 1b (Google sign-in), Phase 4B (Solo Focus) and later phases have **not started**. Implementation proceeds phase by phase; do not begin a phase, a migration, or large-scale refactoring until that phase is explicitly started by the user.
 
 Do not change the architectural direction again unless a genuine contradiction appears during implementation; if one does, explain it rather than silently changing the design.
 

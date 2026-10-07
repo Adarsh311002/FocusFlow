@@ -10,7 +10,7 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Phase 0 (foundation) and Phase 1 (accounts): **merged** into `main` (Phase 1 checkpoint: tag `phase-1-accounts`).
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
 - Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
-- Phase 4A (presence hardening): **implemented** on branch `v2/phase-4a-presence-hardening`, pending review; see "Phase 4A" below.
+- Phase 4A (presence hardening): **merged** into `main` (checkpoint: tag `phase-4a-presence-hardening`); see "Phase 4A" below.
 - Phase 1b, Phase 4B (Solo Focus) and later phases: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
