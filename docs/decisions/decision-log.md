@@ -244,13 +244,77 @@ Approved at the start of Phase 4 to close the Phase 3 presence findings P-1 (a m
 ### H2 — Offline events are hints carrying `disconnectedAtMs`
 - **Decision:** the offline event is `{ userId, reason, disconnectedAtMs }` with reason `disconnect`, `missed_disconnect` or `instance_dead`; `disconnectedAtMs` is the Redis TIME of the removal, of the detecting sync, or the dead instance's last heartbeat. Events may be missed, repeated (with the same key) or stale, so no Solo Focus outcome is decided from one: every decision re-checks presence (`checkUser`, one atomic read with Redis TIME) and is retried rather than taken when that check fails.
 - **Consequences:** consumers collapse repeats by `(userId, disconnectedAtMs)`; the reconciler's sweep of running solo sessions is the durable backstop. No presence tables, log, outbox or streams.
+- **Amended by E10 (Phase 4B):** a fourth reason, `instance_shutdown`, reports entries removed by an instance's own clean shutdown (Phase 4A reported them as `disconnect`). `disconnect` then means only a socket's own disconnect handler.
 
 ### H3 — Late grace for a missed disconnect
 - **Decision:** when the reconciler finds a running solo session whose user is offline with no disconnect marker, and Redis has **not** lost its data during the running stretch (the current epoch was not created after `running_since`), it starts a normal 60-second grace from the detection time instead of marking the session `expired`. `expired` remains for the case where the epoch changed during the stretch.
 - **Consequences:** an infrastructure fault no longer discards a user's focused stretch; recorded time can be over-counted by at most the detection delay. Implemented with Solo Focus (Phase 4B); Phase 4A supplies `checkUser` and the event timestamps it needs.
+- **Refined by E9:** "the epoch changed during the stretch" means *definitely* changed, `epochCreatedAtMs > runningSinceMs + 2000`; an ambiguous comparison gives late grace, never `expired`.
 
 ### H4 — Online hint
 - **Decision:** presence emits an online event when a socket of a user is newly recorded (connect, or a sync re-adding it), so the future disconnect marker can be cleared early. Like the offline event it is a hint; grace expiry re-checks presence regardless.
+
+## Solo Focus decisions (Phase 4B)
+
+Approved after the Phase 4B reconnaissance (E1–E14) and its follow-up review (E15, E16, and the evidence and conditional-clearing rules in E8/E10). They refine D6, D14/15/35, H2 and H3 for the solo implementation; the full protocol is in `architecture/focus-timing-protocol.md`, "Solo sessions".
+
+### E1 — Planned duration
+- **Decision:** `planned_seconds` is an integer from 60 to 14,400 (1 minute to 4 hours), enforced by the Zod request schema and a PostgreSQL `CHECK`.
+
+### E2 — Stale session window
+- **Decision:** a solo session still in progress 12 hours after `started_at` is `abandoned(expired)` by the reconciler, keeping only the time accumulated before any current running stretch.
+
+### E3 — Task at start
+- **Decision:** `taskId` is optional. When supplied it must be the user's own task, not deleted (`404 TASK_NOT_FOUND`) and open (`409 TASK_NOT_OPEN`), locked `FOR SHARE` while the session is inserted. The server never infers `users.current_task_id`; the client sends the task it wants.
+
+### E4 — No room columns yet
+- **Decision:** Phase 4B's `focus_sessions` has no `room_id` or `focus_run_id`. Phase 6 adds them, with their `CHECK`s and index.
+
+### E5 — Solo abandon reasons only
+- **Decision:** the Phase 4B `abandon_reason` `CHECK` allows only `stopped`, `grace_expired` and `expired` (and the contract's `AbandonReason` matches). The room-only reasons are added in Phase 6.
+
+### E6 — Event on every transition
+- **Decision:** `focus:session:updated` is emitted to `user:{userId}` after every committed transition: start, pause, resume, stop, completion and abandonment, whatever caused it.
+- **Consequences:** every tab stays in step; clients apply the payload and refetch the current session, so duplicate, late or missed events heal themselves.
+
+### E7 — The planned end wins
+- **Decision:** a pause or stop at or after `T_end` runs the completion decision first. If the session completes, that is the result; otherwise the pause or stop applies with `focused_seconds` capped at `planned_seconds`.
+
+### E8 — Presence through the end
+- **Decision:** a disconnect recorded with **observed** evidence at or after the planned end (`disconnectedAtMs + tolerance ≥ T_end`, E9) means the user was present through it: the session completes with `ended_at = T_end`. `detected` evidence (E10) never proves this. An online-now hint alone never proves presence at `T_end`; every completion decision uses the session's timing and its disconnect marker (the decision table in the protocol; the reconnect recovery of E16 is part of that decision).
+
+### E9 — Two clocks, one tolerance
+- **Decision:** PostgreSQL is the clock for durable session timestamps and focused-time arithmetic; Redis `TIME` for presence and epoch instants. Comparisons between the two use `CLOCK_SKEW_TOLERANCE_MS = 2000` and are biased toward grace rather than expiry:
+  - `disconnectedAtMs + tolerance ≥ T_end`, with `observed` evidence (E10) ⇒ present through the end;
+  - `epochCreatedAtMs > runningSinceMs + tolerance` ⇒ definite Redis loss during the stretch;
+  - otherwise: not definite — prefer grace (or "unknown, retry") over `expired`.
+- **Consequences:** a Redis instant stored as `ended_at` is first clamped into `[running_since, T_end]`.
+
+### E10 — Monotonic disconnect marker
+- **Decision:** one key per user, `ff:user:{userId}:disconnected`, value `{sessionId}:{latestDisconnectedAtMs}:{evidence}`. `evidence` is `observed` for a direct socket disconnect, and `detected` for `missed_disconnect`, `instance_dead` (the last heartbeat does not prove when the socket went away), `instance_shutdown` (a new offline reason for a clean shutdown's cleanup, which reports the cleanup time) and late grace. Only observed evidence can prove presence through `T_end` (E8); detected evidence can start or extend a grace. Updated only with `WATCH`/`MULTI` and bounded retry (no Lua, not `SET NX` alone): an older disconnect for the same session changes nothing; an equal one can only upgrade `detected` to `observed`, never the reverse; a newer one replaces it (with its own evidence); a marker of another session is replaced, because only one session per user can be in progress. An event or marker whose Redis timestamp predates the session's current running stretch (`t + 2000 < runningSinceMs`, E9) is ignored. A grace job settles only if the marker still holds exactly its payload's session and `disconnectedAtMs`.
+- **Clearing is always conditional:** on a confirmed reconnect the marker is deleted only if it still belongs to that session and is not newer than the confirmation time; on pause, resume, stop or settlement only if it still belongs to that session. A marker is never deleted unconditionally, so a delayed cleanup of an ended session (`S1`) can never remove the marker of the user's next session (`S2`). Same `WATCH`/`MULTI` with bounded retry.
+- **Consequences:** a lost online hint followed by a second disconnect no longer leaves the first disconnect in charge; each disconnect owns its own grace job; a late-detected absence can never complete a session.
+- **Accepted limitation:** a newer `detected` disconnect may replace an older `observed` one for the same session. This can lose a completion proof and send the session through grace instead; it can never create a false completion.
+
+### E11 — Repeats on ended sessions
+- **Decision:** pause or resume on an ended session answers `200` with the session unchanged (as stop already did). No `INVALID_TRANSITION` error for solo sessions.
+
+### E12 — Web state
+- **Decision:** the web client keeps the session in TanStack Query only: no optimistic updates, no Zustand.
+
+### E13 — Test tooling
+- **Decision:** add `fast-check` now for the solo timing and transition properties. Playwright stays deferred to the rooms phase (I10).
+
+### E14 — Round down
+- **Decision:** partial seconds are rounded down at every pause, stop and settlement; completion sets `focused_seconds = planned_seconds` exactly.
+- **Consequences:** a session paused and resumed many times may be under-counted by up to one second per pause; it is never over-counted.
+
+### E15 — Additional session invariants
+- **Decision:** besides E1 and E5, the database enforces `0 ≤ focused_seconds ≤ planned_seconds`, `ended_at ≥ started_at`, `running_since ≥ started_at`, and `status <> 'completed' OR focused_seconds = planned_seconds`.
+
+### E16 — Reconnect-within-grace recovery
+- **Decision:** when a decision finds the user online while the marker still records a disconnect for the session (typically a grace job that ran late after the online hint was lost), the server treats it as a reconnect within grace: it clears the marker and the session continues, or completes at `T_end` if the planned end has passed.
+- **Why:** the exact reconnect time is unknowable; this is an intentional D35/H2 recovery policy that favours the user rather than penalising them for a server-side delay.
 
 ## Accepted architecture direction
 

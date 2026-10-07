@@ -59,7 +59,7 @@ Error codes returned through acknowledgements include `NOT_A_MEMBER`, `NOT_JOINE
 | `room:chat:message` | `{ roomId, messageId, clientMessageId, sender: { userId, displayName }, body, sentAtMs }` | Room |
 | `room:member:removed` | `{ roomId, userId }` | Room and `user:{userId}`; the server also removes that user's sockets from the room |
 | `room:resync` | `{ roomId }` | Room. Clients respond with `room:join` to get a fresh snapshot (used after Redis state loss) |
-| `focus:session:updated` | `{ session: FocusSessionView }` | `user:{userId}`. Sent whenever a solo or room session completes or is abandoned by the server |
+| `focus:session:updated` | `{ session: FocusSessionView }` | `user:{userId}` (every tab). Sent after every committed session transition: start, pause, resume, stop, completion and abandonment, whether caused by a request, a job or the reconciler (E6). The first product event (R8). Clients apply the payload and then refetch `GET /focus-sessions/current`, so a duplicate, late or missed event heals itself; they also refetch after reconnecting |
 
 Knock expiry is not announced: both sides know `expiresAtMs`. If a knock expires unanswered, the requester's client re-checks access with `GET /rooms/by-code/:code`.
 

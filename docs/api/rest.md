@@ -54,15 +54,18 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 
 | Method & route | Request | Response | Rules and retry behaviour |
 |---|---|---|---|
-| `POST /focus-sessions` | `{ plannedSeconds, taskId? }` | `201 { session }` | Solo start. User must be connected (`409 NOT_CONNECTED`). `409 SESSION_IN_PROGRESS` includes the existing session, so a retried start can recover. Task must be own and not deleted. |
-| `GET /focus-sessions/current` | — | `{ session \| null }` | Solo or room; used to restore after refresh |
-| `POST /focus-sessions/:id/pause` | — | `{ session }` | Solo only (`409 NOT_SOLO_SESSION` for room sessions). Already paused → `200`. |
-| `POST /focus-sessions/:id/resume` | — | `{ session }` | Solo only; user must be connected. Already running → `200`. |
-| `POST /focus-sessions/:id/stop` | — | `{ session }` | Solo only → `abandoned(stopped)` keeping actual time. Already ended → `200`. |
+| `POST /focus-sessions` | `{ plannedSeconds, taskId? }` | `201 { session }` | Solo start. `plannedSeconds` is an integer 60–14,400 (E1). User must be connected (`409 NOT_CONNECTED`). `409 SESSION_IN_PROGRESS` includes the existing session in `details.session`, so a retried start can recover. `taskId` is optional; when given it must be the user's own and not deleted (`404 TASK_NOT_FOUND`) and open (`409 TASK_NOT_OPEN`) (E3). The server never fills in the current task. |
+| `GET /focus-sessions/current` | — | `{ session \| null }` | The in-progress session, if any; used to restore after a reload |
+| `POST /focus-sessions/:id/pause` | — | `{ session }` | Already paused or ended → `200` unchanged (E11). At or after the planned end the completion decision runs first (E7). Room sessions (Phase 6) → `409 NOT_SOLO_SESSION`. |
+| `POST /focus-sessions/:id/resume` | — | `{ session }` | User must be connected (`409 NOT_CONNECTED`). Already running or ended → `200` unchanged (E11). |
+| `POST /focus-sessions/:id/stop` | — | `{ session }` | → `abandoned(stopped)` keeping the actual time, rounded down (E14). At or after the planned end the completion decision runs first (E7). Already ended → `200` unchanged. |
 | `GET /focus-sessions` | `?from&to&cursor&limit` | `{ sessions, nextCursor }` | Own history. Each session includes its task reference `{ id, title, deleted }` if any. |
 | `GET /focus-sessions/summary` | `?from&to&tz` | `{ completedCount, completedFocusedSeconds, totalFocusedSeconds, days: [{ date, completedFocusedSeconds, totalFocusedSeconds }] }` | `tz` is an IANA timezone (D18 default). Both totals are returned (D34 default). |
 
 There is no "complete" endpoint: completion is decided by the server (see `architecture/focus-timing-protocol.md`) and announced with the `focus:session:updated` socket event.
+
+- Every focus-session route requires a bearer token and is scoped to the authenticated user; another user's or an unknown session → `404 NOT_FOUND`. Each change runs in one transaction that locks the session row, and then emits `focus:session:updated` (E6).
+- **Phase 4B** implements start, current, pause, resume and stop (solo only). History and summary arrive with Phase 5 (review); `NOT_SOLO_SESSION` arrives with rooms.
 
 ## Rooms (D8, D9, D16)
 

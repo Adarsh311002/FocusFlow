@@ -20,7 +20,7 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 | `ff:instances` | Sorted set | `instanceId` scored by its last heartbeat (Redis TIME, ms) (R1) | Refreshed every heartbeat; dead ones removed by the reconciler (the score survives the instance) |
 | `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; kept equal to the instance's live sockets by its sync on every heartbeat (H1); emptied by clean shutdown or the reconciler |
 | `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; stale entries of a live instance removed by its sync (H1); entries of dead instances ignored at read time and removed by the reconciler. Always changed together with the reverse index in one transaction |
-| `ff:user:{userId}:disconnected` | String | `disconnectedAtMs` while a running solo session is in grace | Deleted on reconnect or settlement; safety TTL |
+| `ff:user:{userId}:disconnected` | String | `{sessionId}:{latestDisconnectedAtMs}:{evidence}` (Redis TIME; `evidence` is `observed` for a direct socket disconnect, `detected` for `missed_disconnect`, `instance_dead`, `instance_shutdown` and late grace) while a running solo session is in grace (E10) | Changed only with `WATCH`/`MULTI` and bounded retry: a newer disconnect for the same session replaces it, an older one is ignored, an equal one can only upgrade `detected` to `observed` (never the reverse), events from before the current running stretch are ignored, another session's marker is replaced. Cleared only while it still belongs to the session concerned: on a confirmed reconnect (up to the confirmation time), and on pause, resume, stop or settlement. Safety TTL longer than the 12-hour stale window. See `focus-timing-protocol.md`, "Disconnect marker" |
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
 | `ff:room:{roomId}:settings` | Hash | `focusSeconds, shortBreakSeconds, longBreakSeconds` (live copy of D16) | Reloaded from PostgreSQL when missing |
@@ -65,7 +65,7 @@ The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the chan
 | Room timers, runs, participants | Global: every in-progress **room** focus session → `abandoned(timer_lost)`. Rooms restart as idle focus with saved durations. |
 | Presence | Local: rebuilt from each instance's connected sockets |
 | Clients' view | Local: `room:resync` to every served room; clients rejoin for a fresh snapshot; affected users receive `focus:session:updated` |
-| Solo sessions | Unaffected (PostgreSQL). The reconciler recreates their jobs. Running sessions of users who are not connected → `abandoned(expired)` |
+| Solo sessions | Unaffected (PostgreSQL). The reconciler recreates their jobs. A running session whose user is not connected → `abandoned(expired)` only if the new epoch was created more than 2 s after its `running_since` (definite loss, E9); otherwise late grace (H3) |
 | Knocks | Expire client-side; the requester can knock again |
 | Queued jobs | Recreated by the reconciler from PostgreSQL (solo) or not needed (room timers restarted) |
 | Rate limits, chat de-duplication | Harmless to lose |

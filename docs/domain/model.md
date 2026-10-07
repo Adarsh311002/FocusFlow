@@ -83,27 +83,28 @@ tasks
                                                      UUIDv7 id; full, so the users cascade also
                                                      reaches soft-deleted rows)
 
-focus_sessions
+focus_sessions                                     (Phase 4B: solo only, E1–E15)
   id                  PK
   user_id             FK → users, ON DELETE CASCADE
   task_id             NULL, composite FK (task_id, user_id) → tasks(id, user_id), no ON DELETE action   (D4, P1)
-  room_id             NULL, FK → rooms                                              (NULL = solo)
-  focus_run_id        NULL   (room sessions only; no FK, runs live in Redis)
   status              in_progress | completed | abandoned
-  abandon_reason      NULL | stopped | expired | grace_expired | opted_out | left_room
-                              | removed | reset | phase_changed | timer_lost
-  planned_seconds     > 0
-  focused_seconds     ≥ 0, default 0                                                (D6)
-  running_since       NULL                                                          (D6, solo only)
+  abandon_reason      NULL | stopped | grace_expired | expired                       (E5; room reasons added in Phase 6)
+  planned_seconds     integer, 60–14,400                                             (E1)
+  focused_seconds     integer, default 0, 0 ≤ focused_seconds ≤ planned_seconds    (D6)
+  running_since       NULL                                                          (D6)
   started_at
   ended_at            NULL
+  created_at, updated_at
   CHECK (status = 'in_progress')  =  (ended_at IS NULL)
   CHECK (status = 'abandoned')    =  (abandon_reason IS NOT NULL)
-  CHECK running_since IS NULL OR (status = 'in_progress' AND room_id IS NULL)
-  CHECK (room_id IS NULL)         =  (focus_run_id IS NULL)
+  CHECK running_since IS NULL OR status = 'in_progress'
+  CHECK ended_at IS NULL OR ended_at >= started_at
+  CHECK running_since IS NULL OR running_since >= started_at
+  CHECK status <> 'completed' OR focused_seconds = planned_seconds
   UNIQUE (user_id) WHERE status = 'in_progress'      (at most one active session per user)
   INDEX (user_id, started_at DESC)
-  INDEX (room_id, focus_run_id) WHERE status = 'in_progress'
+  (Room sessions arrive in Phase 6 with their own migration: columns, constraints, index and
+   abandon reasons are defined then, not here — E4, E5.)
 
 rooms
   id                  PK
@@ -127,7 +128,7 @@ room_members                                        (D9)
 
 - `users.current_task_id` must point to an open task that is not soft-deleted. Soft-deleting the current task (D38) or completing it (D43) clears `users.current_task_id` in the same transaction, with a conditional update to avoid races. Setting a completed or deleted task as current is rejected. Setting the current task locks the task row (`FOR SHARE`) before writing the user row — the same task-then-user order that complete and delete use — so a concurrent complete or delete can never leave a completed or deleted task current (covered by a race test).
 - Account deletion (D2, when implemented) clears `users.current_task_id` in the account-deletion transaction before deleting the user's data. It does not rely on `ON DELETE SET NULL` (P1).
-- A session cannot be started or opted into with a deleted task.
+- A session cannot be started or opted into with a deleted task. A solo session can only be started with an open task (E3), locked `FOR SHARE` like the current-task rules above; the server never fills in `users.current_task_id`.
 - The host always has a `room_members` row (created in the same transaction as the room).
 
 ### Deliberately not in the MVP schema
@@ -151,12 +152,12 @@ solo, while in_progress:  running ⇄ paused   (D6)
 ```
 - `completed` and `abandoned` are final. At most one `in_progress` session per user.
 - **Completed** means the planned time was reached and the user was present at the end, allowing the 60-second grace for an actively running session (D14/15/35).
-- **Abandon reasons:**
+- **Abandon reasons.** Phase 4B allows only the three solo reasons in the database (E5); the room-only reasons below are added with rooms in Phase 6:
 
 | Reason | Applies to | When |
 |---|---|---|
 | `stopped` | solo | The user stopped early |
-| `expired` | solo | Unresolved too long (still in progress beyond the cleanup window, typically because it was left paused), or running while the user is gone and the disconnect time is unknown because Redis lost its data during the running stretch (a merely missed disconnect gets late grace instead, H3) |
+| `expired` | solo | Still in progress 12 hours after `started_at` (E2; typically left paused), or running while the user is gone with no disconnect marker and Redis **definitely** lost its data during the running stretch (E9). A merely missed disconnect gets late grace instead (H3) |
 | `grace_expired` | solo, room | Disconnected while running and did not reconnect within 60 s |
 | `opted_out` | room | Left the room's focus but stayed in the room |
 | `left_room` | room | Intentionally left the room (D19) |

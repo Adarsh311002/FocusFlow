@@ -39,12 +39,12 @@ The workspace uses pnpm (I1, I3). `packages/contracts` has no build step: both a
 Illustrative shapes (written as TypeScript-like pseudocode, not files):
 
 ```
-AbandonReason = "stopped" | "expired" | "grace_expired" | "opted_out" | "left_room"
-              | "removed" | "reset" | "phase_changed" | "timer_lost"
+AbandonReason = "stopped" | "expired" | "grace_expired"            // Phase 4B (E5)
+// Phase 6 widens it with the room reasons:
+//   "opted_out" | "left_room" | "removed" | "reset" | "phase_changed" | "timer_lost"
 
-FocusSessionContext =
-  | { kind: "solo" }
-  | { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
+FocusSessionContext = { kind: "solo" }                              // Phase 4B (E4)
+// Phase 6 adds: { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
 
 FocusSessionView = {
   id: FocusSessionId

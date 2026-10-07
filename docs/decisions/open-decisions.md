@@ -38,8 +38,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Item | Notes / recommended default |
 |---|---|
 | Token lifetimes and overlap window | e.g. access 15 min, refresh 30 days, overlap ~20 s. |
-| Stale solo session cleanup window | How long a solo session may stay in progress (measured from `started_at`; in practice a paused one) before `abandoned(expired)` (e.g. 12 h). |
-| Duration bounds | Room phase durations and solo planned time (e.g. 1–240 min). |
+| Duration bounds | Room phase durations (e.g. 1–240 min), decided with rooms (Phase 6). Solo planned time is decided: 60–14,400 s (E1). |
 | Knock TTL | e.g. 120 s. |
 | Redis hosting | Must support AOF persistence and `maxmemory-policy noeviction`. |
 | `Idempotency-Key` support | For create endpoints; not required for the MVP. |
@@ -76,6 +75,7 @@ Known work that is deliberately outside the phase that surfaced it.
 | D43 — Completing the current task | Clears it as the current task (approved) |
 | D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
 | R1–R8 — Phase 3 real-time foundation | Presence keys with reverse index and heartbeat sorted set; Redis TIME as protocol clock; revocation decided by PostgreSQL whenever the Redis marker is absent (R3, revised); socket cap deferred; default transports (sticky sessions needed with several instances); ping 10 s/10 s, heartbeat 10 s, TTL 30 s, reconciler 30 s; worker role without HTTP; no product events yet (approved; see `decision-log.md`) |
+| E1–E16 — Phase 4B Solo Focus | Planned 60–14,400 s; 12 h stale window; optional open own task, never inferred; no room columns and solo-only abandon reasons until Phase 6; event on every transition; the planned end wins over pause/stop; only an observed disconnect at or after the end proves presence through it; PostgreSQL clock for sessions, Redis TIME for presence, 2 s tolerance biased toward grace; monotonic `{sessionId}:{latestDisconnectedAtMs}:{evidence}` marker via WATCH/MULTI, cleared only while it belongs to the session; repeats on ended sessions are 200; TanStack Query only; fast-check now; round down; extra session invariants; reconnect-within-grace recovery (approved; see `decision-log.md`) |
 | H1–H4 — Phase 4A presence hardening | Two-way presence sync on every heartbeat; offline events are hints with `disconnectedAtMs` and every decision re-checks presence; late grace instead of `expired` for a missed disconnect without an epoch change; online hint (approved; see `decision-log.md`) |
 | T1–T6 — Phase 2 task details | Single-task read, `id DESC` ordering with one full index, `GET /me` re-read after clearing, no optimistic updates yet, tasks on `/dashboard`, limits (approved; see `decision-log.md`) |
 
