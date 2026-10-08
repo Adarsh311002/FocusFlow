@@ -11,4 +11,9 @@ export const redisKeys = {
   instanceSockets: (instanceId: string) => `instance:${instanceId}:sockets`,
   /** Set of `{instanceId}:{socketId}`: every authenticated socket of one user. */
   userSockets: (userId: string) => `user:${userId}:sockets`,
+  /**
+   * `{sessionId}:{latestDisconnectedAtMs}:{evidence}`: the latest disconnect during the
+   * user's running solo session (E10). Changed only with WATCH/MULTI.
+   */
+  userDisconnected: (userId: string) => `user:${userId}:disconnected`,
 } as const;
