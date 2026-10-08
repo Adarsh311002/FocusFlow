@@ -292,6 +292,8 @@ describe('shutdown order', () => {
       'presence',
       'maintenance worker',
       'maintenance queue',
+      'focus-session worker',
+      'focus-session queue',
       'redis connections',
     ]);
   });

@@ -293,9 +293,11 @@ describe('removeInstance', () => {
     });
     const { offline } = recordEvents(presence);
 
-    await presence.removeInstance('self', 'disconnect');
+    await presence.removeInstance('self', 'instance_shutdown');
 
-    expect(offline).toEqual([{ userId: 'user-a', reason: 'disconnect', disconnectedAtMs: 9_000 }]);
+    expect(offline).toEqual([
+      { userId: 'user-a', reason: 'instance_shutdown', disconnectedAtMs: 9_000 },
+    ]);
   });
 
   it('recovers a lost offline signal: a run that dies before removing reports again, identically', async () => {

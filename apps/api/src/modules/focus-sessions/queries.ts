@@ -28,7 +28,7 @@ const ownedBy = (userId: string, sessionId: string) =>
  * resume). Called after the lock is held, this is never earlier than anything committed
  * before it.
  */
-export const databaseNowMs = async (tx: Tx): Promise<number> => {
+export const databaseNowMs = async (tx: Executor): Promise<number> => {
   const result = await tx.execute<{ now: Date | string }>(
     sql`SELECT date_trunc('milliseconds', clock_timestamp()) AS now`,
   );

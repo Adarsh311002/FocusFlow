@@ -13,6 +13,24 @@ import {
   createFocusSessionChanges,
   type FocusSessionChanges,
 } from '../modules/focus-sessions/changes.js';
+import { attachFollowUps } from '../modules/focus-sessions/follow-ups.js';
+import {
+  createFocusSessionQueue,
+  createFocusSessionScheduler,
+  createFocusSessionWorker,
+  type FocusSessionQueue,
+} from '../modules/focus-sessions/jobs.js';
+import {
+  type FocusSessionScheduler,
+  type LifecycleDeps,
+  runSoloEndJob,
+  runSoloGraceJob,
+} from '../modules/focus-sessions/lifecycle.js';
+import {
+  createDisconnectMarkerStore,
+  type DisconnectMarkerStore,
+} from '../modules/focus-sessions/marker-store.js';
+import { handleUserOffline, handleUserOnline } from '../modules/focus-sessions/presence-hints.js';
 import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
@@ -30,7 +48,12 @@ import {
   type MaintenanceQueue,
   upsertReconcileSchedule,
 } from './queues.js';
-import { createRedisClient, createRedisConnection, waitForRedisReady } from './redis.js';
+import {
+  createRedisClient,
+  createRedisConnection,
+  redisTimeMs,
+  waitForRedisReady,
+} from './redis.js';
 import { createShutdown, type ShutdownStep } from './shutdown.js';
 import { createSocketEmitter, createSocketServer, type SocketEmitter } from './socket.js';
 
@@ -71,8 +94,8 @@ const closeSocketServer = (io: AppServer): Promise<void> => {
 /**
  * One API process, fully wired but not yet listening. `main.ts` and the integration-test
  * harness both build it, so tests exercise the real startup order (docs/implementation/
- * plan.md, I5): config → logger → PostgreSQL → Redis → epoch check → Express → HTTP
- * server → … → listen.
+ * plan.md, I5): config â†’ logger â†’ PostgreSQL â†’ Redis â†’ epoch check â†’ Express â†’ HTTP
+ * server â†’ â€¦ â†’ listen.
  */
 export type Runtime = {
   readonly config: AppConfig;
@@ -95,6 +118,12 @@ export type Runtime = {
   readonly presence: Presence;
   /** After-commit focus-session changes (events and jobs attach here in later milestones). */
   readonly focusSessionChanges: FocusSessionChanges;
+  /** The Solo Focus lifecycle: marker store, job scheduler and queue (Phase 4B). */
+  readonly focusSessionLifecycle: {
+    readonly markers: DisconnectMarkerStore;
+    readonly scheduler: FocusSessionScheduler;
+    readonly queue: FocusSessionQueue;
+  };
   /** The `maintenance` queue (every role can enqueue; only workers process). */
   readonly maintenanceQueue: MaintenanceQueue;
   /** Present when the role runs workers. */
@@ -245,6 +274,54 @@ export const createRuntime = async (
   });
   heartbeat.onRejoined(() => presence.syncLocal());
 
+  // Solo Focus lifecycle (Phase 4B): the disconnect marker on a dedicated connection
+  // (WATCH is connection state), the focus-session queue (every role enqueues; workers
+  // process), the after-commit follow-ups, and the presence hints.
+  const markerConnection = createRedisClient(config, logger);
+  const focusSessionMarkers = createDisconnectMarkerStore({ redis: markerConnection });
+  const focusSessionQueue = createFocusSessionQueue(queueConnection, config);
+  const focusSessionScheduler = createFocusSessionScheduler({
+    queue: focusSessionQueue,
+    graceMs: config.FOCUS_GRACE_MS,
+    redisNowMs: () => redisTimeMs(redis),
+  });
+  const lifecycleDeps: LifecycleDeps = {
+    db,
+    checkUser: presenceStore.checkUser,
+    epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
+    changes: focusSessionChanges,
+    markers: focusSessionMarkers,
+    graceMs: config.FOCUS_GRACE_MS,
+    scheduler: focusSessionScheduler,
+  };
+  attachFollowUps(focusSessionChanges, {
+    scheduler: focusSessionScheduler,
+    markers: focusSessionMarkers,
+  });
+  const hintDeps = {
+    db,
+    markers: focusSessionMarkers,
+    checkUser: presenceStore.checkUser,
+    scheduler: focusSessionScheduler,
+  };
+  presence.onUserOffline((event) => handleUserOffline(hintDeps, event));
+  presence.onUserOnline((userId) => handleUserOnline(hintDeps, userId));
+  const focusWorkerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const focusSessionWorker =
+    focusWorkerConnection === undefined
+      ? undefined
+      : createFocusSessionWorker({
+          connection: focusWorkerConnection,
+          config,
+          logger,
+          processors: {
+            end: (job) => runSoloEndJob(lifecycleDeps, job),
+            grace: (job) => runSoloGraceJob(lifecycleDeps, job),
+          },
+        });
+
   const reconciler = createReconciler({
     redis,
     presence,
@@ -278,7 +355,7 @@ export const createRuntime = async (
     { name: 'instance heartbeat', run: heartbeat.stop },
     // A clean shutdown removes this instance's presence at once instead of leaving it
     // for the reconciler to find after the heartbeat TTL.
-    { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
+    { name: 'presence', run: () => presence.removeInstance(instanceId, 'instance_shutdown') },
     ...(maintenanceWorker === undefined
       ? []
       : [
@@ -290,6 +367,15 @@ export const createRuntime = async (
           },
         ]),
     { name: 'maintenance queue', run: () => maintenanceQueue.close() },
+    ...(focusSessionWorker === undefined
+      ? []
+      : [
+          {
+            name: 'focus-session worker',
+            run: () => focusSessionWorker.close(focusWorkerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'focus-session queue', run: () => focusSessionQueue.close() },
     {
       name: 'redis connections',
       run: () =>
@@ -297,7 +383,9 @@ export const createRuntime = async (
           pubClient,
           subClient,
           queueConnection,
+          markerConnection,
           ...(workerConnection === undefined ? [] : [workerConnection]),
+          ...(focusWorkerConnection === undefined ? [] : [focusWorkerConnection]),
         ),
     },
   ];
@@ -323,6 +411,9 @@ export const createRuntime = async (
     started = true;
     await heartbeat.start();
     await ensureSchedule();
+    focusSessionWorker?.run().catch((error: unknown) => {
+      logger.error({ err: error, instanceId }, 'The focus-session worker stopped unexpectedly');
+    });
     if (maintenanceWorker !== undefined) {
       maintenanceWorker.run().catch((error: unknown) => {
         logger.error({ err: error, instanceId }, 'The maintenance worker stopped unexpectedly');
@@ -363,6 +454,11 @@ export const createRuntime = async (
     onSocketConnect,
     presence,
     focusSessionChanges,
+    focusSessionLifecycle: {
+      markers: focusSessionMarkers,
+      scheduler: focusSessionScheduler,
+      queue: focusSessionQueue,
+    },
     maintenanceQueue,
     maintenanceWorker,
     reconciler,

@@ -4,14 +4,17 @@ import type { AppServer, AppSocket } from '../realtime/types.js';
 import type { PresenceCheck, PresenceStore, SocketRef } from './store.js';
 
 /**
- * Why a user stopped being online: their last socket closed (or their instance shut down
- * cleanly), a sync found a socket whose disconnect was never recorded, or the instance
- * serving it died.
+ * Why a user stopped being online: their last socket's own disconnect handler removed it
+ * (`disconnect`), a sync found a socket whose disconnect was never recorded, the instance
+ * serving it died, or its instance's clean shutdown removed entries its sockets had not
+ * removed themselves (`instance_shutdown`, E10: reported at the cleanup time, so it is
+ * not evidence of when the socket went away).
  */
-export type OfflineReason = 'disconnect' | 'missed_disconnect' | 'instance_dead';
+export type OfflineReason =
+  'disconnect' | 'missed_disconnect' | 'instance_dead' | 'instance_shutdown';
 
 /** Why an instance's entries are removed: its own clean shutdown, or the reconciler. */
-export type InstanceRemovalReason = 'disconnect' | 'instance_dead';
+export type InstanceRemovalReason = 'instance_shutdown' | 'instance_dead';
 
 /**
  * A hint, never a decision (Phase 4A, H2): it can be missed (a crash or failed handler),
@@ -26,7 +29,7 @@ export type UserOfflineEvent = {
   /**
    * Redis TIME (ms): of the removal (`disconnect`); of the sync that detected it
    * (`missed_disconnect`, the real moment is unknown and earlier); the instance's last
-   * heartbeat (`instance_dead`).
+   * heartbeat (`instance_dead`); of the shutdown cleanup (`instance_shutdown`).
    */
   readonly disconnectedAtMs: number;
 };
