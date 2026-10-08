@@ -9,7 +9,15 @@ import type { Logger } from 'pino';
 // A listener failure is logged, never surfaced to the request: the state is already
 // committed, and the reconciler repairs any missed follow-up.
 
-export type FocusSessionTransition = 'started' | 'paused' | 'resumed' | 'stopped' | 'completed';
+export type FocusSessionTransition =
+  | 'started'
+  | 'paused'
+  | 'resumed'
+  | 'stopped'
+  | 'completed'
+  // Settled by the server (lifecycle jobs): abandoned with that reason.
+  | 'grace_expired'
+  | 'expired';
 
 export type FocusSessionChange = {
   readonly userId: string;

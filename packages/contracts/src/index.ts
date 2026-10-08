@@ -6,6 +6,7 @@ export * from './http/paths';
 export * from './http/tasks';
 export * from './http/user';
 export * from './ids';
+export * from './jobs/focus-session';
 export * from './jobs/maintenance';
 export * from './socket/ack';
 export * from './socket/events';

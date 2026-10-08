@@ -40,6 +40,8 @@ export type DecisionInput = {
   readonly presence: PresenceObservation | undefined;
   /** The current epoch's creation time (Redis TIME), `undefined` when unknown. */
   readonly epochCreatedAtMs: number | undefined;
+  /** The reconnect grace; `SOLO_GRACE_MS` unless a test configures it (FOCUS_GRACE_MS). */
+  readonly graceMs?: number;
 };
 
 export type Decision =
@@ -113,7 +115,7 @@ export const decideRunningSession = (input: DecisionInput): DecisionResult => {
   if (marker !== null) {
     // Both instants are Redis TIME: no tolerance.
     return result(
-      presence.checkedAtMs >= marker.disconnectedAtMs + SOLO_GRACE_MS
+      presence.checkedAtMs >= marker.disconnectedAtMs + (input.graceMs ?? SOLO_GRACE_MS)
         ? { kind: 'grace_expired', disconnectedAtMs: marker.disconnectedAtMs }
         : { kind: 'wait_for_grace', disconnectedAtMs: marker.disconnectedAtMs },
     );

@@ -35,6 +35,7 @@ describe('loadConfig', () => {
       SOCKET_PING_TIMEOUT_MS: 10_000,
       ROLE: 'all',
       RECONCILER_INTERVAL_MS: 30_000,
+      FOCUS_GRACE_MS: 60_000,
     });
   });
 
@@ -65,6 +66,13 @@ describe('loadConfig', () => {
       expect(loadConfig({ ...baseEnv, ROLE: 'worker' }).ROLE).toBe('worker');
       expect(loadConfig({ ...baseEnv, ROLE: 'api' }).ROLE).toBe('api');
       expect(() => loadConfig({ ...baseEnv, ROLE: 'scheduler' })).toThrow(/ROLE/);
+    });
+
+    it('allows a shorter focus grace outside production only', () => {
+      expect(loadConfig({ ...baseEnv, FOCUS_GRACE_MS: '1500' }).FOCUS_GRACE_MS).toBe(1_500);
+      expect(() =>
+        loadConfig({ ...baseEnv, APP_ENV: 'production', FOCUS_GRACE_MS: '1500' }),
+      ).toThrow(/FOCUS_GRACE_MS/);
     });
 
     it('rejects durations below 100 ms', () => {

@@ -102,10 +102,18 @@ const configSchema = z
      */
     ROLE: z.enum(['all', 'api', 'worker']).default('all'),
     RECONCILER_INTERVAL_MS: durationMs.default(30_000),
+
+    // Solo Focus (Phase 4B). The reconnect grace is 60 s by decision (D14/15/35); it is
+    // configurable only so tests can run the same jobs quickly.
+    FOCUS_GRACE_MS: durationMs.default(60_000),
   })
   .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
     path: ['INSTANCE_TTL_MS'],
     message: 'must be at least twice INSTANCE_HEARTBEAT_MS, so one late heartbeat is not a death',
+  })
+  .refine((config) => config.APP_ENV !== 'production' || config.FOCUS_GRACE_MS === 60_000, {
+    path: ['FOCUS_GRACE_MS'],
+    message: 'must be 60000 in production (the approved reconnect grace, D14/15/35)',
   });
 
 export type AppConfig = z.infer<typeof configSchema>;

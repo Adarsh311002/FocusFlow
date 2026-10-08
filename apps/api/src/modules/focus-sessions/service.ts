@@ -69,7 +69,7 @@ const notConnected = (): AppError =>
   );
 
 /** A failed check is `undefined`: the protocol never decides on an unknown state (H2). */
-const observePresence = async (
+export const observePresence = async (
   deps: FocusSessionsDeps,
   userId: string,
 ): Promise<PresenceObservation | undefined> => {
@@ -92,7 +92,7 @@ const requireConnected = async (deps: FocusSessionsDeps, userId: string): Promis
   }
 };
 
-const loadView = async (db: Executor, row: FocusSessionRow): Promise<FocusSessionView> =>
+export const loadView = async (db: Executor, row: FocusSessionRow): Promise<FocusSessionView> =>
   toFocusSessionView(
     row,
     row.taskId === null ? undefined : await findSessionTask(db, row.userId, row.taskId),
