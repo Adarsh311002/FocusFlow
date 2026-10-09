@@ -7,7 +7,12 @@ import { AppError } from '../../platform/http/errors.js';
 import type { PresenceCheck } from '../presence/store.js';
 import { lockOwnedTaskForShare } from '../tasks/queries.js';
 import type { FocusSessionChanges, FocusSessionTransition } from './changes.js';
-import { decideRunningSession, type PresenceObservation } from './decision.js';
+import {
+  decideRunningSession,
+  type DisconnectMarker,
+  type PresenceObservation,
+} from './decision.js';
+import type { DisconnectMarkerStore } from './marker-store.js';
 import {
   databaseNowMs,
   findInProgressSession,
@@ -43,8 +48,9 @@ import { toFocusSessionView } from './views.js';
 // - PostgreSQL now() is the clock for every stored value (E9).
 // - Redis is read only for the presence checks the protocol requires: before the
 //   transaction for start and resume ("user connected"), and inside it only at the
-//   approved point — the decision for a running session when a pause or stop arrives at or
-//   after the planned end (E7). Nothing is written to Redis here.
+//   approved point — the decision for a running session (the disconnect marker and
+//   checkUser) when a pause or stop arrives at or after the planned end (E7). Nothing is
+//   written to Redis here.
 // - Follow-up work (events, jobs, markers) runs only after the commit (`changes`).
 
 export type FocusSessionsDeps = {
@@ -53,6 +59,8 @@ export type FocusSessionsDeps = {
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
   /** The current Redis epoch's creation time (Redis TIME), if known. */
   readonly epochCreatedAtMs: () => number | undefined;
+  /** The disconnect marker (E10), read by the decision at or after the planned end. */
+  readonly markers: Pick<DisconnectMarkerStore, 'read'>;
   readonly changes: FocusSessionChanges;
 };
 
@@ -219,9 +227,10 @@ export const getCurrentFocusSession = async (
 
 /**
  * E7: at or after the planned end, the completion decision runs before a pause or stop.
- * This is the one approved point where Redis is read inside the transaction (checkUser),
- * while the row lock is held. The disconnect marker arrives with the jobs milestone; until
- * then no marker exists, which the decision treats exactly like "no disconnect recorded".
+ * This is the one approved point where Redis is read inside the transaction (the marker,
+ * then checkUser), while the row lock is held. The marker is read before this request's
+ * own follow-up could clear it, so an observed disconnect through the end still completes
+ * the session (E8).
  */
 const completesAtPlannedEnd = async (
   deps: FocusSessionsDeps,
@@ -230,6 +239,14 @@ const completesAtPlannedEnd = async (
   session: RunningSession,
   nowMs: number,
 ): Promise<boolean> => {
+  let marker: DisconnectMarker | undefined;
+  try {
+    marker = await deps.markers.read(userId);
+  } catch {
+    // An unreadable marker may hide the evidence of presence through the end: decide
+    // nothing, like an unknown presence (H2).
+    throw presenceUnavailable();
+  }
   const presence = await observePresence(deps, userId);
   if (presence === undefined) {
     // Unknown presence decides nothing (H2): fail the request rather than record a pause
@@ -240,7 +257,7 @@ const completesAtPlannedEnd = async (
     sessionId,
     session,
     nowMs,
-    marker: null,
+    marker: marker ?? null,
     presence,
     epochCreatedAtMs: deps.epochCreatedAtMs(),
   });

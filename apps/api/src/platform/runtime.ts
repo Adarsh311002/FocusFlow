@@ -233,6 +233,10 @@ export const createRuntime = async (
     instanceTtlMs: config.INSTANCE_TTL_MS,
   });
   const focusSessionChanges = createFocusSessionChanges(logger);
+  // The disconnect marker (E10) on a dedicated connection (WATCH is connection state). The
+  // routes read it too: a pause or stop at or after the planned end decides with it (E7, E8).
+  const markerConnection = createRedisClient(config, logger);
+  const focusSessionMarkers = createDisconnectMarkerStore({ redis: markerConnection });
 
   // Built for every role so the process is wired the same way; a worker-only process
   // simply never listens, so it serves no HTTP and accepts no sockets.
@@ -246,6 +250,7 @@ export const createRuntime = async (
       checkUser: presenceStore.checkUser,
       epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
       changes: focusSessionChanges,
+      markers: focusSessionMarkers,
     },
   });
   const server = createServer(app);
@@ -274,11 +279,8 @@ export const createRuntime = async (
   });
   heartbeat.onRejoined(() => presence.syncLocal());
 
-  // Solo Focus lifecycle (Phase 4B): the disconnect marker on a dedicated connection
-  // (WATCH is connection state), the focus-session queue (every role enqueues; workers
+  // Solo Focus lifecycle (Phase 4B): the focus-session queue (every role enqueues; workers
   // process), the after-commit follow-ups, and the presence hints.
-  const markerConnection = createRedisClient(config, logger);
-  const focusSessionMarkers = createDisconnectMarkerStore({ redis: markerConnection });
   const focusSessionQueue = createFocusSessionQueue(queueConnection, config);
   const focusSessionScheduler = createFocusSessionScheduler({
     queue: focusSessionQueue,

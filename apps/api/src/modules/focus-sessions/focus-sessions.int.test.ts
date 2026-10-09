@@ -29,7 +29,10 @@ import { closeAllSockets, connectSocket } from '../../../test/sockets.js';
 import { startTcpProxy, type TcpProxy } from '../../../test/tcp-proxy.js';
 import { signUpTestUser, type TestUser } from '../../../test/users.js';
 import { focusSessions } from '../../db/schema.js';
+import { redisKeys } from '../../platform/redis-keys.js';
 import type { FocusSessionChange } from './changes.js';
+import type { DisconnectMarker } from './decision.js';
+import { formatMarker, MARKER_TTL_MS } from './marker.js';
 
 // Solo focus REST endpoints (Phase 4B, Milestone 2) against the real API, PostgreSQL and
 // Redis. Presence comes from real Socket.IO connections; the planned end is reached by
@@ -132,6 +135,36 @@ const travelBack = async (sessionId: string, ms: number): Promise<void> => {
 
 const sessionsInDb = (userId: string) =>
   requireHarness().db.select().from(focusSessions).where(eq(focusSessions.userId, userId));
+
+const markerOf = (userId: string) =>
+  requireHarness().runtime.focusSessionLifecycle.markers.read(userId);
+
+/** Overwrites the user's disconnect marker as is, bypassing the E10 record rules. */
+const setMarker = (userId: string, marker: DisconnectMarker) =>
+  requireHarness().redis.set(
+    redisKeys.userDisconnected(userId),
+    formatMarker(marker),
+    'PX',
+    MARKER_TTL_MS,
+  );
+
+/**
+ * A 60-second session whose planned end passed `pastEndMs` ago; then the user's only socket
+ * disconnects, and the offline hint records an observed disconnect (now, after T_end).
+ */
+const offlineAfterPlannedEnd = async (name: string, pastEndMs = 2 * 60_000) => {
+  const h = requireHarness();
+  const user = await signUpTestUser(h, name);
+  const socket = await connectSocket(h.baseUrl, user.accessToken);
+  await waitFor(() => h.runtime.presence.isUserOnline(user.userId));
+  const session = sessionOf(await start(user, { plannedSeconds: 60 }));
+  await travelBack(session.id, 60_000 + pastEndMs);
+  const plannedEndMs = Date.parse(session.startedAt) - pastEndMs;
+  socket.disconnect();
+  await waitFor(async () => !(await h.runtime.presence.isUserOnline(user.userId)));
+  await waitFor(async () => (await markerOf(user.userId))?.sessionId === session.id);
+  return { user, session, plannedEndMs };
+};
 
 /** Records every after-commit change for one user while the test runs. */
 const recordChanges = (userId: string): FocusSessionChange[] => {
@@ -426,19 +459,59 @@ describe('the planned end wins (E7)', () => {
   });
 
   it('without presence through the end, the pause or stop applies with F capped at P', async () => {
-    const h = requireHarness();
     for (const verb of ['pause', 'stop'] as const) {
-      const user = await signUpTestUser(h, 'gone');
-      const socket = await connectSocket(h.baseUrl, user.accessToken);
-      await waitFor(() => h.runtime.presence.isUserOnline(user.userId));
-      const session = sessionOf(await start(user, { plannedSeconds: 60 }));
-      await travelBack(session.id, 3 * 60_000);
-      socket.disconnect();
-      await waitFor(async () => !(await h.runtime.presence.isUserOnline(user.userId)));
+      const { user, session, plannedEndMs } = await offlineAfterPlannedEnd('gone');
+      // The user left 30 s before the planned end: an observed disconnect, but not
+      // through the end (beyond the 2 s tolerance).
+      await setMarker(user.userId, {
+        sessionId: session.id,
+        disconnectedAtMs: plannedEndMs - 30_000,
+        evidence: 'observed',
+      });
 
       const result = sessionOf(await action(user, verb, session.id));
       expect(result.focusedSeconds).toBe(60);
       expect(result.status).toBe(verb === 'pause' ? 'in_progress' : 'abandoned');
+    }
+  });
+
+  it('an offline user’s observed disconnect at or after T_end completes the pause or stop (E8)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const { user, session, plannedEndMs } = await offlineAfterPlannedEnd('present-at-end');
+      const evidence = await markerOf(user.userId);
+      expect(evidence?.evidence).toBe('observed');
+      expect(evidence?.disconnectedAtMs).toBeGreaterThanOrEqual(plannedEndMs);
+
+      const result = sessionOf(await action(user, verb, session.id));
+      expect(result).toMatchObject({ status: 'completed', focusedSeconds: 60 });
+      expect(result.status === 'completed' && Date.parse(result.endedAt)).toBe(plannedEndMs);
+      const [stored] = await sessionsInDb(user.userId);
+      expect(stored?.focusedSeconds).toBe(stored?.plannedSeconds);
+      expect(stored?.endedAt?.getTime()).toBe(plannedEndMs);
+      // The evidence was used before the completion's follow-up cleared it.
+      await waitFor(async () => (await markerOf(user.userId)) === undefined);
+    }
+  });
+
+  it('detected evidence, or another session’s marker, never completes it (E8, E10)', async () => {
+    const cases = [
+      { name: 'detected', evidence: 'detected', otherSession: false },
+      { name: 'other-session', evidence: 'observed', otherSession: true },
+    ] as const;
+    for (const { name, evidence, otherSession } of cases) {
+      const { user, session } = await offlineAfterPlannedEnd(name);
+      const recorded = await markerOf(user.userId);
+      // After T_end, at the very time of the observed disconnect: only the evidence or the
+      // owner differs from the case that completes.
+      await setMarker(user.userId, {
+        sessionId: otherSession ? uuidv7() : session.id,
+        disconnectedAtMs: recorded?.disconnectedAtMs ?? 0,
+        evidence,
+      });
+
+      const result = sessionOf(await action(user, 'stop', session.id));
+      expect(result).toMatchObject({ status: 'abandoned', focusedSeconds: 60 });
+      expect(result.status === 'abandoned' && result.abandonReason).toBe('stopped');
     }
   });
 });
