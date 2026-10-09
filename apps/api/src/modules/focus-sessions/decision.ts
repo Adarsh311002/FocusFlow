@@ -42,6 +42,12 @@ export type DecisionInput = {
   readonly epochCreatedAtMs: number | undefined;
   /** The reconnect grace; `SOLO_GRACE_MS` unless a test configures it (FOCUS_GRACE_MS). */
   readonly graceMs?: number;
+  /**
+   * Set only by the grace job, with its payload's disconnect: E16 applies only while the
+   * marker still holds exactly this session and this disconnect. Every other caller (the
+   * end job, the reconciler, pause/stop) leaves it unset.
+   */
+  readonly graceJob?: { readonly disconnectedAtMs: number };
 };
 
 export type Decision =
@@ -51,7 +57,10 @@ export type Decision =
   | { readonly kind: 'complete' }
   /** Keep running; clear this session's marker up to `checkedAtMs` if there is one. */
   | { readonly kind: 'continue'; readonly clearMarkerUpToMs: number | null }
-  /** Offline inside the grace: its grace job settles it. */
+  /**
+   * The marker's grace job settles it: offline inside the grace, or online while the marker
+   * still records a disconnect that only that grace job may treat as a reconnect (E16).
+   */
   | { readonly kind: 'wait_for_grace'; readonly disconnectedAtMs: number }
   | { readonly kind: 'grace_expired'; readonly disconnectedAtMs: number }
   /** Definite Redis loss during the stretch (E9). */
@@ -91,6 +100,7 @@ export const decideRunningSession = (input: DecisionInput): DecisionResult => {
 
   const endMs = plannedEndMs(session);
   const pastEnd = hasReachedPlannedEnd(session, nowMs);
+  const graceMs = input.graceMs ?? SOLO_GRACE_MS;
 
   // E8: only observed evidence can prove presence through the planned end.
   if (
@@ -102,31 +112,60 @@ export const decideRunningSession = (input: DecisionInput): DecisionResult => {
     return result({ kind: 'complete' });
   }
 
+  // E16: only the grace job of exactly this disconnect, finding the user online.
+  const lateGraceReconnect =
+    marker !== null && input.graceJob?.disconnectedAtMs === marker.disconnectedAtMs;
+
   if (presence.online) {
-    // Before the end: keep running. At or after it: no disconnect recorded, or a
-    // reconnect whose exact time is unknowable — E16's intentional recovery policy.
-    return result(
-      pastEnd
-        ? { kind: 'complete' }
-        : { kind: 'continue', clearMarkerUpToMs: marker === null ? null : presence.checkedAtMs },
-    );
+    if (!pastEnd) {
+      if (marker === null) {
+        return result({ kind: 'continue', clearMarkerUpToMs: null });
+      }
+      // A reconnect inside the grace (both instants Redis TIME, no tolerance), or E16.
+      const withinGrace = presence.checkedAtMs < marker.disconnectedAtMs + graceMs;
+      return result(
+        withinGrace || lateGraceReconnect
+          ? { kind: 'continue', clearMarkerUpToMs: presence.checkedAtMs }
+          : { kind: 'wait_for_grace', disconnectedAtMs: marker.disconnectedAtMs },
+      );
+    }
+    // At or after the end, being online now proves nothing while a disconnect of the
+    // stretch is recorded: only that disconnect's grace job decides (E8, E16).
+    if (marker !== null && !lateGraceReconnect) {
+      return result({ kind: 'wait_for_grace', disconnectedAtMs: marker.disconnectedAtMs });
+    }
+    // No disconnect recorded (D35), or E16: complete — unless Redis definitely lost its
+    // data during the stretch, when a missing marker proves nothing (E9).
+    return result(lossDuringStretch(input, runningSinceMs) ?? { kind: 'complete' });
   }
 
   if (marker !== null) {
     // Both instants are Redis TIME: no tolerance.
     return result(
-      presence.checkedAtMs >= marker.disconnectedAtMs + (input.graceMs ?? SOLO_GRACE_MS)
+      presence.checkedAtMs >= marker.disconnectedAtMs + graceMs
         ? { kind: 'grace_expired', disconnectedAtMs: marker.disconnectedAtMs }
         : { kind: 'wait_for_grace', disconnectedAtMs: marker.disconnectedAtMs },
     );
   }
 
   // Offline with no marker: a definite Redis loss expires; anything else gets late grace.
+  return result(
+    lossDuringStretch(input, runningSinceMs) ?? {
+      kind: 'late_grace',
+      detectedAtMs: presence.checkedAtMs,
+    },
+  );
+};
+
+/**
+ * `retry` while the epoch is unknown, `expired` on a definite Redis loss during the running
+ * stretch (E9: `epochCreatedAtMs > runningSinceMs + tolerance`), otherwise `undefined`.
+ */
+const lossDuringStretch = (input: DecisionInput, runningSinceMs: number): Decision | undefined => {
   if (input.epochCreatedAtMs === undefined) {
-    return result({ kind: 'retry', reason: 'epoch_unknown' });
+    return { kind: 'retry', reason: 'epoch_unknown' };
   }
-  if (input.epochCreatedAtMs > runningSinceMs + CLOCK_SKEW_TOLERANCE_MS) {
-    return result({ kind: 'expired' });
-  }
-  return result({ kind: 'late_grace', detectedAtMs: presence.checkedAtMs });
+  return input.epochCreatedAtMs > runningSinceMs + CLOCK_SKEW_TOLERANCE_MS
+    ? { kind: 'expired' }
+    : undefined;
 };

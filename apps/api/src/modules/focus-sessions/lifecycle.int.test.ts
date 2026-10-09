@@ -310,6 +310,57 @@ describe('solo end job', () => {
     });
   });
 
+  it('online with a disconnect still recorded: never completes, hands over to its grace job (E8, E16)', async () => {
+    const { deps, state, scheduled, published } = world();
+    const s = await runningSession(60, 10 * MINUTE);
+    const t = s.plannedEndMs - 30_000; // left before the end; the online hint was lost
+    await requireMarkers().record(s.userId, marker(s.sessionId, t, 'detected'), s.runningSinceMs);
+    state.presence = { online: true, checkedAtMs: await nowMs() };
+
+    expect(await runSoloEndJob(deps, endJob(s))).toEqual({ kind: 'waiting_for_grace' });
+    expect(await sessionRow(s.sessionId)).toMatchObject({ status: 'in_progress' });
+    expect(published).toEqual([]);
+    // The marker stays for the grace job of exactly that disconnect, which applies E16.
+    expect(await requireMarkers().read(s.userId)).toEqual(marker(s.sessionId, t, 'detected'));
+    expect(scheduled).toEqual([
+      { kind: 'grace', job: { sessionId: s.sessionId, userId: s.userId, disconnectedAtMs: t } },
+    ]);
+    expect(await runSoloGraceJob(deps, graceJob(s, t))).toEqual({
+      kind: 'settled',
+      transition: 'completed',
+    });
+    const row = await sessionRow(s.sessionId);
+    expect(row).toMatchObject({ status: 'completed', focusedSeconds: 60 });
+    expect(row?.endedAt?.getTime()).toBe(s.plannedEndMs);
+  });
+
+  it('online with no marker after a definite Redis loss: expired, never completed (E9)', async () => {
+    const { deps, state } = world();
+    const s = await runningSession(60, 3 * MINUTE);
+    state.presence = { online: true, checkedAtMs: await nowMs() };
+    state.epochCreatedAtMs = s.runningSinceMs + CLOCK_SKEW_TOLERANCE_MS + 1;
+
+    expect(await runSoloEndJob(deps, endJob(s))).toEqual({
+      kind: 'settled',
+      transition: 'expired',
+    });
+    expect(await sessionRow(s.sessionId)).toMatchObject({
+      status: 'abandoned',
+      abandonReason: 'expired',
+      focusedSeconds: 0,
+    });
+  });
+
+  it('online with no marker and an unknown epoch: decides nothing (H2)', async () => {
+    const { deps, state } = world();
+    const s = await runningSession(60, 3 * MINUTE);
+    state.presence = { online: true, checkedAtMs: await nowMs() };
+    state.epochCreatedAtMs = undefined;
+
+    await expect(runSoloEndJob(deps, endJob(s))).rejects.toBeInstanceOf(RetryLaterError);
+    expect(await sessionRow(s.sessionId)).toMatchObject({ status: 'in_progress' });
+  });
+
   it('decides nothing when presence or the epoch is unknown, and writes nothing', async () => {
     const { deps, state } = world();
     const s = await runningSession(60, 3 * MINUTE);
@@ -448,6 +499,20 @@ describe('solo grace job', () => {
     });
     const row = await sessionRow(s.sessionId);
     expect(row?.endedAt?.getTime()).toBe(s.plannedEndMs);
+  });
+
+  it('E16 is no evidence about a Redis loss: the late grace job then expires the session (E9)', async () => {
+    const { deps, state } = world();
+    const s = await runningSession(60, 10 * MINUTE);
+    const t = s.plannedEndMs - 30_000;
+    await requireMarkers().record(s.userId, marker(s.sessionId, t, 'detected'), s.runningSinceMs);
+    state.presence = { online: true, checkedAtMs: await nowMs() };
+    state.epochCreatedAtMs = s.runningSinceMs + CLOCK_SKEW_TOLERANCE_MS + 1;
+
+    expect(await runSoloGraceJob(deps, graceJob(s, t))).toEqual({
+      kind: 'settled',
+      transition: 'expired',
+    });
   });
 
   it('offline inside the grace: sleeps until the grace ends (Redis TIME)', async () => {

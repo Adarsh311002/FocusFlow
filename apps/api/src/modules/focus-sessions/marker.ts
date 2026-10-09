@@ -89,13 +89,22 @@ export const planMarkerRecord = (
  * Which markers a clear may delete. Every rule first requires ownership by `sessionId`;
  * nothing ever deletes a marker unconditionally (E10).
  *
- * - `upTo`: a reconnect confirmed at `upToMs` (Redis TIME) — delete only a disconnect at
- *   or before that instant; a later disconnect stays.
+ * - `upTo`: the decision found the user online at `upToMs` (Redis TIME) — delete only a
+ *   disconnect at or before that instant; a later disconnect stays.
+ * - `reconnect`: an online hint confirmed at `reconnectAtMs` (Redis TIME), before the
+ *   planned end — like `upTo`, but only while that is inside the disconnect's grace; a
+ *   marker whose grace ran out stays for its grace job (E16).
  * - `session`: the session paused, resumed, stopped or settled — delete its marker.
  * - `stale`: delete it only if it predates the session's current stretch.
  */
 export type ClearRule =
   | { readonly kind: 'upTo'; readonly sessionId: string; readonly upToMs: number }
+  | {
+      readonly kind: 'reconnect';
+      readonly sessionId: string;
+      readonly reconnectAtMs: number;
+      readonly graceMs: number;
+    }
   | { readonly kind: 'session'; readonly sessionId: string }
   | { readonly kind: 'stale'; readonly sessionId: string; readonly runningSinceMs: number };
 
@@ -109,6 +118,11 @@ export const planMarkerClear = (
   switch (rule.kind) {
     case 'upTo':
       return existing.disconnectedAtMs <= rule.upToMs;
+    case 'reconnect':
+      return (
+        existing.disconnectedAtMs <= rule.reconnectAtMs &&
+        rule.reconnectAtMs < existing.disconnectedAtMs + rule.graceMs
+      );
     case 'session':
       return true;
     case 'stale':

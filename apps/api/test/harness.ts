@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -5,12 +6,15 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import type { Redis } from 'ioredis';
+import { Redis } from 'ioredis';
 import pg, { type Pool } from 'pg';
 
 import type { Db } from '../src/db/client.js';
 import type { AuthDeps } from '../src/modules/auth/service.js';
 import { type AppConfig, loadConfig } from '../src/platform/config.js';
+import { formatEpoch } from '../src/platform/epoch.js';
+import { redisTimeMs } from '../src/platform/redis.js';
+import { redisKeys } from '../src/platform/redis-keys.js';
 import { createRuntime, type Runtime } from '../src/platform/runtime.js';
 
 // A short-lived JWT signing key for tests only. Never used outside a Testcontainers
@@ -39,6 +43,27 @@ export type TestHarness = {
 };
 
 type ConfigOverrides = Partial<Record<string, string>>;
+
+export type HarnessOptions = {
+  /**
+   * Seeds the Redis epoch as created this long before the start (Redis TIME), as if Redis
+   * had kept its data for that long. Tests that move a session's timestamps into the past
+   * need it: a running stretch that began before the epoch was created looks like a
+   * definite Redis loss during the stretch (E9).
+   */
+  readonly epochAgeMs?: number;
+};
+
+/** Writes the epoch the first instance then adopts (it never replaces a valid one). */
+const seedEpoch = async (config: AppConfig, ageMs: number): Promise<void> => {
+  const redis = new Redis(config.REDIS_URL, { keyPrefix: config.REDIS_KEY_PREFIX });
+  try {
+    const createdAtMs = (await redisTimeMs(redis)) - ageMs;
+    await redis.set(redisKeys.epoch, formatEpoch({ id: randomUUID(), createdAtMs }));
+  } finally {
+    redis.disconnect();
+  }
+};
 
 /** The configuration an instance on this harness’s containers would use. */
 export const configFor = (harness: TestHarness, overrides: ConfigOverrides = {}): AppConfig =>
@@ -79,7 +104,10 @@ const startRuntime = async (config: AppConfig): Promise<TestInstance> => {
  * the same `createRuntime` that `main.ts` uses, on an ephemeral port. Shared by every
  * integration test so each one exercises the actual migration files and startup order.
  */
-export const startTestHarness = async (overrides: ConfigOverrides = {}): Promise<TestHarness> => {
+export const startTestHarness = async (
+  overrides: ConfigOverrides = {},
+  options: HarnessOptions = {},
+): Promise<TestHarness> => {
   const postgresContainer = await new PostgreSqlContainer('postgres:18').start();
   try {
     const redisContainer = await new RedisContainer('redis:7.4-alpine').start();
@@ -94,6 +122,9 @@ export const startTestHarness = async (overrides: ConfigOverrides = {}): Promise
       }
 
       const config = buildConfig(postgresContainer, redisContainer, overrides);
+      if (options.epochAgeMs !== undefined) {
+        await seedEpoch(config, options.epochAgeMs);
+      }
       const { runtime, baseUrl } = await startRuntime(config);
 
       return {

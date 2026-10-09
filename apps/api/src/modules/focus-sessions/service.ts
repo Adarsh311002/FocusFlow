@@ -230,7 +230,8 @@ export const getCurrentFocusSession = async (
  * This is the one approved point where Redis is read inside the transaction (the marker,
  * then checkUser), while the row lock is held. The marker is read before this request's
  * own follow-up could clear it, so an observed disconnect through the end still completes
- * the session (E8).
+ * the session (E8). A request never applies E16: online with a disconnect still recorded
+ * is not a completion here, and the pause or stop applies.
  */
 const completesAtPlannedEnd = async (
   deps: FocusSessionsDeps,
@@ -261,6 +262,10 @@ const completesAtPlannedEnd = async (
     presence,
     epochCreatedAtMs: deps.epochCreatedAtMs(),
   });
+  if (decision.kind === 'retry') {
+    // An unknown epoch can decide between completion and expiry (E9): fail closed (H2).
+    throw presenceUnavailable();
+  }
   return decision.kind === 'complete';
 };
 

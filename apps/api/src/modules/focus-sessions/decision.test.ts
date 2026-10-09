@@ -58,6 +58,20 @@ describe('before T_end', () => {
     });
   });
 
+  it('online after the marker’s grace ran out: only its grace job continues it (E16)', () => {
+    const disconnectedAtMs = BEFORE_END - SOLO_GRACE_MS;
+    // Any other caller hands over to the grace job.
+    expect(decide({ marker: marker(disconnectedAtMs, 'detected') }).decision).toEqual({
+      kind: 'wait_for_grace',
+      disconnectedAtMs,
+    });
+    // The late grace job of exactly this disconnect treats it as a reconnect within grace.
+    expect(
+      decide({ marker: marker(disconnectedAtMs, 'detected'), graceJob: { disconnectedAtMs } })
+        .decision,
+    ).toEqual({ kind: 'continue', clearMarkerUpToMs: BEFORE_END });
+  });
+
   it('offline with a marker: waits for the grace, then expires it', () => {
     const disconnectedAtMs = BEFORE_END - 30_000;
     expect(
@@ -138,18 +152,79 @@ describe('at or after T_end', () => {
     ).toEqual({ kind: 'grace_expired', disconnectedAtMs });
   });
 
-  it('online with no marker completes', () => {
-    expect(
-      decide({ nowMs: T_END, presence: { online: true, checkedAtMs: T_END } }).decision,
-    ).toEqual({ kind: 'complete' });
+  it('online with no marker completes (D35), with the epoch known and no loss', () => {
+    const online = { nowMs: T_END, presence: { online: true, checkedAtMs: T_END } };
+    expect(decide(online).decision).toEqual({ kind: 'complete' });
+    // Within the tolerance it is ambiguous: no loss (E9).
+    expect(decide({ ...online, epochCreatedAtMs: T0 + CLOCK_SKEW_TOLERANCE_MS }).decision).toEqual({
+      kind: 'complete',
+    });
+    expect(decide({ ...online, epochCreatedAtMs: undefined }).decision).toEqual({
+      kind: 'retry',
+      reason: 'epoch_unknown',
+    });
   });
 
-  it('online with a marker from before the end completes (E16 reconnect recovery)', () => {
+  it('online with no marker after a definite Redis loss during the stretch: expired (E9)', () => {
     expect(
       decide({
         nowMs: AFTER_END,
-        marker: marker(T_END - 10 * 60_000, 'detected'),
         presence: { online: true, checkedAtMs: AFTER_END },
+        epochCreatedAtMs: T0 + CLOCK_SKEW_TOLERANCE_MS + 1,
+      }).decision,
+    ).toEqual({ kind: 'expired' });
+  });
+
+  it('online with a recorded disconnect: the end job, reconciler or a request hands over to its grace job', () => {
+    const online = { nowMs: AFTER_END, presence: { online: true, checkedAtMs: AFTER_END } };
+    for (const recorded of [
+      marker(T_END - 10 * 60_000, 'detected'),
+      marker(T_END - 10 * 60_000, 'observed'),
+      marker(T_END + 60_000, 'detected'),
+      // Still inside its grace.
+      marker(AFTER_END - 1_000, 'detected'),
+    ]) {
+      expect(decide({ ...online, marker: recorded }).decision).toEqual({
+        kind: 'wait_for_grace',
+        disconnectedAtMs: recorded.disconnectedAtMs,
+      });
+    }
+  });
+
+  it('E16: the late grace job of exactly this disconnect, online, completes at T_end', () => {
+    const disconnectedAtMs = T_END - 10 * 60_000;
+    const online = {
+      nowMs: AFTER_END,
+      marker: marker(disconnectedAtMs, 'detected'),
+      presence: { online: true, checkedAtMs: AFTER_END },
+    };
+    expect(decide({ ...online, graceJob: { disconnectedAtMs } }).decision).toEqual({
+      kind: 'complete',
+    });
+    // A grace job about another disconnect is not E16.
+    expect(
+      decide({ ...online, graceJob: { disconnectedAtMs: disconnectedAtMs - 1 } }).decision,
+    ).toEqual({ kind: 'wait_for_grace', disconnectedAtMs });
+    // E16 is no evidence about a Redis loss during the stretch (E9).
+    expect(
+      decide({
+        ...online,
+        graceJob: { disconnectedAtMs },
+        epochCreatedAtMs: T0 + CLOCK_SKEW_TOLERANCE_MS + 1,
+      }).decision,
+    ).toEqual({ kind: 'expired' });
+    expect(
+      decide({ ...online, graceJob: { disconnectedAtMs }, epochCreatedAtMs: undefined }).decision,
+    ).toEqual({ kind: 'retry', reason: 'epoch_unknown' });
+  });
+
+  it('an observed disconnect through the end completes even after a Redis loss (E8)', () => {
+    expect(
+      decide({
+        nowMs: AFTER_END,
+        marker: marker(T_END + 1_000),
+        presence: { online: true, checkedAtMs: AFTER_END },
+        epochCreatedAtMs: T_END,
       }).decision,
     ).toEqual({ kind: 'complete' });
   });
@@ -267,6 +342,95 @@ describe('properties', () => {
           expect(decision).toEqual({ kind: 'retry', reason: 'presence_unknown' });
         }
       }),
+    );
+  });
+
+  it('completes exactly on the approved evidence (E8, E9, E16, D35)', () => {
+    const arb = fc.record({
+      input: inputArb,
+      graceJob: fc.constantFrom('none', 'exact', 'other'),
+    });
+    fc.assert(
+      fc.property(arb, ({ input, graceJob }) => {
+        const nowMs = T0 + input.nowOffsetMs;
+        const recorded =
+          input.marker === null
+            ? null
+            : marker(
+                T0 + input.marker.offsetMs,
+                input.marker.evidence,
+                input.marker.own ? SESSION_ID : 'other',
+              );
+        const epochCreatedAtMs =
+          input.epochOffsetMs === undefined ? undefined : T0 + input.epochOffsetMs;
+        const { decision } = decideRunningSession({
+          sessionId: SESSION_ID,
+          session,
+          nowMs,
+          marker: recorded,
+          presence:
+            input.online === undefined
+              ? undefined
+              : { online: input.online, checkedAtMs: nowMs + input.checkedOffsetMs },
+          epochCreatedAtMs,
+          ...(graceJob === 'none' || recorded === null
+            ? {}
+            : {
+                graceJob: {
+                  disconnectedAtMs: recorded.disconnectedAtMs + (graceJob === 'exact' ? 0 : 1),
+                },
+              }),
+        });
+
+        // The marker that counts: this session's, not from before the stretch.
+        const own =
+          recorded !== null &&
+          recorded.sessionId === SESSION_ID &&
+          recorded.disconnectedAtMs + CLOCK_SKEW_TOLERANCE_MS >= T0
+            ? recorded
+            : null;
+        const pastEnd = nowMs >= T_END;
+        const throughTheEnd =
+          own !== null &&
+          own.evidence === 'observed' &&
+          own.disconnectedAtMs + CLOCK_SKEW_TOLERANCE_MS >= T_END;
+        const lateGraceReconnect = own !== null && graceJob === 'exact';
+        const noLoss =
+          epochCreatedAtMs !== undefined && epochCreatedAtMs <= T0 + CLOCK_SKEW_TOLERANCE_MS;
+        const expected =
+          input.online !== undefined &&
+          pastEnd &&
+          (throughTheEnd || (input.online && (own === null || lateGraceReconnect) && noLoss));
+        expect(decision.kind === 'complete').toBe(expected);
+      }),
+      { numRuns: 2_000 },
+    );
+  });
+
+  it('a definite Redis loss during the stretch never completes without E8 evidence', () => {
+    fc.assert(
+      fc.property(
+        inputArb,
+        fc.integer({ min: CLOCK_SKEW_TOLERANCE_MS + 1, max: 3 * 3_600_000 }),
+        (input, lossOffsetMs) => {
+          const nowMs = T0 + input.nowOffsetMs;
+          const { decision } = decideRunningSession({
+            sessionId: SESSION_ID,
+            session,
+            nowMs,
+            marker:
+              input.marker === null
+                ? null
+                : marker(T0 + input.marker.offsetMs, 'detected', SESSION_ID),
+            presence: { online: input.online ?? true, checkedAtMs: nowMs },
+            epochCreatedAtMs: T0 + lossOffsetMs,
+            ...(input.marker === null
+              ? {}
+              : { graceJob: { disconnectedAtMs: T0 + input.marker.offsetMs } }),
+          });
+          expect(decision.kind).not.toBe('complete');
+        },
+      ),
     );
   });
 

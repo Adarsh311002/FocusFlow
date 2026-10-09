@@ -14,7 +14,9 @@ import { closeAllSockets, connectSocket } from '../../../test/sockets.js';
 import { signUpTestUser, type TestUser } from '../../../test/users.js';
 import { focusSessions } from '../../db/schema.js';
 import { redisTimeMs } from '../../platform/redis.js';
-import { soloEndJobId } from './jobs.js';
+import { soloEndJobId, soloGraceJobId } from './jobs.js';
+import type { FocusSessionScheduler } from './lifecycle.js';
+import { handleUserOnline } from './presence-hints.js';
 
 // The Solo Focus lifecycle end to end (Phase 4B Milestone 3): real sockets drive the
 // presence hints, the runtime's own worker runs the end and grace jobs, and the grace is
@@ -99,11 +101,15 @@ const travelBack = async (sessionId: string, ms: number) => {
 };
 
 beforeAll(async () => {
-  harness = await startTestHarness({
-    INSTANCE_HEARTBEAT_MS: '200',
-    INSTANCE_TTL_MS: '2000',
-    FOCUS_GRACE_MS: String(GRACE_MS),
-  });
+  harness = await startTestHarness(
+    {
+      INSTANCE_HEARTBEAT_MS: '200',
+      INSTANCE_TTL_MS: '2000',
+      FOCUS_GRACE_MS: String(GRACE_MS),
+    },
+    // Redis kept its data for a week: sessions moved minutes into the past saw no loss (E9).
+    { epochAgeMs: 7 * 86_400_000 },
+  );
 }, 180_000);
 
 afterEach(() => {
@@ -207,25 +213,35 @@ describe('end jobs', () => {
     expect(completed?.endedAt?.getTime()).toBe(runningSinceMs + 60_000);
   });
 
-  it('a reconnect after T_end decides at once instead of waiting for the grace (E16)', async () => {
+  it('a reconnect after T_end keeps the marker; its late grace job completes at T_end (E16)', async () => {
     const h = requireHarness();
     const { user } = await connectedUser();
     const session = await start(user, 60);
     await travelBack(session.id, 5 * 60_000);
     const moved = await row(session.id);
     const runningSinceMs = moved?.runningSince?.getTime() ?? 0;
-    // A disconnect before the end whose reconnect was never recorded (the online hint lost).
+    const disconnectedAtMs = runningSinceMs + 30_000;
+    // A disconnect before the end whose reconnect was never recorded (the online hint was
+    // lost), and whose grace job never ran.
     await h.runtime.focusSessionLifecycle.markers.record(
       user.userId,
-      { sessionId: session.id, disconnectedAtMs: runningSinceMs + 30_000, evidence: 'detected' },
+      { sessionId: session.id, disconnectedAtMs, evidence: 'detected' },
       runningSinceMs,
     );
 
-    // A new socket raises the online hint: the marker is cleared and the end job decides.
+    // A new socket raises the online hint: the marker stays, the grace job of exactly that
+    // disconnect runs (its grace is long over) and applies E16.
     await connectSocket(h.baseUrl, user.accessToken);
     await waitFor(async () => (await row(session.id))?.status === 'completed', 10_000);
-    expect((await row(session.id))?.endedAt?.getTime()).toBe(runningSinceMs + 60_000);
-    expect(await markerOf(user.userId)).toBeUndefined();
+    const completed = await row(session.id);
+    expect(completed?.endedAt?.getTime()).toBe(runningSinceMs + 60_000);
+    expect(completed?.focusedSeconds).toBe(completed?.plannedSeconds);
+    // The grace job settled it: the job finishes after its commit and follow-ups.
+    const graceJobOf = () =>
+      h.runtime.focusSessionLifecycle.queue.getJob(soloGraceJobId(session.id, disconnectedAtMs));
+    await waitFor(async () => (await (await graceJobOf())?.getState()) === 'completed');
+    expect((await graceJobOf())?.returnvalue).toEqual({ kind: 'settled', transition: 'completed' });
+    await waitFor(async () => (await markerOf(user.userId)) === undefined);
   });
 
   it('stopping a session clears its marker but never another session’s', async () => {
@@ -254,5 +270,96 @@ describe('end jobs', () => {
       }),
     ).toBe(false);
     expect((await markerOf(user.userId))?.sessionId).toBe(second.id);
+  });
+});
+
+describe('the online hint (E8, E10, E16)', () => {
+  /** The hint against the real database, marker and presence, with jobs only recorded. */
+  const hintWith = () => {
+    const h = requireHarness();
+    const ends: unknown[] = [];
+    const graces: unknown[] = [];
+    const scheduler: FocusSessionScheduler = {
+      scheduleEnd: (job) => {
+        ends.push(job);
+        return Promise.resolve();
+      },
+      scheduleGrace: (job) => {
+        graces.push(job);
+        return Promise.resolve();
+      },
+    };
+    const deps = {
+      db: h.db,
+      markers: h.runtime.focusSessionLifecycle.markers,
+      checkUser: h.runtime.presence.checkUser,
+      scheduler,
+      graceMs: GRACE_MS,
+    };
+    return { ends, graces, run: (userId: string) => handleUserOnline(deps, userId) };
+  };
+
+  const recordDisconnect = (
+    userId: string,
+    sessionId: string,
+    disconnectedAtMs: number,
+    R: number,
+  ) =>
+    requireHarness().runtime.focusSessionLifecycle.markers.record(
+      userId,
+      { sessionId, disconnectedAtMs, evidence: 'detected' },
+      R,
+    );
+
+  it('before T_end, a reconnect inside the grace clears the marker', async () => {
+    const { user } = await connectedUser();
+    const session = await start(user);
+    const R = (await row(session.id))?.runningSince?.getTime() ?? 0;
+    await recordDisconnect(user.userId, session.id, await redisTimeMs(requireHarness().redis), R);
+
+    const hint = hintWith();
+    await hint.run(user.userId);
+    expect(await markerOf(user.userId)).toBeUndefined();
+    expect(hint.graces).toEqual([]);
+    expect(hint.ends).toEqual([]);
+  });
+
+  it('before T_end, a reconnect after the grace ran out keeps the marker and ensures its grace job', async () => {
+    const { user } = await connectedUser();
+    const session = await start(user);
+    await travelBack(session.id, 60_000);
+    const R = (await row(session.id))?.runningSince?.getTime() ?? 0;
+    await recordDisconnect(user.userId, session.id, R + 1_000, R);
+
+    const hint = hintWith();
+    await hint.run(user.userId);
+    expect(await markerOf(user.userId)).toMatchObject({ disconnectedAtMs: R + 1_000 });
+    expect(hint.graces).toEqual([
+      { sessionId: session.id, userId: user.userId, disconnectedAtMs: R + 1_000 },
+    ]);
+    expect(hint.ends).toEqual([]);
+  });
+
+  it('after T_end, never clears the marker: ensures its grace job and an end decision', async () => {
+    const { user } = await connectedUser();
+    const session = await start(user, 60);
+    await travelBack(session.id, 5 * 60_000);
+    const R = (await row(session.id))?.runningSince?.getTime() ?? 0;
+    // Recorded after T_end and still inside its grace, or before T_end: both stay.
+    for (const disconnectedAtMs of [await redisTimeMs(requireHarness().redis), R + 30_000]) {
+      await requireHarness().runtime.focusSessionLifecycle.markers.clear(user.userId, {
+        kind: 'session',
+        sessionId: session.id,
+      });
+      await recordDisconnect(user.userId, session.id, disconnectedAtMs, R);
+
+      const hint = hintWith();
+      await hint.run(user.userId);
+      expect(await markerOf(user.userId)).toMatchObject({ disconnectedAtMs });
+      expect(hint.graces).toEqual([
+        { sessionId: session.id, userId: user.userId, disconnectedAtMs },
+      ]);
+      expect(hint.ends).toHaveLength(1);
+    }
   });
 });

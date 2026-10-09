@@ -59,7 +59,7 @@ export type JobOutcome =
     }
   /** Online before the planned end: the reconnect cleared the marker; still running. */
   | { readonly kind: 'continued' }
-  /** Offline at the planned end inside a grace: that grace job decides. */
+  /** At the planned end with a recorded disconnect (offline, or online again): its grace job decides. */
   | { readonly kind: 'waiting_for_grace' }
   /** H3: a detected disconnect was recorded and its grace scheduled. */
   | { readonly kind: 'late_grace' }
@@ -116,6 +116,10 @@ const settle = async (
   };
 };
 
+/** Which job decides: only a grace job, with the disconnect it is about, may apply E16. */
+type DecidingJob =
+  { readonly kind: 'end' } | { readonly kind: 'grace'; readonly disconnectedAtMs: number };
+
 /**
  * Runs the decision for a running session inside the caller's transaction, with the row
  * locked. The marker was read by the caller; presence and the epoch are read here — the
@@ -128,7 +132,7 @@ const decideLocked = async (
   session: RunningSession,
   nowMs: number,
   marker: DisconnectMarker | undefined,
-  job: 'end' | 'grace',
+  job: DecidingJob,
 ): Promise<Locked> => {
   const presence = await observePresence(deps, row.userId);
   const { decision, clearStaleMarker } = decideRunningSession({
@@ -139,6 +143,7 @@ const decideLocked = async (
     presence,
     epochCreatedAtMs: deps.epochCreatedAtMs(),
     graceMs: deps.graceMs,
+    ...(job.kind === 'grace' ? { graceJob: { disconnectedAtMs: job.disconnectedAtMs } } : {}),
   });
   const followUps: FollowUp[] = clearStaleMarker
     ? [
@@ -173,12 +178,14 @@ const decideLocked = async (
       }
       return { outcome: { kind: 'continued' }, followUps };
     case 'wait_for_grace': {
-      if (job === 'grace' && presence !== undefined) {
-        // Both instants are Redis TIME: wake when this grace has run its course.
+      if (job.kind === 'grace' && presence !== undefined) {
+        // Offline inside its grace (both instants Redis TIME): wake when it has run its course.
         const delayMs = decision.disconnectedAtMs + deps.graceMs - presence.checkedAtMs;
         return { outcome: { kind: 'wake_later', delayMs: Math.max(1, delayMs) }, followUps };
       }
-      // The end job hands over to the grace job of the current disconnect.
+      // The end job hands over to the grace job of the current disconnect — also when the
+      // user is online again: only that grace job may treat it as a reconnect (E16). A
+      // grace that already ran out makes the grace job run at once.
       followUps.push({ kind: 'schedule_grace', disconnectedAtMs: decision.disconnectedAtMs });
       return { outcome: { kind: 'waiting_for_grace' }, followUps };
     }
@@ -263,7 +270,7 @@ export const runSoloEndJob = async (deps: LifecycleDeps, job: SoloEndJob): Promi
       };
     }
     const marker = await deps.markers.read(row.userId);
-    return decideLocked(tx, deps, row, session, nowMs, marker, 'end');
+    return decideLocked(tx, deps, row, session, nowMs, marker, { kind: 'end' });
   });
   return finish(deps, job.userId, job.sessionId, locked);
 };
@@ -295,7 +302,10 @@ export const runSoloGraceJob = async (
       return noOp('marker_changed');
     }
     const nowMs = await databaseNowMs(tx);
-    return decideLocked(tx, deps, row, session, nowMs, marker, 'grace');
+    return decideLocked(tx, deps, row, session, nowMs, marker, {
+      kind: 'grace',
+      disconnectedAtMs: job.disconnectedAtMs,
+    });
   });
   return finish(deps, job.userId, job.sessionId, locked);
 };

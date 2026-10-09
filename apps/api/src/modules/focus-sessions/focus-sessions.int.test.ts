@@ -180,8 +180,14 @@ const recordChanges = (userId: string): FocusSessionChange[] => {
 
 const cleanups: (() => void)[] = [];
 
+/** Redis kept its data for a week: sessions moved a few minutes into the past saw no loss. */
+const EPOCH_AGE_MS = 7 * 86_400_000;
+
 beforeAll(async () => {
-  harness = await startTestHarness({ INSTANCE_HEARTBEAT_MS: '200', INSTANCE_TTL_MS: '2000' });
+  harness = await startTestHarness(
+    { INSTANCE_HEARTBEAT_MS: '200', INSTANCE_TTL_MS: '2000' },
+    { epochAgeMs: EPOCH_AGE_MS },
+  );
 }, 180_000);
 
 afterEach(() => {
@@ -491,6 +497,37 @@ describe('the planned end wins (E7)', () => {
       // The evidence was used before the completion's follow-up cleared it.
       await waitFor(async () => (await markerOf(user.userId)) === undefined);
     }
+  });
+
+  it('online with a disconnect still recorded, the pause or stop applies: E16 is the grace job’s alone', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const user = await connectedUser('blip');
+      const session = sessionOf(await start(user, { plannedSeconds: 60 }));
+      await travelBack(session.id, 2 * 60_000);
+      const plannedEndMs = Date.parse(session.startedAt) - 60_000;
+      // A disconnect 30 s before the end whose reconnect never cleared it (the online hint
+      // was lost); the user is online now.
+      await setMarker(user.userId, {
+        sessionId: session.id,
+        disconnectedAtMs: plannedEndMs - 30_000,
+        evidence: 'detected',
+      });
+
+      const result = sessionOf(await action(user, verb, session.id));
+      expect(result.focusedSeconds).toBe(60);
+      expect(result.status).toBe(verb === 'pause' ? 'in_progress' : 'abandoned');
+    }
+  });
+
+  it('online with no marker after a definite Redis loss during the stretch never completes (E9)', async () => {
+    const user = await connectedUser('lost');
+    const session = sessionOf(await start(user, { plannedSeconds: 60 }));
+    // The stretch began before the current epoch was created: Redis lost its data since.
+    await travelBack(session.id, EPOCH_AGE_MS + 60 * 60_000);
+
+    const result = sessionOf(await action(user, 'stop', session.id));
+    expect(result).toMatchObject({ status: 'abandoned', focusedSeconds: 60 });
+    expect(result.status === 'abandoned' && result.abandonReason).toBe('stopped');
   });
 
   it('detected evidence, or another session’s marker, never completes it (E8, E10)', async () => {

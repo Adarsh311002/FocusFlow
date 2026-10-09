@@ -252,7 +252,7 @@ The marker is changed only with `WATCH`/`MULTI` and a bounded number of retries 
   - marker for `S` with a newer timestamp → no change;
   - marker for another session → that session can no longer be in progress (one in-progress session per user), so replace it with `S:t:evidence`.
   Each recorded timestamp gets its own grace job.
-- **Clear on reconnect** for session `S` up to `u` (a Redis instant at which `checkUser` confirmed the user online): delete the marker only if it still belongs to `S` and its timestamp is `≤ u`. A marker for `S` newer than `u` (a later disconnect) stays; a marker of another session is left alone.
+- **Clear on reconnect** for session `S` at `u` (a Redis instant at which `checkUser` confirmed the user online), only **before `T_end`**: delete the marker only if it still belongs to `S`, its timestamp `t` is `≤ u`, and `u` is still inside that disconnect's grace (`u < t + 60 s`). A marker for `S` newer than `u` (a later disconnect) stays; a marker whose grace ran out stays for its grace job (E16); a marker of another session is left alone. At or after `T_end` an online hint never clears the marker (E8). A decision that finds the user online clears it up to `checkedAtMs` only where the decision table says so.
 - **Clear on pause, resume, stop or settlement** of session `S`: delete the marker **only if it still belongs to `S`**. Never unconditionally: a delayed cleanup of an ended session must not remove the marker of the user's next session (for example, `S1` settles, `S2` starts, `S2`'s user disconnects and owns the marker, then `S1`'s late cleanup runs — it must leave `S2`'s marker in place).
 - A marker for the running session whose timestamp is from before its current stretch (`t + tolerance < runningSinceMs`, left over from before a pause) is treated as absent and cleared for that session.
 - A **grace job** settles only if the marker still holds exactly its payload's session and `disconnectedAtMs`; an older job finds a newer timestamp and does nothing (the newer job owns the grace).
@@ -260,16 +260,22 @@ The marker is changed only with `WATCH`/`MULTI` and a bounded number of retries 
 ### Disconnect while running
 
 - **Offline hint** (H2): if PostgreSQL shows a running solo session for the user, and `checkUser` still reports the user offline, record the disconnect with the event's `disconnectedAtMs` and its evidence, and enqueue a grace job for `disconnectedAtMs + 60 s`. A paused session gets no marker and no grace (D14/15/35).
-- **Online hint** (H4): confirm with `checkUser`; if online, clear the session's marker up to `checkedAtMs`, and if the session is past `T_end`, enqueue an immediate end-decision job. The hint itself never completes anything (E8).
+- **Online hint** (H4): confirm with `checkUser`; if online and the session is running:
+  - before `T_end`: clear the marker on reconnect (above, only inside its grace); if it stays (its grace ran out), make sure its grace job is enqueued — that grace job decides (E16);
+  - at or after `T_end`: never clear the marker — being online now proves nothing about `T_end` (E8). Make sure the grace job of a recorded disconnect of the current stretch is enqueued, and enqueue an immediate end-decision job: without a recorded disconnect it can complete the session now (D35); with one, it hands over to that grace job.
+  The hint itself never completes anything (E8).
 - The 60-second grace is compared on Redis instants only: it has expired when `checkedAtMs ≥ disconnectedAtMs + 60 s`.
 
 ### The decision for a running session
 
-One procedure decides every running solo session, whether called by the end job, a grace job, the reconciler sweep, or a pause or stop at or after `T_end`. It reads, in this order: the session row (locked), the PostgreSQL clock (`clock_timestamp()`, after the lock) and `T_end`, the marker (ignoring one from before the current stretch), `checkUser` (`online`, `checkedAtMs`), and the current epoch's creation time. If `checkUser` fails or the epoch is unknown, it decides nothing and is retried (H2). "Through the end" (observed evidence only) and "definite Redis loss" use the clock-comparison rules above.
+One procedure decides every running solo session, whether called by the end job, a grace job, the reconciler sweep, or a pause or stop at or after `T_end`. It reads, in this order: the session row (locked), the PostgreSQL clock (`clock_timestamp()`, after the lock) and `T_end`, the marker (ignoring one from before the current stretch), `checkUser` (`online`, `checkedAtMs`), and the current epoch's creation time. If `checkUser` fails, or the epoch is unknown where the outcome depends on it (a completion without observed proof, or offline with no marker), it decides nothing: a job is retried and a pause or stop answers `503` (H2). "Through the end" (observed evidence only) and "definite Redis loss" use the clock-comparison rules above. Only the **grace job** of exactly the recorded disconnect may apply reconnect-within-grace recovery (E16); the end job, the reconciler and a pause or stop never do.
 
 | Before `T_end` | Outcome |
 |---|---|
-| Online | Clear the session's marker up to `checkedAtMs`; keep running (the end job stays scheduled) |
+| Online, no marker | Keep running (the end job stays scheduled) |
+| Online, marker for this session, inside its grace (`checkedAtMs < disconnectedAtMs + 60 s`) | A reconnect within grace: clear the marker up to `checkedAtMs`; keep running |
+| Online, marker for this session, grace expired — the grace job of exactly this disconnect | **E16** (below): clear the marker up to `checkedAtMs`; keep running |
+| Online, marker for this session, grace expired — any other caller | Wait: the grace job of that disconnect decides (scheduled if missing) |
 | Offline, marker for this session, grace not yet expired | Wait (the grace job is scheduled) |
 | Offline, marker for this session, grace expired | `abandoned(grace_expired)` |
 | Offline, no marker, definite Redis loss during the stretch | `abandoned(expired)` |
@@ -278,15 +284,21 @@ One procedure decides every running solo session, whether called by the end job,
 | At or after `T_end` | Outcome |
 |---|---|
 | Marker for this session, `observed`, through the end | `completed`, `ended_at = T_end` (E8) |
-| Online (with or without a marker that is not observed-through-the-end) | **Reconnect-within-grace recovery** (E16, below): clear the session's marker up to `checkedAtMs`, then `completed` with `ended_at = T_end` |
+| Online, no marker, no definite Redis loss during the stretch | `completed`, `ended_at = T_end` (present at completion, D35) |
+| Online, no marker, definite Redis loss during the stretch | `abandoned(expired)`: the missing marker proves nothing (E9) |
+| Online, marker for this session (not observed-through-the-end) — the grace job of exactly this disconnect | **E16** (below): `completed`, `ended_at = T_end` — or `abandoned(expired)` on a definite Redis loss during the stretch |
+| Online, marker for this session (not observed-through-the-end) — the end job or the reconciler | Wait: that disconnect's grace job decides (scheduled if missing; it runs at once if the grace has expired) |
+| Online, marker for this session (not observed-through-the-end) — a pause or stop | Not a completion: the pause or stop applies (E7) |
 | Offline, marker for this session, grace not yet expired | Wait |
 | Offline, marker for this session, grace expired | `abandoned(grace_expired)` (`d` is clamped to `T_end`) |
 | Offline, no marker, definite Redis loss during the stretch | `abandoned(expired)` |
-| Offline, no marker, otherwise | Late grace: record a `detected` disconnect at `checkedAtMs`. Detected evidence never proves "through the end", so this can only end in a reconnect (complete) or `grace_expired` |
+| Offline, no marker, otherwise | Late grace: record a `detected` disconnect at `checkedAtMs`. Detected evidence never proves "through the end", so this can only end in a reconnect seen by its grace job (E16) or `grace_expired` |
 
-**Reconnect-within-grace recovery (E16, intentional D35/H2 policy).** When the decision finds the user online but the marker still records a disconnect for the session — typically a grace job that ran late (a worker outage) after the online hint that would have cleared the marker was lost — the exact reconnect time is unknowable. The server deliberately treats this as a reconnect within grace (D35) and as H2's "online after all": it clears the marker and the session continues, or completes at `T_end` if the planned end has passed. The alternative, `grace_expired` whenever `checkedAtMs > disconnectedAtMs + 60 s`, would penalise the user for a server outage. Likewise, "no marker and online" completes: no disconnect was recorded during the stretch and the user is present; the reconciler's late-grace sweep is what detects an absence that left no marker.
+**Reconnect-within-grace recovery (E16, a narrow D35/H2 exception).** It applies only in the **grace job** whose marker still holds exactly its payload's session and `disconnectedAtMs`, when that job finds the user online — typically a grace job that ran late (a worker outage) after the online hint that would have cleared the marker was lost, so the exact reconnect time is unknowable. That grace job treats it as a reconnect within grace (D35) and as H2's "online after all": it clears the marker and the session continues, or completes at `T_end` if the planned end has passed. The alternative, `grace_expired` whenever `checkedAtMs > disconnectedAtMs + 60 s`, would penalise the user for a server outage. E16 is not evidence about a Redis data loss: on a definite loss during the stretch the session is `abandoned(expired)` instead (E9). Nothing else applies E16: the end job and the reconciler hand a recorded disconnect over to its grace job, a pause or stop is then not a completion, and an online hint at or after `T_end` never clears the marker, so it cannot turn "marker and online" into "no marker and online".
 
-Never: completing a session from `detected` evidence alone, or from an online hint alone without this decision (E8); expiring a session on an ambiguous clock comparison (E9); deleting a marker that belongs to another session (E10).
+"No marker and online" completes (D35): no disconnect was recorded during the stretch and the user is present; the reconciler's late-grace sweep is what detects an absence that left no marker. It relies on the marker store having kept its data, so after a definite Redis loss during the stretch it does not complete (E9).
+
+Never: completing a session from `detected` evidence alone, or from an online hint alone without this decision (E8); completing because the user is online now while a disconnect of the stretch is recorded, anywhere but in that disconnect's grace job (E8, E16); completing without observed proof after a definite Redis loss during the stretch (E9); expiring a session on an ambiguous clock comparison (E9); deleting a marker that belongs to another session (E10).
 
 ### Paused solo sessions
 
@@ -296,7 +308,7 @@ A disconnect does **not** start the grace for a paused solo session (D14/15/35).
 
 A solo session is `abandoned(expired)` only when:
 - it is still in progress 12 hours after `started_at` (E2; in practice a paused session, since the longest plan is 4 hours and a running session is resolved by the decision procedure); or
-- it is running, the user is offline with no marker, and Redis **definitely** lost its data during the running stretch (`epochCreatedAtMs > runningSinceMs + 2000`, E9).
+- it is running, no observed disconnect proves presence through the end, Redis **definitely** lost its data during the running stretch (`epochCreatedAtMs > runningSinceMs + 2000`, E9), and either the user is offline with no marker, or the planned end has passed and the user is online — with no marker, or in the grace job of the recorded disconnect (E16). A pause or stop at or after `T_end` in that state is not a completion, and the pause or stop applies (E7).
 
 In both cases only the time accumulated before the current running stretch is kept. A merely missed disconnect gets **late grace** instead (H3): the grace runs from the detection time, which can over-count focused time by at most the detection delay (about one reconciler interval) — preferred over discarding the stretch because of an infrastructure fault.
 
@@ -327,7 +339,7 @@ Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 
 Detected through the `ff:epoch` marker key (see `redis-keys.md`). When Redis loses its data:
 
 - In-progress **room** sessions are abandoned with `timer_lost`. Room timers restart as `idle` focus phases **using each room's saved durations** (D16). Clients receive `room:resync` and rejoin to get a fresh snapshot.
-- **Solo** sessions keep their state (PostgreSQL). Their scheduled jobs are recreated by the reconciler. A running session whose user is not connected becomes `expired` only if the new epoch was created more than 2 seconds after its `running_since` (definite loss during the stretch, E9); otherwise it gets late grace.
+- **Solo** sessions keep their state (PostgreSQL). Their scheduled jobs are recreated by the reconciler. A running session whose user is not connected becomes `expired` only if the new epoch was created more than 2 seconds after its `running_since` (definite loss during the stretch, E9); otherwise it gets late grace. After such a loss, being connected at or after `T_end` does not complete it either: without an observed disconnect through the end it becomes `expired` (E8, E9).
 - Presence is rebuilt from the sockets still connected to each API instance.
 
 With AOF persistence, a normal Redis restart loses at most about one second of changes; version checks and the reconciler absorb it.

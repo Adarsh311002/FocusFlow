@@ -305,6 +305,7 @@ export const createRuntime = async (
     markers: focusSessionMarkers,
     checkUser: presenceStore.checkUser,
     scheduler: focusSessionScheduler,
+    graceMs: config.FOCUS_GRACE_MS,
   };
   presence.onUserOffline((event) => handleUserOffline(hintDeps, event));
   presence.onUserOnline((userId) => handleUserOnline(hintDeps, userId));

@@ -104,6 +104,17 @@ describe('planMarkerClear (always ownership-checked)', () => {
     expect(planMarkerClear(marker(T + 1), { kind: 'upTo', sessionId: S1, upToMs: T })).toBe(false);
   });
 
+  it('reconnect: deletes only a disconnect at or before it and still inside its grace', () => {
+    const rule = (reconnectAtMs: number) =>
+      ({ kind: 'reconnect', sessionId: S1, reconnectAtMs, graceMs: 60_000 }) as const;
+    expect(planMarkerClear(marker(T), rule(T))).toBe(true);
+    expect(planMarkerClear(marker(T), rule(T + 59_999))).toBe(true);
+    // The grace ran out: the marker stays for its grace job (E16).
+    expect(planMarkerClear(marker(T), rule(T + 60_000))).toBe(false);
+    // A later disconnect stays.
+    expect(planMarkerClear(marker(T + 1), rule(T))).toBe(false);
+  });
+
   it('session: deletes this session’s marker only', () => {
     expect(planMarkerClear(marker(T), { kind: 'session', sessionId: S1 })).toBe(true);
     expect(planMarkerClear(marker(T, 'observed', S2), { kind: 'session', sessionId: S1 })).toBe(
@@ -120,6 +131,7 @@ describe('planMarkerClear (always ownership-checked)', () => {
   it('never deletes another session’s, a malformed or a missing marker', () => {
     for (const rule of [
       { kind: 'upTo', sessionId: S1, upToMs: Number.MAX_SAFE_INTEGER },
+      { kind: 'reconnect', sessionId: S1, reconnectAtMs: T, graceMs: 60_000 },
       { kind: 'session', sessionId: S1 },
       { kind: 'stale', sessionId: S1, runningSinceMs: Number.MAX_SAFE_INTEGER },
     ] as const) {
