@@ -26,6 +26,7 @@ import {
 import { toSessionChanges, toSoloSession } from './rows.js';
 import {
   complete,
+  expire,
   hasReachedPlannedEnd,
   isPaused,
   isRunning,
@@ -226,20 +227,24 @@ export const getCurrentFocusSession = async (
 };
 
 /**
- * E7: at or after the planned end, the completion decision runs before a pause or stop.
- * This is the one approved point where Redis is read inside the transaction (the marker,
- * then checkUser), while the row lock is held. The marker is read before this request's
- * own follow-up could clear it, so an observed disconnect through the end still completes
- * the session (E8). A request never applies E16: online with a disconnect still recorded
- * is not a completion here, and the pause or stop applies.
+ * E7: at or after the planned end, the decision for a running session runs before a pause
+ * or stop, and its terminal outcomes win: `completed`, or `abandoned(expired)` after a
+ * definite Redis loss during the stretch (E9) — the same outcome the end job reaches, so
+ * the result never depends on which of them takes the row lock first. This is the one
+ * approved point where Redis is read inside the transaction (the marker, then checkUser),
+ * while the row lock is held. The marker is read before this request's own follow-up
+ * could clear it, so an observed disconnect through the end still completes the session
+ * (E8). A request never applies E16: online with a disconnect still recorded is not a
+ * completion here, and the pause or stop applies. When the decision cannot be made
+ * (presence or epoch unknown) the request fails with 503 and changes nothing (H2).
  */
-const completesAtPlannedEnd = async (
+const settlementAtPlannedEnd = async (
   deps: FocusSessionsDeps,
   userId: string,
   sessionId: string,
   session: RunningSession,
   nowMs: number,
-): Promise<boolean> => {
+): Promise<'completed' | 'expired' | null> => {
   let marker: DisconnectMarker | undefined;
   try {
     marker = await deps.markers.read(userId);
@@ -248,25 +253,26 @@ const completesAtPlannedEnd = async (
     // nothing, like an unknown presence (H2).
     throw presenceUnavailable();
   }
-  const presence = await observePresence(deps, userId);
-  if (presence === undefined) {
-    // Unknown presence decides nothing (H2): fail the request rather than record a pause
-    // or stop that may have owed a completion.
-    throw presenceUnavailable();
-  }
   const { decision } = decideRunningSession({
     sessionId,
     session,
     nowMs,
     marker: marker ?? null,
-    presence,
+    presence: await observePresence(deps, userId),
     epochCreatedAtMs: deps.epochCreatedAtMs(),
   });
-  if (decision.kind === 'retry') {
-    // An unknown epoch can decide between completion and expiry (E9): fail closed (H2).
-    throw presenceUnavailable();
+  switch (decision.kind) {
+    case 'retry':
+      // Unknown presence or epoch: fail rather than record a pause or stop that may have
+      // owed a completion or an expiry (H2, E9).
+      throw presenceUnavailable();
+    case 'complete':
+      return 'completed';
+    case 'expired':
+      return 'expired';
+    default:
+      return null;
   }
-  return decision.kind === 'complete';
 };
 
 const pauseOrStop = async (
@@ -282,12 +288,15 @@ const pauseOrStop = async (
     }
     const session = toSoloSession(row);
     const nowMs = await databaseNowMs(tx);
-    if (
-      isRunning(session) &&
-      hasReachedPlannedEnd(session, nowMs) &&
-      (await completesAtPlannedEnd(deps, userId, row.id, session, nowMs))
-    ) {
+    const settlement =
+      isRunning(session) && hasReachedPlannedEnd(session, nowMs)
+        ? await settlementAtPlannedEnd(deps, userId, row.id, session, nowMs)
+        : null;
+    if (settlement === 'completed') {
       return commitTransition(tx, row, complete(session, nowMs), 'completed');
+    }
+    if (settlement === 'expired') {
+      return commitTransition(tx, row, expire(session, nowMs), 'expired');
     }
     return action === 'pause'
       ? commitTransition(tx, row, pause(session, nowMs), 'paused')

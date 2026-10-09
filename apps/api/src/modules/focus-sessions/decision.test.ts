@@ -46,6 +46,22 @@ describe('presence unknown', () => {
         reason: 'presence_unknown',
       });
     }
+    // Detected evidence after T_end proves nothing either.
+    expect(
+      decide({ nowMs: AFTER_END, presence: undefined, marker: marker(T_END + 1, 'detected') })
+        .decision,
+    ).toEqual({ kind: 'retry', reason: 'presence_unknown' });
+  });
+
+  it('observed evidence through the end completes without presence or the epoch (E8)', () => {
+    expect(
+      decide({
+        nowMs: AFTER_END,
+        presence: undefined,
+        epochCreatedAtMs: undefined,
+        marker: marker(T_END - CLOCK_SKEW_TOLERANCE_MS),
+      }).decision,
+    ).toEqual({ kind: 'complete' });
   });
 });
 
@@ -311,7 +327,7 @@ describe('properties', () => {
     }),
   });
 
-  it('never completes before the planned end, and never on an unknown presence', () => {
+  it('never completes before the planned end; on an unknown presence, only E8 decides', () => {
     fc.assert(
       fc.property(inputArb, (input) => {
         const nowMs = T0 + input.nowOffsetMs;
@@ -336,10 +352,12 @@ describe('properties', () => {
         });
         if (decision.kind === 'complete') {
           expect(nowMs).toBeGreaterThanOrEqual(T_END);
-          expect(input.online).not.toBeUndefined();
         }
         if (input.online === undefined) {
-          expect(decision).toEqual({ kind: 'retry', reason: 'presence_unknown' });
+          expect(['retry', 'complete']).toContain(decision.kind);
+          if (decision.kind === 'retry') {
+            expect(decision.reason).toBe('presence_unknown');
+          }
         }
       }),
     );
@@ -398,9 +416,9 @@ describe('properties', () => {
         const noLoss =
           epochCreatedAtMs !== undefined && epochCreatedAtMs <= T0 + CLOCK_SKEW_TOLERANCE_MS;
         const expected =
-          input.online !== undefined &&
           pastEnd &&
-          (throughTheEnd || (input.online && (own === null || lateGraceReconnect) && noLoss));
+          (throughTheEnd ||
+            (input.online === true && (own === null || lateGraceReconnect) && noLoss));
         expect(decision.kind === 'complete').toBe(expected);
       }),
       { numRuns: 2_000 },

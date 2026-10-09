@@ -519,15 +519,20 @@ describe('the planned end wins (E7)', () => {
     }
   });
 
-  it('online with no marker after a definite Redis loss during the stretch never completes (E9)', async () => {
-    const user = await connectedUser('lost');
-    const session = sessionOf(await start(user, { plannedSeconds: 60 }));
-    // The stretch began before the current epoch was created: Redis lost its data since.
-    await travelBack(session.id, EPOCH_AGE_MS + 60 * 60_000);
+  it('online with no marker after a definite Redis loss during the stretch: the pause or stop expires it (E9)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const user = await connectedUser('lost');
+      const changes = recordChanges(user.userId);
+      const session = sessionOf(await start(user, { plannedSeconds: 60 }));
+      // The stretch began before the current epoch was created: Redis lost its data since.
+      await travelBack(session.id, EPOCH_AGE_MS + 60 * 60_000);
 
-    const result = sessionOf(await action(user, 'stop', session.id));
-    expect(result).toMatchObject({ status: 'abandoned', focusedSeconds: 60 });
-    expect(result.status === 'abandoned' && result.abandonReason).toBe('stopped');
+      const result = sessionOf(await action(user, verb, session.id));
+      // The end job's outcome, not the request's: the stretch is discarded (E9).
+      expect(result).toMatchObject({ status: 'abandoned', focusedSeconds: 0 });
+      expect(result.status === 'abandoned' && result.abandonReason).toBe('expired');
+      expect(changes.map((change) => change.transition)).toEqual(['started', 'expired']);
+    }
   });
 
   it('detected evidence, or another session’s marker, never completes it (E8, E10)', async () => {

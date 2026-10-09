@@ -40,6 +40,7 @@ import {
   runSoloGraceJob,
 } from './lifecycle.js';
 import { createDisconnectMarkerStore, type DisconnectMarkerStore } from './marker-store.js';
+import { type FocusSessionsDeps, pauseFocusSession, stopFocusSession } from './service.js';
 
 // The solo end and grace jobs against real PostgreSQL and Redis (decisions E7–E10, E16).
 // Presence and the epoch are scripted per test so every branch and race is deterministic;
@@ -579,6 +580,127 @@ describe('races', () => {
 
     await Promise.all(Array.from({ length: 5 }, () => runSoloGraceJob(deps, graceJob(s, t))));
     expect(published).toHaveLength(1);
+  });
+});
+
+describe('pause or stop against the end job (E7, E9)', () => {
+  /** The REST service on the same scripted world as the jobs. */
+  const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
+    db: deps.db,
+    checkUser: deps.checkUser,
+    epochCreatedAtMs: deps.epochCreatedAtMs,
+    markers: deps.markers,
+    changes: deps.changes,
+  });
+
+  const request = (
+    w: ReturnType<typeof world>,
+    verb: 'pause' | 'stop',
+    s: { sessionId: string; userId: string },
+  ) =>
+    (verb === 'pause' ? pauseFocusSession : stopFocusSession)(
+      serviceDeps(w),
+      s.userId,
+      s.sessionId,
+    );
+
+  /** A session past T_end whose stretch began before the current epoch: a definite loss. */
+  const afterRedisLoss = async (w: ReturnType<typeof world>, online: boolean) => {
+    const s = await runningSession(60, 3 * MINUTE);
+    w.state.presence = { online, checkedAtMs: await nowMs() };
+    w.state.epochCreatedAtMs = s.runningSinceMs + CLOCK_SKEW_TOLERANCE_MS + 1;
+    return s;
+  };
+
+  const expectExpiredOnce = async (
+    w: ReturnType<typeof world>,
+    s: { sessionId: string },
+  ): Promise<void> => {
+    expect(await sessionRow(s.sessionId)).toMatchObject({
+      status: 'abandoned',
+      abandonReason: 'expired',
+      focusedSeconds: 0,
+    });
+    expect(w.published.map((change) => change.transition)).toEqual(['expired']);
+  };
+
+  it('after a definite Redis loss, the request expires the session as the end job would', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      for (const online of [true, false]) {
+        const w = world();
+        const s = await afterRedisLoss(w, online);
+
+        const view = await request(w, verb, s);
+        expect(view).toMatchObject({ status: 'abandoned', abandonReason: 'expired' });
+        await expectExpiredOnce(w, s);
+        // The end job that comes second finds nothing left to decide.
+        expect(await runSoloEndJob(w.deps, endJob(s))).toMatchObject({ kind: 'no_op' });
+      }
+    }
+  });
+
+  it('after the end job expired it, the request answers the ended session unchanged (E11)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const w = world();
+      const s = await afterRedisLoss(w, true);
+
+      expect(await runSoloEndJob(w.deps, endJob(s))).toEqual({
+        kind: 'settled',
+        transition: 'expired',
+      });
+      const view = await request(w, verb, s);
+      expect(view).toMatchObject({ status: 'abandoned', abandonReason: 'expired' });
+      await expectExpiredOnce(w, s);
+    }
+  });
+
+  it('racing, whichever takes the row lock first, the outcome is abandoned(expired) exactly once', async () => {
+    for (let round = 0; round < 12; round += 1) {
+      const verb = round % 2 === 0 ? 'stop' : 'pause';
+      const w = world();
+      const s = await afterRedisLoss(w, round % 4 < 2);
+
+      const [job, view] = await Promise.all([
+        runSoloEndJob(w.deps, endJob(s)),
+        request(w, verb, s),
+      ]);
+      expect(view).toMatchObject({ status: 'abandoned', abandonReason: 'expired' });
+      expect(['settled', 'no_op']).toContain(job.kind);
+      await expectExpiredOnce(w, s);
+    }
+  });
+
+  it('an unknown epoch fails the request with 503 and changes nothing (H2)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const w = world();
+      const s = await runningSession(60, 3 * MINUTE);
+      w.state.presence = { online: true, checkedAtMs: await nowMs() };
+      w.state.epochCreatedAtMs = undefined;
+
+      await expect(request(w, verb, s)).rejects.toMatchObject({ status: 503 });
+      expect(await sessionRow(s.sessionId)).toMatchObject({
+        status: 'in_progress',
+        runningSince: new Date(s.runningSinceMs),
+      });
+      expect(w.published).toEqual([]);
+    }
+  });
+
+  it('observed evidence through the end completes without presence or the epoch (E8)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const w = world();
+      const s = await runningSession(60, 3 * MINUTE);
+      await requireMarkers().record(
+        s.userId,
+        marker(s.sessionId, s.plannedEndMs + 1_000, 'observed'),
+        s.runningSinceMs,
+      );
+      w.state.presence = 'unavailable';
+      w.state.epochCreatedAtMs = undefined;
+
+      expect(await request(w, verb, s)).toMatchObject({ status: 'completed', focusedSeconds: 60 });
+      expect((await sessionRow(s.sessionId))?.endedAt?.getTime()).toBe(s.plannedEndMs);
+    }
   });
 });
 

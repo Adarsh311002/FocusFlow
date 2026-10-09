@@ -94,15 +94,12 @@ export const decideRunningSession = (input: DecisionInput): DecisionResult => {
     clearStaleMarker: staleMarker,
   });
 
-  if (presence === undefined) {
-    return result({ kind: 'retry', reason: 'presence_unknown' });
-  }
-
   const endMs = plannedEndMs(session);
   const pastEnd = hasReachedPlannedEnd(session, nowMs);
   const graceMs = input.graceMs ?? SOLO_GRACE_MS;
 
-  // E8: only observed evidence can prove presence through the planned end.
+  // E8: only observed evidence can prove presence through the planned end. It decides on
+  // its own: neither presence nor the epoch is needed.
   if (
     pastEnd &&
     marker !== null &&
@@ -110,6 +107,10 @@ export const decideRunningSession = (input: DecisionInput): DecisionResult => {
     marker.disconnectedAtMs + CLOCK_SKEW_TOLERANCE_MS >= endMs
   ) {
     return result({ kind: 'complete' });
+  }
+
+  if (presence === undefined) {
+    return result({ kind: 'retry', reason: 'presence_unknown' });
   }
 
   // E16: only the grace job of exactly this disconnect, finding the user online.
