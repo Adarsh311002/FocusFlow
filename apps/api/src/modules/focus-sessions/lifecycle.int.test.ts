@@ -25,7 +25,11 @@ import {
   waitForRedisReady,
 } from '../../platform/redis.js';
 import { createFocusSessionChanges, type FocusSessionChange } from './changes.js';
-import { CLOCK_SKEW_TOLERANCE_MS, type DisconnectMarker } from './decision.js';
+import {
+  CLOCK_SKEW_TOLERANCE_MS,
+  type DisconnectMarker,
+  PRESENCE_RECOVERY_MS,
+} from './decision.js';
 import {
   createFocusSessionQueue,
   createFocusSessionWorker,
@@ -97,8 +101,8 @@ const world = () => {
     checkUser: () =>
       state.presence === 'unavailable'
         ? Promise.reject(new Error('Redis is down'))
-        : Promise.resolve(state.presence),
-    epochCreatedAtMs: () => state.epochCreatedAtMs,
+        : Promise.resolve({ ...state.presence, epochCreatedAtMs: state.epochCreatedAtMs }),
+    presenceRecoveryMs: PRESENCE_RECOVERY_MS,
     graceMs: GRACE_MS,
     scheduler,
     changes,
@@ -588,7 +592,7 @@ describe('pause or stop against the end job (E7, E9)', () => {
   const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
     db: deps.db,
     checkUser: deps.checkUser,
-    epochCreatedAtMs: deps.epochCreatedAtMs,
+    presenceRecoveryMs: deps.presenceRecoveryMs,
     markers: deps.markers,
     graceMs: deps.graceMs,
     changes: deps.changes,
@@ -772,7 +776,7 @@ describe('expired grace at or after T_end is one outcome for every caller', () =
   const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
     db: deps.db,
     checkUser: deps.checkUser,
-    epochCreatedAtMs: deps.epochCreatedAtMs,
+    presenceRecoveryMs: deps.presenceRecoveryMs,
     markers: deps.markers,
     graceMs: deps.graceMs,
     changes: deps.changes,

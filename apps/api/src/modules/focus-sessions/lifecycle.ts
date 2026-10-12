@@ -6,7 +6,7 @@ import type { ClearRule } from './marker.js';
 import type { DisconnectMarkerStore } from './marker-store.js';
 import { databaseNowMs, type FocusSessionRow, lockOwnedSession, saveSession } from './queries.js';
 import { toSessionChanges, toSoloSession } from './rows.js';
-import { type FocusSessionsDeps, loadView, observePresence } from './service.js';
+import { decisionPresence, type FocusSessionsDeps, loadView, observePresence } from './service.js';
 import {
   complete,
   expire,
@@ -122,8 +122,9 @@ type DecidingJob =
 
 /**
  * Runs the decision for a running session inside the caller's transaction, with the row
- * locked. The marker was read by the caller; presence and the epoch are read here — the
- * approved decision read. Writes nothing to Redis.
+ * locked. The marker was read by the caller; presence and the epoch are read here, in one
+ * atomic Redis read after the lock (E17) — the approved decision read. Writes nothing to
+ * Redis.
  */
 const decideLocked = async (
   tx: Tx,
@@ -134,15 +135,16 @@ const decideLocked = async (
   marker: DisconnectMarker | undefined,
   job: DecidingJob,
 ): Promise<Locked> => {
-  const presence = await observePresence(deps, row.userId);
+  const { presence, epochCreatedAtMs } = decisionPresence(await observePresence(deps, row.userId));
   const { decision, clearStaleMarker } = decideRunningSession({
     sessionId: row.id,
     session,
     nowMs,
     marker: marker ?? null,
     presence,
-    epochCreatedAtMs: deps.epochCreatedAtMs(),
+    epochCreatedAtMs,
     graceMs: deps.graceMs,
+    presenceRecoveryMs: deps.presenceRecoveryMs,
     ...(job.kind === 'grace' ? { graceJob: { disconnectedAtMs: job.disconnectedAtMs } } : {}),
   });
   const followUps: FollowUp[] = clearStaleMarker

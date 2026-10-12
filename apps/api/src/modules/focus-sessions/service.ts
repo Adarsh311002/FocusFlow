@@ -11,6 +11,7 @@ import {
   decideRunningSession,
   type DisconnectMarker,
   type PresenceObservation,
+  presenceTrust,
 } from './decision.js';
 import type { DisconnectMarkerStore } from './marker-store.js';
 import {
@@ -51,16 +52,20 @@ import { toFocusSessionView } from './views.js';
 // - Redis is read only for the presence checks the protocol requires: before the
 //   transaction for start and resume ("user connected"), and inside it only at the
 //   approved point — the decision for a running session (the disconnect marker and
-//   checkUser) when a pause or stop arrives at or after the planned end (E7). Nothing is
+//   checkUser) when a pause or stop arrives at or after the planned end (E7). The epoch
+//   comes from the same atomic read as presence, never from a cached value (E17). Nothing is
 //   written to Redis here.
 // - Follow-up work (events, jobs, markers) runs only after the commit (`changes`).
 
 export type FocusSessionsDeps = {
   readonly db: Db;
-  /** The authoritative presence check (H2): one atomic Redis read with Redis TIME. */
+  /**
+   * The authoritative presence check (H2): one atomic Redis read of presence, Redis TIME
+   * and the epoch (E17).
+   */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
-  /** The current Redis epoch's creation time (Redis TIME), if known. */
-  readonly epochCreatedAtMs: () => number | undefined;
+  /** E18: how long after an epoch is created presence is not trusted (INSTANCE_TTL_MS). */
+  readonly presenceRecoveryMs: number;
   /** The disconnect marker (E10), read by the decision at or after the planned end. */
   readonly markers: Pick<DisconnectMarkerStore, 'read'>;
   /** The reconnect grace (`FOCUS_GRACE_MS`), the same value the lifecycle jobs use. */
@@ -84,22 +89,37 @@ const notConnected = (): AppError =>
 export const observePresence = async (
   deps: FocusSessionsDeps,
   userId: string,
-): Promise<PresenceObservation | undefined> => {
+): Promise<PresenceCheck | undefined> => {
   try {
-    const { online, checkedAtMs } = await deps.checkUser(userId);
-    return { online, checkedAtMs };
+    return await deps.checkUser(userId);
   } catch {
     return undefined;
   }
 };
 
-/** Start and resume require a connected user (`409 NOT_CONNECTED`); unknown → 503. */
+/** The decision's presence inputs from one check, or both unknown when it failed. */
+export const decisionPresence = (
+  check: PresenceCheck | undefined,
+): { presence: PresenceObservation | undefined; epochCreatedAtMs: number | undefined } =>
+  check === undefined
+    ? { presence: undefined, epochCreatedAtMs: undefined }
+    : {
+        presence: { online: check.online, checkedAtMs: check.checkedAtMs },
+        epochCreatedAtMs: check.epochCreatedAtMs,
+      };
+
+/**
+ * Start and resume require a connected user (`409 NOT_CONNECTED`). Only a trusted check
+ * may say "not connected": a failed check, an unknown epoch or the epoch's presence-
+ * recovery window answers 503 instead, and nothing changes (H2, E18, E21).
+ */
 const requireConnected = async (deps: FocusSessionsDeps, userId: string): Promise<void> => {
-  const presence = await observePresence(deps, userId);
-  if (presence === undefined) {
+  const { presence, epochCreatedAtMs } = decisionPresence(await observePresence(deps, userId));
+  const trust = presenceTrust(presence, epochCreatedAtMs, deps.presenceRecoveryMs);
+  if (trust.kind !== 'trusted') {
     throw presenceUnavailable();
   }
-  if (!presence.online) {
+  if (!trust.presence.online) {
     throw notConnected();
   }
 };
@@ -235,13 +255,13 @@ export const getCurrentFocusSession = async (
  * user is offline and the current disconnect's grace has run out, or `abandoned(expired)`
  * after a definite Redis loss during the stretch (E9) — the same outcome the end job and
  * the grace job reach, so the result never depends on which of them takes the row lock
- * first. This is the one
- * approved point where Redis is read inside the transaction (the marker, then checkUser),
- * while the row lock is held. The marker is read before this request's own follow-up
- * could clear it, so an observed disconnect through the end still completes the session
- * (E8). A request never applies E16: online with a disconnect still recorded is not a
- * completion here, and the pause or stop applies. When the decision cannot be made
- * (presence or epoch unknown) the request fails with 503 and changes nothing (H2).
+ * first. This is the one approved point where Redis is read inside the transaction (the
+ * marker, then checkUser with the epoch), while the row lock is held. The marker is read
+ * before this request's own follow-up could clear it, so an observed disconnect through
+ * the end still completes the session (E8). A request never applies E16: online with a
+ * disconnect still recorded is not a completion here, and the pause or stop applies. When
+ * the decision cannot be made (presence or epoch unknown, or inside the presence-recovery
+ * window) the request fails with 503 and changes nothing (H2, E18).
  */
 type Settlement =
   | { readonly kind: 'completed' }
@@ -268,14 +288,14 @@ const settlementAtPlannedEnd = async (
     session,
     nowMs,
     marker: marker ?? null,
-    presence: await observePresence(deps, userId),
-    epochCreatedAtMs: deps.epochCreatedAtMs(),
+    ...decisionPresence(await observePresence(deps, userId)),
     graceMs: deps.graceMs,
+    presenceRecoveryMs: deps.presenceRecoveryMs,
   });
   switch (decision.kind) {
     case 'retry':
-      // Unknown presence or epoch: fail rather than record a pause or stop that may have
-      // owed a completion or an expiry (H2, E9).
+      // Unknown or recovering presence, or an unknown epoch: fail rather than record a
+      // pause or stop that may have owed a completion or an expiry (H2, E9, E18).
       throw presenceUnavailable();
     case 'complete':
       return { kind: 'completed' };

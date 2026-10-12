@@ -6,6 +6,8 @@ import {
   decideRunningSession,
   type DecisionInput,
   type DisconnectMarker,
+  PRESENCE_RECOVERY_MS,
+  presenceTrust,
   SOLO_GRACE_MS,
 } from './decision.js';
 import { plannedEndMs, type RunningSession, startSession } from './timing.js';
@@ -62,6 +64,99 @@ describe('presence unknown', () => {
         marker: marker(T_END - CLOCK_SKEW_TOLERANCE_MS),
       }).decision,
     ).toEqual({ kind: 'complete' });
+  });
+});
+
+describe('presence recovery window (E18)', () => {
+  // An epoch created 10 s before the check: presence is still being rebuilt. The stretch
+  // began long before it, so this is also a definite Redis loss during the stretch (E9).
+  const recoveringAt = (checkedAtMs: number) => ({
+    presence: { online: true, checkedAtMs },
+    epochCreatedAtMs: checkedAtMs - 10_000,
+  });
+
+  it('trusts a check only with a known epoch, from the end of its window on', () => {
+    const presence = { online: false, checkedAtMs: T0 + PRESENCE_RECOVERY_MS };
+    expect(presenceTrust(undefined, T0, PRESENCE_RECOVERY_MS)).toEqual({
+      kind: 'presence_unknown',
+    });
+    expect(presenceTrust(presence, undefined, PRESENCE_RECOVERY_MS)).toEqual({
+      kind: 'epoch_unknown',
+    });
+    expect(presenceTrust(presence, T0 + 1, PRESENCE_RECOVERY_MS)).toEqual({
+      kind: 'presence_recovering',
+    });
+    expect(presenceTrust(presence, T0, PRESENCE_RECOVERY_MS)).toEqual({
+      kind: 'trusted',
+      presence,
+      epochCreatedAtMs: T0,
+    });
+  });
+
+  it('defers every presence-dependent outcome inside the window, before or after T_end', () => {
+    const retry = { kind: 'retry', reason: 'presence_recovering' };
+    for (const nowMs of [BEFORE_END, AFTER_END]) {
+      for (const online of [true, false]) {
+        const inputs = recoveringAt(nowMs);
+        const presence = { online, checkedAtMs: nowMs };
+        // No marker: would continue, complete, expire (E9) or start late grace.
+        expect(decide({ ...inputs, nowMs, presence }).decision).toEqual(retry);
+        // A marker whose grace ran out: would settle grace_expired, or wait for its job.
+        const recorded = marker(nowMs - 2 * SOLO_GRACE_MS, 'detected');
+        expect(decide({ ...inputs, nowMs, presence, marker: recorded }).decision).toEqual(retry);
+        // Even the exact grace job (E16) waits.
+        expect(
+          decide({
+            ...inputs,
+            nowMs,
+            presence,
+            marker: recorded,
+            graceJob: { disconnectedAtMs: recorded.disconnectedAtMs },
+          }).decision,
+        ).toEqual(retry);
+      }
+    }
+  });
+
+  it('qualifying observed evidence through the end keeps its precedence (E8)', () => {
+    for (const online of [true, false]) {
+      expect(
+        decide({
+          ...recoveringAt(AFTER_END),
+          nowMs: AFTER_END,
+          presence: { online, checkedAtMs: AFTER_END },
+          marker: marker(T_END - CLOCK_SKEW_TOLERANCE_MS),
+        }).decision,
+      ).toEqual({ kind: 'complete' });
+    }
+  });
+
+  it('after the window, a definite Redis loss still expires, online or not (E9)', () => {
+    const epochCreatedAtMs = AFTER_END - 10_000;
+    const after = epochCreatedAtMs + PRESENCE_RECOVERY_MS;
+    for (const online of [true, false]) {
+      expect(
+        decide({
+          nowMs: after,
+          presence: { online, checkedAtMs: after },
+          epochCreatedAtMs,
+        }).decision,
+      ).toEqual({ kind: 'expired' });
+    }
+  });
+
+  it('uses the configured window', () => {
+    const inputs = { nowMs: AFTER_END, ...recoveringAt(AFTER_END) };
+    expect(decide({ ...inputs, presenceRecoveryMs: 5_000 }).decision).toEqual({
+      kind: 'expired',
+    });
+  });
+
+  it('an unknown epoch defers even what needs no epoch arithmetic', () => {
+    expect(decide({ epochCreatedAtMs: undefined }).decision).toEqual({
+      kind: 'retry',
+      reason: 'epoch_unknown',
+    });
   });
 });
 
@@ -415,10 +510,17 @@ describe('properties', () => {
         const lateGraceReconnect = own !== null && graceJob === 'exact';
         const noLoss =
           epochCreatedAtMs !== undefined && epochCreatedAtMs <= T0 + CLOCK_SKEW_TOLERANCE_MS;
+        // E18: inside the epoch's presence-recovery window only E8 decides.
+        const recovering =
+          epochCreatedAtMs !== undefined &&
+          nowMs + input.checkedOffsetMs < epochCreatedAtMs + PRESENCE_RECOVERY_MS;
         const expected =
           pastEnd &&
           (throughTheEnd ||
-            (input.online === true && (own === null || lateGraceReconnect) && noLoss));
+            (input.online === true &&
+              (own === null || lateGraceReconnect) &&
+              noLoss &&
+              !recovering));
         expect(decision.kind === 'complete').toBe(expected);
       }),
       { numRuns: 2_000 },

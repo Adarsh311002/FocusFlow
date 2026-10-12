@@ -1,5 +1,6 @@
 import type { ChainableCommander, Redis } from 'ioredis';
 
+import { parseEpoch } from '../../platform/epoch.js';
 import { redisTimeReplyToMs } from '../../platform/redis.js';
 import { redisKeys } from '../../platform/redis-keys.js';
 
@@ -70,8 +71,16 @@ export const planSync = (indexed: Iterable<string>, local: readonly SocketRef[])
   };
 };
 
-/** A user's presence from one atomic read, stamped with the Redis TIME it was read at. */
-export type PresenceCheck = { readonly online: boolean; readonly checkedAtMs: number };
+/**
+ * A user's presence from one atomic read, stamped with the Redis TIME it was read at, with
+ * the creation time of the epoch read in the same transaction (`undefined` when the epoch
+ * is missing or malformed), so a decision never pairs presence with another moment's epoch.
+ */
+export type PresenceCheck = {
+  readonly online: boolean;
+  readonly checkedAtMs: number;
+  readonly epochCreatedAtMs: number | undefined;
+};
 
 export type RemoveResult = {
   /** This call removed the entry (false when a sync or cleanup had already done so). */
@@ -221,10 +230,15 @@ export const createPresenceStore = ({
 
     checkUser: async (userId) => {
       const replies = await execAll(
-        withClock(redis.multi()).smembers(redisKeys.userSockets(userId)),
+        withClock(redis.multi()).smembers(redisKeys.userSockets(userId)).get(redisKeys.epoch),
       );
-      const { nowMs, online } = judge(replies.slice(0, 2), replies.slice(2));
-      return { online: online[0] === true, checkedAtMs: nowMs };
+      const { nowMs, online } = judge(replies.slice(0, 2), replies.slice(2, 3));
+      const epoch = replies[3];
+      return {
+        online: online[0] === true,
+        checkedAtMs: nowMs,
+        epochCreatedAtMs: parseEpoch(typeof epoch === 'string' ? epoch : null)?.createdAtMs,
+      };
     },
 
     sync: async (readLocal) => {

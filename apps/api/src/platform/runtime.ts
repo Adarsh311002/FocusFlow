@@ -37,7 +37,7 @@ import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
-import { createEpochMonitor, type EpochMonitor, parseEpoch } from './epoch.js';
+import { createEpochMonitor, type EpochMonitor } from './epoch.js';
 import { createApp } from './http/app.js';
 import { createInstanceHeartbeat, type InstanceHeartbeat } from './instance.js';
 import { createLogger } from './logger.js';
@@ -248,7 +248,7 @@ export const createRuntime = async (
     authDeps,
     focusSessions: {
       checkUser: presenceStore.checkUser,
-      epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
+      presenceRecoveryMs: config.INSTANCE_TTL_MS,
       changes: focusSessionChanges,
       graceMs: config.FOCUS_GRACE_MS,
       markers: focusSessionMarkers,
@@ -291,7 +291,7 @@ export const createRuntime = async (
   const lifecycleDeps: LifecycleDeps = {
     db,
     checkUser: presenceStore.checkUser,
-    epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
+    presenceRecoveryMs: config.INSTANCE_TTL_MS,
     changes: focusSessionChanges,
     markers: focusSessionMarkers,
     graceMs: config.FOCUS_GRACE_MS,
