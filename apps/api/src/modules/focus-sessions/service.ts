@@ -27,6 +27,7 @@ import { toSessionChanges, toSoloSession } from './rows.js';
 import {
   complete,
   expire,
+  expireGrace,
   hasReachedPlannedEnd,
   isPaused,
   isRunning,
@@ -62,6 +63,8 @@ export type FocusSessionsDeps = {
   readonly epochCreatedAtMs: () => number | undefined;
   /** The disconnect marker (E10), read by the decision at or after the planned end. */
   readonly markers: Pick<DisconnectMarkerStore, 'read'>;
+  /** The reconnect grace (`FOCUS_GRACE_MS`), the same value the lifecycle jobs use. */
+  readonly graceMs: number;
   readonly changes: FocusSessionChanges;
 };
 
@@ -228,9 +231,11 @@ export const getCurrentFocusSession = async (
 
 /**
  * E7: at or after the planned end, the decision for a running session runs before a pause
- * or stop, and its terminal outcomes win: `completed`, or `abandoned(expired)` after a
- * definite Redis loss during the stretch (E9) — the same outcome the end job reaches, so
- * the result never depends on which of them takes the row lock first. This is the one
+ * or stop, and its terminal outcomes win: `completed`, `abandoned(grace_expired)` when the
+ * user is offline and the current disconnect's grace has run out, or `abandoned(expired)`
+ * after a definite Redis loss during the stretch (E9) — the same outcome the end job and
+ * the grace job reach, so the result never depends on which of them takes the row lock
+ * first. This is the one
  * approved point where Redis is read inside the transaction (the marker, then checkUser),
  * while the row lock is held. The marker is read before this request's own follow-up
  * could clear it, so an observed disconnect through the end still completes the session
@@ -238,13 +243,18 @@ export const getCurrentFocusSession = async (
  * completion here, and the pause or stop applies. When the decision cannot be made
  * (presence or epoch unknown) the request fails with 503 and changes nothing (H2).
  */
+type Settlement =
+  | { readonly kind: 'completed' }
+  | { readonly kind: 'grace_expired'; readonly disconnectedAtMs: number }
+  | { readonly kind: 'expired' };
+
 const settlementAtPlannedEnd = async (
   deps: FocusSessionsDeps,
   userId: string,
   sessionId: string,
   session: RunningSession,
   nowMs: number,
-): Promise<'completed' | 'expired' | null> => {
+): Promise<Settlement | null> => {
   let marker: DisconnectMarker | undefined;
   try {
     marker = await deps.markers.read(userId);
@@ -260,6 +270,7 @@ const settlementAtPlannedEnd = async (
     marker: marker ?? null,
     presence: await observePresence(deps, userId),
     epochCreatedAtMs: deps.epochCreatedAtMs(),
+    graceMs: deps.graceMs,
   });
   switch (decision.kind) {
     case 'retry':
@@ -267,9 +278,11 @@ const settlementAtPlannedEnd = async (
       // owed a completion or an expiry (H2, E9).
       throw presenceUnavailable();
     case 'complete':
-      return 'completed';
+      return { kind: 'completed' };
+    case 'grace_expired':
+      return { kind: 'grace_expired', disconnectedAtMs: decision.disconnectedAtMs };
     case 'expired':
-      return 'expired';
+      return { kind: 'expired' };
     default:
       return null;
   }
@@ -292,10 +305,18 @@ const pauseOrStop = async (
       isRunning(session) && hasReachedPlannedEnd(session, nowMs)
         ? await settlementAtPlannedEnd(deps, userId, row.id, session, nowMs)
         : null;
-    if (settlement === 'completed') {
+    if (settlement?.kind === 'completed') {
       return commitTransition(tx, row, complete(session, nowMs), 'completed');
     }
-    if (settlement === 'expired') {
+    if (settlement?.kind === 'grace_expired') {
+      return commitTransition(
+        tx,
+        row,
+        expireGrace(session, settlement.disconnectedAtMs),
+        'grace_expired',
+      );
+    }
+    if (settlement?.kind === 'expired') {
       return commitTransition(tx, row, expire(session, nowMs), 'expired');
     }
     return action === 'pause'

@@ -464,11 +464,31 @@ describe('the planned end wins (E7)', () => {
     }
   });
 
-  it('without presence through the end, the pause or stop applies with F capped at P', async () => {
+  it('offline since before T_end with the grace over, the pause or stop settles abandoned(grace_expired)', async () => {
     for (const verb of ['pause', 'stop'] as const) {
       const { user, session, plannedEndMs } = await offlineAfterPlannedEnd('gone');
       // The user left 30 s before the planned end: an observed disconnect, but not
-      // through the end (beyond the 2 s tolerance).
+      // through the end (beyond the 2 s tolerance), and the 60 s grace ran out.
+      const disconnectedAtMs = plannedEndMs - 30_000;
+      await setMarker(user.userId, {
+        sessionId: session.id,
+        disconnectedAtMs,
+        evidence: 'observed',
+      });
+
+      const result = sessionOf(await action(user, verb, session.id));
+      expect(result).toMatchObject({
+        status: 'abandoned',
+        abandonReason: 'grace_expired',
+        focusedSeconds: 30,
+      });
+      expect(result.status === 'abandoned' && Date.parse(result.endedAt)).toBe(disconnectedAtMs);
+    }
+  });
+
+  it('offline since before T_end with the grace still running, the pause or stop applies', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const { user, session, plannedEndMs } = await offlineAfterPlannedEnd('grace', 10_000);
       await setMarker(user.userId, {
         sessionId: session.id,
         disconnectedAtMs: plannedEndMs - 30_000,

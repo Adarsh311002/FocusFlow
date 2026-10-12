@@ -590,6 +590,7 @@ describe('pause or stop against the end job (E7, E9)', () => {
     checkUser: deps.checkUser,
     epochCreatedAtMs: deps.epochCreatedAtMs,
     markers: deps.markers,
+    graceMs: deps.graceMs,
     changes: deps.changes,
   });
 
@@ -763,6 +764,168 @@ describe('BullMQ worker', () => {
       await worker.close();
       await queue.close();
       await rawQueue.close();
+    }
+  });
+});
+
+describe('expired grace at or after T_end is one outcome for every caller', () => {
+  const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
+    db: deps.db,
+    checkUser: deps.checkUser,
+    epochCreatedAtMs: deps.epochCreatedAtMs,
+    markers: deps.markers,
+    graceMs: deps.graceMs,
+    changes: deps.changes,
+  });
+
+  const request = (
+    w: ReturnType<typeof world>,
+    verb: 'pause' | 'stop',
+    s: { sessionId: string; userId: string },
+  ) =>
+    (verb === 'pause' ? pauseFocusSession : stopFocusSession)(
+      serviceDeps(w),
+      s.userId,
+      s.sessionId,
+    );
+
+  /**
+   * A session past T_end, offline, whose recorded disconnect (30 s before T_end, so no E8
+   * proof) is more than the grace old.
+   */
+  const withExpiredGrace = async (
+    evidence: DisconnectMarker['evidence'] = 'observed',
+    w = world(),
+  ) => {
+    const s = await runningSession(60, 3 * MINUTE);
+    const t = s.plannedEndMs - 30_000;
+    await requireMarkers().record(s.userId, marker(s.sessionId, t, evidence), s.runningSinceMs);
+    w.state.presence = { online: false, checkedAtMs: t + GRACE_MS };
+    return { w, s, t };
+  };
+
+  const expectGraceExpiredOnce = async (
+    w: ReturnType<typeof world>,
+    s: { sessionId: string },
+    t: number,
+  ): Promise<void> => {
+    const row = await sessionRow(s.sessionId);
+    expect(row).toMatchObject({
+      status: 'abandoned',
+      abandonReason: 'grace_expired',
+      focusedSeconds: 30,
+    });
+    expect(row?.endedAt?.getTime()).toBe(t);
+    expect(w.published.map((change) => change.transition)).toEqual(['grace_expired']);
+  };
+
+  it('a pause or stop that wins the row lock settles abandoned(grace_expired)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const { w, s, t } = await withExpiredGrace();
+
+      const view = await request(w, verb, s);
+      expect(view).toMatchObject({ status: 'abandoned', abandonReason: 'grace_expired' });
+      await expectGraceExpiredOnce(w, s, t);
+      // The jobs that come second find nothing left to decide.
+      expect(await runSoloEndJob(w.deps, endJob(s))).toMatchObject({ kind: 'no_op' });
+      expect(await runSoloGraceJob(w.deps, graceJob(s, t))).toMatchObject({ kind: 'no_op' });
+      expect(w.published).toHaveLength(1);
+    }
+  });
+
+  it('a detected disconnect with an expired grace settles the same way', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      const { w, s, t } = await withExpiredGrace('detected');
+      expect(await request(w, verb, s)).toMatchObject({ abandonReason: 'grace_expired' });
+      await expectGraceExpiredOnce(w, s, t);
+    }
+  });
+
+  it('after the end or grace job settled it, a pause or stop answers unchanged (E11)', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      for (const first of ['end', 'grace'] as const) {
+        const { w, s, t } = await withExpiredGrace();
+
+        expect(
+          await (first === 'end'
+            ? runSoloEndJob(w.deps, endJob(s))
+            : runSoloGraceJob(w.deps, graceJob(s, t))),
+        ).toEqual({ kind: 'settled', transition: 'grace_expired' });
+        expect(await request(w, verb, s)).toMatchObject({
+          status: 'abandoned',
+          abandonReason: 'grace_expired',
+        });
+        await expectGraceExpiredOnce(w, s, t);
+      }
+    }
+  });
+
+  it('racing, every order yields abandoned(grace_expired) exactly once', async () => {
+    for (let round = 0; round < 16; round += 1) {
+      const verb = round % 2 === 0 ? 'stop' : 'pause';
+      const { w, s, t } = await withExpiredGrace();
+
+      const racers: Promise<unknown>[] = [request(w, verb, s)];
+      if (round % 4 < 2) {
+        racers.push(runSoloEndJob(w.deps, endJob(s)));
+      }
+      if (round % 4 !== 1) {
+        racers.push(runSoloGraceJob(w.deps, graceJob(s, t)));
+      }
+      const [view] = (await Promise.all(racers)) as [{ status: string; abandonReason: string }];
+      expect(view).toMatchObject({ status: 'abandoned', abandonReason: 'grace_expired' });
+      await expectGraceExpiredOnce(w, s, t);
+    }
+  });
+
+  it('keeps E8, E9, E16 and the unknown-state rules unchanged', async () => {
+    for (const verb of ['pause', 'stop'] as const) {
+      // E8: observed evidence through the end completes, even with an old marker's grace over.
+      const observed = world();
+      const a = await runningSession(60, 3 * MINUTE);
+      await requireMarkers().record(
+        a.userId,
+        marker(a.sessionId, a.plannedEndMs + 1_000, 'observed'),
+        a.runningSinceMs,
+      );
+      observed.state.presence = { online: false, checkedAtMs: a.plannedEndMs + 1_000 + GRACE_MS };
+      expect(await request(observed, verb, a)).toMatchObject({ status: 'completed' });
+
+      // E16: a request never treats "online again" as a reconnect; the recorded disconnect's
+      // grace job owns it, so the pause or stop applies.
+      const online = world();
+      const b = await runningSession(60, 3 * MINUTE);
+      await requireMarkers().record(
+        b.userId,
+        marker(b.sessionId, b.plannedEndMs - 30_000, 'observed'),
+        b.runningSinceMs,
+      );
+      online.state.presence = { online: true, checkedAtMs: await nowMs() };
+      expect(await request(online, verb, b)).toMatchObject(
+        verb === 'stop'
+          ? { status: 'abandoned', abandonReason: 'stopped' }
+          : { status: 'in_progress', focusedSeconds: 60 },
+      );
+
+      // E9: with no marker, a definite Redis loss still expires.
+      const lost = world();
+      const c = await runningSession(60, 3 * MINUTE);
+      lost.state.presence = { online: false, checkedAtMs: await nowMs() };
+      lost.state.epochCreatedAtMs = c.runningSinceMs + CLOCK_SKEW_TOLERANCE_MS + 1;
+      expect(await request(lost, verb, c)).toMatchObject({ abandonReason: 'expired' });
+
+      // H2: unknown presence with a marker (no observed proof) decides nothing.
+      const unknown = world();
+      const d = await runningSession(60, 3 * MINUTE);
+      await requireMarkers().record(
+        d.userId,
+        marker(d.sessionId, d.plannedEndMs - 30_000, 'detected'),
+        d.runningSinceMs,
+      );
+      unknown.state.presence = 'unavailable';
+      await expect(request(unknown, verb, d)).rejects.toMatchObject({ status: 503 });
+      expect((await sessionRow(d.sessionId))?.status).toBe('in_progress');
+      expect(unknown.published).toEqual([]);
     }
   });
 });

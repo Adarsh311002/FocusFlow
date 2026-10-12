@@ -250,6 +250,7 @@ export const createRuntime = async (
       checkUser: presenceStore.checkUser,
       epochCreatedAtMs: () => parseEpoch(epoch.known())?.createdAtMs,
       changes: focusSessionChanges,
+      graceMs: config.FOCUS_GRACE_MS,
       markers: focusSessionMarkers,
     },
   });
