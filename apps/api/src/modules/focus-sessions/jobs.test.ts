@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createFocusSessionScheduler,
+  ENSURE_MAX_ROUNDS,
+  ensureJob,
   type FocusSessionProcessors,
   type FocusSessionQueue,
   processFocusSessionJob,
@@ -21,6 +23,8 @@ type Added = { name: string; data: unknown; opts: { jobId?: string; delay?: numb
 const fakeQueue = () => {
   const added: Added[] = [];
   const queue = {
+    // Nothing retained: every ensure adds.
+    getJobState: () => Promise.resolve('unknown'),
     add: (name: string, data: unknown, opts: Added['opts']) => {
       added.push({ name, data, opts });
       return Promise.resolve({});
@@ -97,6 +101,76 @@ describe('scheduler', () => {
       { jobId: soloGraceJobId(SESSION, 4_000), delay: 0 },
     ]);
     expect(added[0]?.name).toBe(SOLO_GRACE_JOB);
+  });
+});
+
+describe('ensureJob (E20)', () => {
+  type Retry = { state: string; opts: unknown };
+
+  /** A job going through `states`, one per read; `retry` fails while `failRetries` > 0. */
+  const scriptedQueue = (states: string[], failRetries = 0) => {
+    const retries: Retry[] = [];
+    let adds = 0;
+    let reads = 0;
+    let failing = failRetries;
+    const queue = {
+      getJobState: () => Promise.resolve(states[Math.min(reads++, states.length - 1)]),
+      getJob: () =>
+        Promise.resolve({
+          retry: (state: string, opts: unknown) => {
+            retries.push({ state, opts });
+            if (failing > 0) {
+              failing -= 1;
+              return Promise.reject(new Error('Job is not in the completed or failed state'));
+            }
+            return Promise.resolve();
+          },
+        }),
+    } as unknown as FocusSessionQueue;
+    const add = () => {
+      adds += 1;
+      return Promise.resolve();
+    };
+    return { queue, add, retries, adds: () => adds };
+  };
+
+  it('adds an absent job', async () => {
+    const q = scriptedQueue(['unknown']);
+    expect(await ensureJob(q.queue, 'j', q.add)).toBe('added');
+    expect(q.adds()).toBe(1);
+  });
+
+  it('leaves a job that will still run alone', async () => {
+    for (const state of ['waiting', 'delayed', 'prioritized', 'active', 'waiting-children']) {
+      const q = scriptedQueue([state]);
+      expect(await ensureJob(q.queue, 'j', q.add)).toBe('pending');
+      expect(q.adds()).toBe(0);
+      expect(q.retries).toEqual([]);
+    }
+  });
+
+  it('retries a retained completed or failed job with its attempts reset', async () => {
+    for (const state of ['completed', 'failed']) {
+      const q = scriptedQueue([state]);
+      expect(await ensureJob(q.queue, 'j', q.add)).toBe('retried');
+      expect(q.retries).toEqual([
+        { state, opts: { resetAttemptsMade: true, resetAttemptsStarted: true } },
+      ]);
+      expect(q.adds()).toBe(0);
+    }
+  });
+
+  it('re-reads the actual state when another ensure moved the job first', async () => {
+    // Failed when read; the retry loses the race; read again: now waiting.
+    const q = scriptedQueue(['failed', 'waiting'], 1);
+    expect(await ensureJob(q.queue, 'j', q.add)).toBe('pending');
+    expect(q.retries).toHaveLength(1);
+  });
+
+  it('gives up after a bounded number of rounds', async () => {
+    const q = scriptedQueue(['failed'], ENSURE_MAX_ROUNDS);
+    await expect(ensureJob(q.queue, 'j', q.add)).rejects.toThrow('could not ensure');
+    expect(q.retries).toHaveLength(ENSURE_MAX_ROUNDS);
   });
 });
 

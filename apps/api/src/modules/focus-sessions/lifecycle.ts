@@ -26,6 +26,10 @@ import {
 // writes, job scheduling and change publication follow the commit; a failed follow-up
 // fails the job, which BullMQ retries — every step is idempotent, so a retry is harmless.
 
+/**
+ * Both calls ENSURE the job (E20): added if absent, left alone while it will still run, and
+ * re-run (attempts reset) if BullMQ retains it as completed or failed.
+ */
 export type FocusSessionScheduler = {
   /** `solo-end` for the running stretch; `reconnectAtMs` adds an immediate re-decision. */
   readonly scheduleEnd: (job: {

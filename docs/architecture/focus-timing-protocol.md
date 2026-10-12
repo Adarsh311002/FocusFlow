@@ -322,6 +322,8 @@ In both cases only the time accumulated before the current running stretch is ke
 | `focus-session` | Solo grace | session ID + `disconnectedAtMs` | Session no longer running, or the marker no longer holds exactly this session and `disconnectedAtMs` (E10) |
 | `maintenance` | Reconciler (repeating) | — | — |
 
+Scheduling a `focus-session` job **ensures** it (E20): BullMQ keeps finished jobs for a while, and adding a job whose id it still retains is a silent no-op. So an absent job is added, a waiting, delayed or active one is left alone, and one retained as completed or failed is re-run with its attempts reset (`Job.retry` with `resetAttemptsMade` and `resetAttemptsStarted`). Running a finished job again is harmless: it re-checks everything under the row lock.
+
 ## Reconciler
 
 Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 30 seconds, R6), so exactly one worker takes each scheduled run. Every step is safe to repeat. Phase 3 implements step 1; the others arrive with the phases that own their state.
