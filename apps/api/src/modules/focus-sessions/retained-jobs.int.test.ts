@@ -222,7 +222,8 @@ const exhaustedGraceJob = async (r: ReturnType<typeof rig>, s: Session, t: numbe
 };
 
 beforeAll(async () => {
-  harness = await startTestHarness();
+  // No workers: the runtime's own reconciler would otherwise also decide these sessions.
+  harness = await startTestHarness({ ROLE: 'api' });
   const redis = createRedisClient(harness.config, harness.runtime.logger);
   connections.push(redis);
   await waitForRedisReady(redis, 10_000);

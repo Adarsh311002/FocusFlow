@@ -171,7 +171,9 @@ const graceJob = (s: { sessionId: string; userId: string }, disconnectedAtMs: nu
   });
 
 beforeAll(async () => {
-  harness = await startTestHarness();
+  // No workers: the runtime's own reconciler would otherwise also decide these scripted
+  // sessions (its sweep acts on every running session).
+  harness = await startTestHarness({ ROLE: 'api' });
   const redis = createRedisClient(harness.config, harness.runtime.logger);
   connections.push(redis);
   await waitForRedisReady(redis, 10_000);

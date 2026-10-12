@@ -48,6 +48,7 @@ import {
   type MaintenanceQueue,
   upsertReconcileSchedule,
 } from './queues.js';
+import { createReconcileTrigger, type ReconcileTrigger } from './reconcile-trigger.js';
 import {
   createRedisClient,
   createRedisConnection,
@@ -129,6 +130,8 @@ export type Runtime = {
   /** Present when the role runs workers. */
   readonly maintenanceWorker: Worker<ReconcileJob> | undefined;
   readonly reconciler: Reconciler;
+  /** Present when the role runs workers: the process-owned reconcile trigger (E23). */
+  readonly reconcileTrigger: ReconcileTrigger | undefined;
   /**
    * Starts the process according to its ROLE: listens on `listenOn` when the role serves
    * the API (resolving with the bound port), then publishes the heartbeat, ensures the
@@ -330,7 +333,9 @@ export const createRuntime = async (
     redis,
     presence,
     instanceTtlMs: config.INSTANCE_TTL_MS,
+    intervalMs: config.RECONCILER_INTERVAL_MS,
     logger,
+    focusSessions: { deps: lifecycleDeps },
   });
   const maintenanceWorker =
     workerConnection === undefined
@@ -340,6 +345,18 @@ export const createRuntime = async (
           config,
           logger,
           reconcile: reconciler.run,
+        });
+  // Restores a lost schedule and reconciles directly when scheduled runs stop (E23).
+  const reconcileTrigger =
+    maintenanceWorker === undefined
+      ? undefined
+      : createReconcileTrigger({
+          redis,
+          queue: maintenanceQueue,
+          config,
+          reconciler,
+          logger,
+          instanceId,
         });
 
   // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
@@ -367,7 +384,12 @@ export const createRuntime = async (
             name: 'maintenance worker',
             // Graceful when Redis is reachable (the running job finishes); forced when it is
             // not, so BullMQ drops its blocking connection instead of waiting on QUIT.
-            run: () => maintenanceWorker.close(workerConnection?.status !== 'ready'),
+            run: async () => {
+              // The trigger and any direct or running reconcile first: a sweep stops
+              // starting new sessions and the run ends before its connections close.
+              await Promise.all([reconcileTrigger?.stop(), reconciler.stop()]);
+              await maintenanceWorker.close(workerConnection?.status !== 'ready');
+            },
           },
         ]),
     { name: 'maintenance queue', run: () => maintenanceQueue.close() },
@@ -427,6 +449,7 @@ export const createRuntime = async (
       } catch (error) {
         logger.warn({ err: error, instanceId }, 'Could not queue the startup reconcile');
       }
+      reconcileTrigger?.start();
     }
     return port;
   };
@@ -466,6 +489,7 @@ export const createRuntime = async (
     maintenanceQueue,
     maintenanceWorker,
     reconciler,
+    reconcileTrigger,
     start,
     beforeServerClose,
     shutdownSteps,

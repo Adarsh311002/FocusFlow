@@ -16,4 +16,10 @@ export const redisKeys = {
    * user's running solo session (E10). Changed only with WATCH/MULTI.
    */
   userDisconnected: (userId: string) => `user:${userId}:disconnected`,
+  /**
+   * When a reconcile run last finished (Redis TIME, ms), written by every run however it was
+   * started. Missing or older than 3 × RECONCILER_INTERVAL_MS: runs are not happening, and
+   * each worker instance runs the reconciler itself (E23).
+   */
+  reconcileLastFinished: 'reconcile:last-finished',
 } as const;

@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, lte, sql } from 'drizzle-orm';
 
 import type { Executor, Tx } from '../../db/client.js';
 import { focusSessions, tasks } from '../../db/schema.js';
@@ -143,4 +143,62 @@ export const findSessionTask = async (
     .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
     .limit(1);
   return row;
+};
+
+/** The keys the reconciler sweeps by: the locked transaction re-reads everything else. */
+export type SessionKey = { readonly id: string; readonly userId: string };
+
+/**
+ * One keyset page of in-progress sessions, ordered by user (one in-progress session per
+ * user, so `user_id` is a unique cursor), served by `uq_focus_sessions_user_id_in_progress`.
+ * `running` keeps only running ones; `startedBeforeMs` keeps only those started at or
+ * before that instant (E2's stale threshold, computed by the caller from PostgreSQL time).
+ * Nothing is locked: the caller locks each session and re-checks it.
+ */
+export const listInProgressSessionKeys = async (
+  db: Executor,
+  page: {
+    readonly afterUserId: string | null;
+    readonly limit: number;
+    readonly running?: boolean;
+    readonly startedBeforeMs?: number;
+  },
+): Promise<SessionKey[]> =>
+  db
+    .select({ id: focusSessions.id, userId: focusSessions.userId })
+    .from(focusSessions)
+    .where(
+      and(
+        eq(focusSessions.status, 'in_progress'),
+        page.afterUserId === null ? undefined : gt(focusSessions.userId, page.afterUserId),
+        page.running === true ? isNotNull(focusSessions.runningSince) : undefined,
+        page.startedBeforeMs === undefined
+          ? undefined
+          : lte(focusSessions.startedAt, new Date(page.startedBeforeMs)),
+      ),
+    )
+    .orderBy(asc(focusSessions.userId))
+    .limit(page.limit);
+
+/**
+ * The session row locked `FOR UPDATE SKIP LOCKED`: `undefined` when it is gone or another
+ * transaction (a request, a job, another sweep) holds it — that one is deciding it now.
+ */
+export const lockOwnedSessionSkipLocked = async (
+  tx: Tx,
+  userId: string,
+  sessionId: string,
+): Promise<FocusSessionRow | undefined> => {
+  const [row] = await tx
+    .select()
+    .from(focusSessions)
+    .where(ownedBy(userId, sessionId))
+    .limit(1)
+    .for('update', { skipLocked: true });
+  return row;
+};
+
+/** Bounds every statement of the caller's transaction (`SET LOCAL`: this transaction only). */
+export const limitStatementTime = async (tx: Tx, ms: number): Promise<void> => {
+  await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${String(Math.trunc(ms))}`));
 };

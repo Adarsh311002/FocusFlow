@@ -4,7 +4,15 @@ import type { Tx } from '../../db/client.js';
 import { decideRunningSession, type DisconnectMarker } from './decision.js';
 import type { ClearRule } from './marker.js';
 import type { DisconnectMarkerStore } from './marker-store.js';
-import { databaseNowMs, type FocusSessionRow, lockOwnedSession, saveSession } from './queries.js';
+import {
+  databaseNowMs,
+  type FocusSessionRow,
+  limitStatementTime,
+  lockOwnedSession,
+  lockOwnedSessionSkipLocked,
+  saveSession,
+  type SessionKey,
+} from './queries.js';
 import { toSessionChanges, toSoloSession } from './rows.js';
 import { decisionPresence, type FocusSessionsDeps, loadView, observePresence } from './service.js';
 import {
@@ -25,6 +33,8 @@ import {
 // now, run the one decision procedure and write the outcome in that transaction. Redis
 // writes, job scheduling and change publication follow the commit; a failed follow-up
 // fails the job, which BullMQ retries — every step is idempotent, so a retry is harmless.
+// The reconciler's per-session steps (reconcileRunningSession, expireStaleSession; E19)
+// live here too, sharing that decision and settlement code.
 
 /**
  * Both calls ENSURE the job (E20): added if absent, left alone while it will still run, and
@@ -63,7 +73,7 @@ export type JobOutcome =
     }
   /** Online before the planned end: the reconnect cleared the marker; still running. */
   | { readonly kind: 'continued' }
-  /** At the planned end with a recorded disconnect (offline, or online again): its grace job decides. */
+  /** A recorded disconnect (offline, or online again at or after T_end): its grace job decides. */
   | { readonly kind: 'waiting_for_grace' }
   /** H3: a detected disconnect was recorded and its grace scheduled. */
   | { readonly kind: 'late_grace' }
@@ -72,9 +82,12 @@ export type JobOutcome =
 
 /** The decision could not be made (presence or epoch unknown, H2): the job is retried. */
 export class RetryLaterError extends Error {
+  readonly reason: string;
+
   constructor(reason: string) {
     super(`focus session decision deferred: ${reason}`);
     this.name = 'RetryLaterError';
+    this.reason = reason;
   }
 }
 
@@ -85,7 +98,12 @@ type FollowUp =
       readonly marker: DisconnectMarker;
       readonly runningSinceMs: number;
     }
-  | { readonly kind: 'schedule_grace'; readonly disconnectedAtMs: number };
+  | { readonly kind: 'schedule_grace'; readonly disconnectedAtMs: number }
+  | {
+      readonly kind: 'schedule_end';
+      readonly runningSinceMs: number;
+      readonly plannedEndMs: number;
+    };
 
 type Locked = {
   readonly outcome: JobOutcome;
@@ -120,9 +138,14 @@ const settle = async (
   };
 };
 
-/** Which job decides: only a grace job, with the disconnect it is about, may apply E16. */
+/**
+ * Who decides: only a grace job, with the disconnect it is about, may apply E16. The end job
+ * and the reconciler hand a recorded disconnect over to its grace job.
+ */
 type DecidingJob =
-  { readonly kind: 'end' } | { readonly kind: 'grace'; readonly disconnectedAtMs: number };
+  | { readonly kind: 'end' }
+  | { readonly kind: 'reconciler' }
+  | { readonly kind: 'grace'; readonly disconnectedAtMs: number };
 
 /**
  * Runs the decision for a running session inside the caller's transaction, with the row
@@ -189,9 +212,9 @@ const decideLocked = async (
         const delayMs = decision.disconnectedAtMs + deps.graceMs - presence.checkedAtMs;
         return { outcome: { kind: 'wake_later', delayMs: Math.max(1, delayMs) }, followUps };
       }
-      // The end job hands over to the grace job of the current disconnect — also when the
-      // user is online again: only that grace job may treat it as a reconnect (E16). A
-      // grace that already ran out makes the grace job run at once.
+      // The end job and the reconciler hand over to the grace job of the current disconnect
+      // (ensured, E20) — also when the user is online again: only that grace job may treat
+      // it as a reconnect (E16). A grace that already ran out makes it run at once.
       followUps.push({ kind: 'schedule_grace', disconnectedAtMs: decision.disconnectedAtMs });
       return { outcome: { kind: 'waiting_for_grace' }, followUps };
     }
@@ -229,6 +252,14 @@ const finish = async (deps: LifecycleDeps, userId: string, sessionId: string, lo
           sessionId,
           userId,
           disconnectedAtMs: followUp.disconnectedAtMs,
+        });
+        break;
+      case 'schedule_end':
+        await deps.scheduler.scheduleEnd({
+          sessionId,
+          userId,
+          runningSinceMs: followUp.runningSinceMs,
+          plannedEndMs: followUp.plannedEndMs,
         });
         break;
       case 'record_late_grace': {
@@ -314,4 +345,146 @@ export const runSoloGraceJob = async (
     });
   });
   return finish(deps, job.userId, job.sessionId, locked);
+};
+
+/** The reconciler's view of one session: a job outcome, or why it was left for later. */
+export type ReconcileOutcome =
+  | JobOutcome
+  /** Another transaction holds the row (`SKIP LOCKED`): it is deciding the session now. */
+  | { readonly kind: 'skipped_locked' }
+  /** The decision could not be made (presence, the epoch or the marker unknown, E18). */
+  | { readonly kind: 'deferred'; readonly reason: string };
+
+/**
+ * The transition committed, but a follow-up after the commit (a marker write, a job
+ * ensure) failed. The state is durable; the next reconciler run repairs the follow-up.
+ */
+export class FollowUpError extends Error {
+  readonly outcome: ReconcileOutcome;
+
+  constructor(outcome: ReconcileOutcome, cause: unknown) {
+    super('a focus-session follow-up after the commit failed', { cause });
+    this.name = 'FollowUpError';
+    this.outcome = outcome;
+  }
+}
+
+/**
+ * The reconciler sweep's decision for one running session (reconciler step 5). Like the
+ * jobs, but: the row is locked `FOR UPDATE SKIP LOCKED` (a held row is skipped, never
+ * waited for), every statement is bounded by `statementTimeoutMs`, an unknown state is
+ * reported as `deferred` instead of thrown, it never applies E16, and a session that keeps
+ * running before its planned end gets its end job ensured (it may have been lost).
+ * Terminal outcomes are settled directly in the transaction and published after the commit.
+ */
+export const reconcileRunningSession = async (
+  deps: LifecycleDeps,
+  key: SessionKey,
+  statementTimeoutMs: number,
+): Promise<ReconcileOutcome> => {
+  let locked: Locked | undefined;
+  try {
+    locked = await deps.db.transaction(async (tx): Promise<Locked | undefined> => {
+      await limitStatementTime(tx, statementTimeoutMs);
+      const row = await lockOwnedSessionSkipLocked(tx, key.userId, key.id);
+      if (row === undefined) {
+        return undefined;
+      }
+      const session = toSoloSession(row);
+      if (!isRunning(session)) {
+        return noOp('not_running');
+      }
+      const nowMs = await databaseNowMs(tx);
+      let marker: DisconnectMarker | undefined;
+      try {
+        marker = await deps.markers.read(row.userId);
+      } catch {
+        // An unreadable marker may hide E8 evidence: decide nothing (H2).
+        throw new RetryLaterError('marker_unknown');
+      }
+      const decided = await decideLocked(tx, deps, row, session, nowMs, marker, {
+        kind: 'reconciler',
+      });
+      if (decided.outcome.kind === 'settled' || hasReachedPlannedEnd(session, nowMs)) {
+        return decided;
+      }
+      return {
+        ...decided,
+        followUps: [
+          ...decided.followUps,
+          {
+            kind: 'schedule_end',
+            runningSinceMs: session.runningSinceMs,
+            plannedEndMs: plannedEndMs(session),
+          },
+        ],
+      };
+    });
+  } catch (error) {
+    if (error instanceof RetryLaterError) {
+      return { kind: 'deferred', reason: error.reason };
+    }
+    throw error;
+  }
+  if (locked === undefined) {
+    return { kind: 'skipped_locked' };
+  }
+  try {
+    return await finish(deps, key.userId, key.id, locked);
+  } catch (error) {
+    throw new FollowUpError(locked.outcome, error);
+  }
+};
+
+export type StaleOutcome =
+  | { readonly kind: 'expired' }
+  | { readonly kind: 'no_op'; readonly reason: 'ended' | 'not_stale' }
+  | { readonly kind: 'skipped_locked' };
+
+/**
+ * Stale cleanup for one session (reconciler step 6, E2, E19): still in progress
+ * `staleAfterMs` after `started_at` — running or paused, whatever step 5 decided or deferred
+ * — becomes `abandoned(expired)`, keeping the time accumulated before any current stretch.
+ * A session that already ended keeps its outcome. PostgreSQL only: it runs while Redis is
+ * unavailable too, and then the change listeners' Redis follow-ups fail and are logged by
+ * the change publisher (E22).
+ */
+export const expireStaleSession = async (
+  deps: Pick<FocusSessionsDeps, 'db' | 'changes'>,
+  key: SessionKey,
+  options: { readonly staleAfterMs: number; readonly statementTimeoutMs: number },
+): Promise<StaleOutcome> => {
+  const result = await deps.db.transaction(
+    async (tx): Promise<StaleOutcome | { readonly view: FocusSessionView }> => {
+      await limitStatementTime(tx, options.statementTimeoutMs);
+      const row = await lockOwnedSessionSkipLocked(tx, key.userId, key.id);
+      if (row === undefined) {
+        return { kind: 'skipped_locked' };
+      }
+      const session = toSoloSession(row);
+      if (session.status !== 'in_progress') {
+        return { kind: 'no_op', reason: 'ended' };
+      }
+      const nowMs = await databaseNowMs(tx);
+      if (nowMs < session.startedAtMs + options.staleAfterMs) {
+        return { kind: 'no_op', reason: 'not_stale' };
+      }
+      const transition = expire(session, nowMs);
+      if (transition.outcome !== 'changed') {
+        throw new Error(`focus session ${row.id}: stale expiry did not apply`);
+      }
+      const saved = await saveSession(tx, row.id, toSessionChanges(transition.session));
+      return { view: await loadView(tx, saved) };
+    },
+  );
+  if (!('view' in result)) {
+    return result;
+  }
+  await deps.changes.publish({
+    userId: key.userId,
+    transition: 'expired',
+    session: result.view,
+    runningStretch: null,
+  });
+  return { kind: 'expired' };
 };

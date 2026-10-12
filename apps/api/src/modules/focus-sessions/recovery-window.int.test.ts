@@ -247,12 +247,16 @@ describe('pause or stop at or after T_end across the recovery window (E18, E8, E
 
     await insideWindow(createdAtMs, async () => {
       // The user's socket goes away now, after T_end: an observed disconnect through the end.
+      // Any decider may act on it first — the pause below, the retried reconnect end job or
+      // the reconciler's sweep — and then clears the marker; so wait for the evidence or for
+      // its effect, never only for the transient marker.
       socket.disconnect();
       await waitFor(
         async () =>
           (await requireHarness().runtime.focusSessionLifecycle.markers.read(user.userId))
-            ?.evidence === 'observed',
+            ?.evidence === 'observed' || (await rowOf(session.id))?.status === 'completed',
       );
+      // Completes it, or answers it already completed (E11).
       const result = await action(user, 'pause', session.id);
       expect(result.status).toBe(200);
       expect(sessionOf(result)).toMatchObject({ status: 'completed', focusedSeconds: 60 });

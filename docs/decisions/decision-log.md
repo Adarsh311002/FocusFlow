@@ -321,7 +321,7 @@ Approved after the Phase 4B reconnaissance (E1–E14) and its follow-up review (
 
 ## Solo Focus recovery decisions (Phase 4B, Milestone 4)
 
-Approved in the Milestone 4 (reconciler and recovery) plan review, 2026-10-12, as A–G. They change no outcome of E1–E16; they make the decisions read trustworthy inputs and make recovery reliable.
+Approved in the Milestone 4 (reconciler and recovery) plan review, 2026-10-12, as A–G (E17–E23). They change no outcome of E1–E16; they make the decisions read trustworthy inputs and make recovery reliable.
 
 ### E17 (A) — Fresh epoch for every decision
 - **Decision:** every decision for a running session (end job, grace job, reconciler, pause/stop at or after `T_end`) reads the epoch in the **same atomic Redis read** as presence (`checkUser`: Redis TIME, the user's entries, the heartbeats and `ff:epoch` in one `MULTI`), after the session row lock is held. A cached epoch (the instance's last observed value) is never used for a decision. A missing or malformed epoch is unknown.
@@ -331,6 +331,10 @@ Approved in the Milestone 4 (reconciler and recovery) plan review, 2026-10-12, a
 - **Decision:** for `INSTANCE_TTL_MS` (30 s) after an epoch is created — Redis TIME, `[epochCreatedAtMs, epochCreatedAtMs + INSTANCE_TTL_MS)` — presence is not trusted: the live instances are still re-adding their sockets (each ticks at least twice within the TTL; one that does not is dead). A presence check taken inside the window, or with an unknown epoch, defers **every presence-dependent decision**: jobs retry, the reconciler defers, pause/stop at or after `T_end` answer `503`. Qualifying E8 evidence (an observed disconnect through the end) keeps its precedence and decides inside the window too.
 - **Consequences:** the window only delays decisions. After it the rules are unchanged: a definite Redis loss during the stretch without E8 proof is still `abandoned(expired)`, online or offline (E9); the window never turns that into a completion, and an empty presence map right after a loss never causes an expiry before the instances have had their chance to rebuild presence and record observed disconnects. Residual risk: an instance whose heartbeats keep failing throughout the window may still be missing sockets afterwards (the existing H1/H2 limitation).
 
+### E19 (C) — Stale cleanup after the normal decision
+- **Decision:** the reconciler runs the normal decision (step 5) first and the 12-hour stale cleanup (E2, step 6) after it. A session that step 5 settled keeps its terminal result; qualifying E8 evidence still completes a session first; but a session that is still in progress at the 12-hour threshold is `abandoned(expired)` even if step 5 had to defer it (presence unknown or recovering, the epoch unknown, Redis unavailable). The threshold is never extended because Redis is unavailable. Paused sessions are untouched before it.
+- **Why:** stale sessions must never permanently block the user (D35), and a session 12 hours old (the longest plan is 4 hours) is long past any decision the recovery window was protecting.
+
 ### E20 (D) — Scheduling ensures the job
 - **Decision:** scheduling an end or grace job, by any caller, **ensures** it: absent → added; waiting, delayed or active → left alone; retained by BullMQ as completed or failed → re-run with `Job.retry(state, { resetAttemptsMade: true, resetAttemptsStarted: true })` (BullMQ 6.3, the atomic `reprocessJob` script), so a job that exhausted its attempts gets them all back. `retry` throws when another caller moved or removed the job first; the actual state is then read again (bounded rounds).
 - **Why:** `queue.add` with the id of a retained job is a silent no-op. A grace job that exhausted its attempts during a Redis or presence outage could otherwise never run again, and an online user whose disconnect is still recorded could only be resolved by that job (E16).
@@ -338,6 +342,13 @@ Approved in the Milestone 4 (reconciler and recovery) plan review, 2026-10-12, a
 
 ### E21 (E) — Start and resume while presence is untrusted
 - **Decision:** start and resume answer `503` (presence unavailable) and change nothing when the presence check failed, the epoch is unknown or the check is inside the presence-recovery window (E18). `409 NOT_CONNECTED` is answered only from a trusted check.
+
+### E22 (F) — Stale cleanup without Redis
+- **Decision:** the 12-hour stale cleanup needs only PostgreSQL and also runs while Redis is unavailable (from each worker process's trigger, E23). It commits the expiry without waiting for Redis; the change's notification and marker clear then fail and are logged as failed — never reported as delivered.
+
+### E23 (G) — Process-owned reconcile trigger and liveness threshold
+- **Decision:** the repeating BullMQ schedule lives in Redis, so a FLUSHALL deletes it and nothing in Redis can restore it. Every worker-running process keeps its own timer (every `RECONCILER_INTERVAL_MS`, never overlapping itself): with Redis reachable it re-registers a missing schedule, and when the liveness record `ff:reconcile:last-finished` (Redis TIME, written by every finished run) is missing or at least **3 × `RECONCILER_INTERVAL_MS`** old (90 s by default; `reconcileOverdueAfterMs`) it runs the reconciler directly; with Redis unreachable it runs only the stale cleanup (E22). Within a process runs are single-flight; across processes they may overlap, which the session steps make safe by locking rows `FOR UPDATE SKIP LOCKED`.
+- **Consequences:** at most one direct run per worker process per interval, and only while scheduled runs are not happening. The epoch's recovery hooks (re-register the schedule, enqueue a recovery run) stay as the fast path.
 
 ## Accepted architecture direction
 

@@ -316,13 +316,14 @@ Branch: `v2/phase-4a-presence-hardening`. Decisions H1–H4 (`decisions/decision
 - **Tests:** unit tests for the sync plan, the liveness rule, event reporting and collapse, single-flight and retry, and heartbeat retries; integration tests for sync against Redis, both orderings of a disconnect racing a sync, many tabs closing during re-assertion, `disconnectedAtMs`, a missed disconnect on one of two instances (Redis cut through a TCP proxy), Redis reconnect repair, dead-instance timestamps and concurrent cleanup.
 - **Not in Phase 4A:** focus sessions, their migration, endpoints, queue, grace/end jobs and the reconciler sweep that implements late grace (H3) — Phase 4B.
 
-## Phase 4B — Solo Focus (design approved; implementation not started)
+## Phase 4B — Solo Focus (in progress)
 
-Decisions E1–E16 (`decisions/decision-log.md`); protocol in `architecture/focus-timing-protocol.md`, "Solo sessions". Implementation starts only when explicitly instructed.
+Decisions E1–E23 (`decisions/decision-log.md`); protocol in `architecture/focus-timing-protocol.md`, "Solo sessions". Milestones 1–4 are implemented on `v2/phase-4b-solo-focus`; Milestone 5 starts only when explicitly instructed.
 
 - **Schema:** one migration adding `focus_sessions` (solo only: no room columns, solo abandon reasons only, planned 60–14,400 s, `0 ≤ focused ≤ planned`, `ended_at ≥ started_at`, `running_since ≥ started_at`, completed ⇒ `focused = planned`, one in-progress session per user) (`domain/model.md`).
 - **API:** `POST /focus-sessions`, `GET /focus-sessions/current`, `POST /focus-sessions/:id/pause|resume|stop`, each in one transaction locking the session row, then `focus:session:updated` (E6).
 - **Jobs:** a `focus-session` queue with solo end and solo grace jobs; one decision procedure for running sessions shared by the jobs, the reconciler sweep and pause/stop at the planned end (E7, E8, E9); the monotonic disconnect marker with observed/detected evidence, cleared only while it belongs to the session (E10); reconnect-within-grace recovery (E16); reconciler steps 5–6 (late grace, definite-Redis-loss expiry, 12 h stale cleanup).
+- **Recovery (Milestone 4, E17–E23):** decisions read the epoch atomically with presence and defer during the presence-recovery window; scheduling ensures jobs (retained completed/failed BullMQ jobs re-run with attempts reset); the sweep settles terminal outcomes directly under `FOR UPDATE SKIP LOCKED`; stale cleanup runs after it and without Redis; each worker process owns a reconcile trigger that restores a lost schedule and reconciles directly when runs stop.
 - **Presence:** one small change to the Phase 4A layer: a clean shutdown's cleanup reports the new offline reason `instance_shutdown` instead of `disconnect` (E10), so that only a socket's own disconnect counts as `observed` evidence.
 - **Web:** a solo timer on the dashboard: TanStack Query only, no optimistic updates (E12), countdown from the Redis-TIME clock offset, restore after reload, the socket event applied and followed by a refetch.
 - **Tests:** pure timing/transition unit tests with `fast-check` properties (E13); API, PostgreSQL concurrency, Redis/BullMQ and realtime integration tests; web component tests. Playwright stays deferred.
