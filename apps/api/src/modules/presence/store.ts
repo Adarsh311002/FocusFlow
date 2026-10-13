@@ -82,6 +82,12 @@ export type PresenceCheck = {
   readonly epochCreatedAtMs: number | undefined;
 };
 
+/** A presence check together with one more key, read in the same MULTI (one Redis instant). */
+export type PresenceSnapshot = PresenceCheck & {
+  /** The key's string value, or `null` when it is missing. */
+  readonly value: string | null;
+};
+
 export type RemoveResult = {
   /** This call removed the entry (false when a sync or cleanup had already done so). */
   readonly removed: boolean;
@@ -118,6 +124,8 @@ export type PresenceStore = {
   /** Removes one socket of this instance. */
   readonly remove: (ref: SocketRef) => Promise<RemoveResult>;
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
+  /** `checkUser` plus a GET of `key` in the same transaction (E17: the disconnect marker). */
+  readonly checkUserWith: (userId: string, key: string) => Promise<PresenceSnapshot>;
   /**
    * Makes this instance's entries match its live sockets: adds the missing ones and
    * removes the stale ones, in both sets. `readLocal` is called after the reverse index
@@ -205,6 +213,25 @@ export const createPresenceStore = ({
     };
   };
 
+  /** TIME, heartbeats, the user's entries and the epoch, then `extraKey` if given. */
+  const readUser = async (userId: string, extraKey?: string) => {
+    const transaction = withClock(redis.multi())
+      .smembers(redisKeys.userSockets(userId))
+      .get(redisKeys.epoch);
+    if (extraKey !== undefined) {
+      transaction.get(extraKey);
+    }
+    const replies = await execAll(transaction);
+    const { nowMs, online } = judge(replies.slice(0, 2), replies.slice(2, 3));
+    const epoch = replies[3];
+    const check: PresenceCheck = {
+      online: online[0] === true,
+      checkedAtMs: nowMs,
+      epochCreatedAtMs: parseEpoch(typeof epoch === 'string' ? epoch : null)?.createdAtMs,
+    };
+    return { check, extra: replies[4] };
+  };
+
   return {
     add: async ({ userId, socketId }) => {
       await execAll(
@@ -228,17 +255,14 @@ export const createPresenceStore = ({
       return { removed: replies[0] === 1, removedAtMs: nowMs, userOffline: online[0] === false };
     },
 
-    checkUser: async (userId) => {
-      const replies = await execAll(
-        withClock(redis.multi()).smembers(redisKeys.userSockets(userId)).get(redisKeys.epoch),
-      );
-      const { nowMs, online } = judge(replies.slice(0, 2), replies.slice(2, 3));
-      const epoch = replies[3];
-      return {
-        online: online[0] === true,
-        checkedAtMs: nowMs,
-        epochCreatedAtMs: parseEpoch(typeof epoch === 'string' ? epoch : null)?.createdAtMs,
-      };
+    checkUser: async (userId) => (await readUser(userId)).check,
+
+    checkUserWith: async (userId, key) => {
+      const { check, extra } = await readUser(userId, key);
+      if (extra !== null && typeof extra !== 'string') {
+        throw new Error('unexpected Redis reply: expected a string or nil');
+      }
+      return { ...check, value: extra };
     },
 
     sync: async (readLocal) => {

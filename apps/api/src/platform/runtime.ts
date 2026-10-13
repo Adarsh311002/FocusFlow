@@ -31,6 +31,10 @@ import {
   type DisconnectMarkerStore,
 } from '../modules/focus-sessions/marker-store.js';
 import { handleUserOffline, handleUserOnline } from '../modules/focus-sessions/presence-hints.js';
+import {
+  createDecisionSnapshots,
+  type DecisionSnapshot,
+} from '../modules/focus-sessions/snapshot.js';
 import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
@@ -122,6 +126,8 @@ export type Runtime = {
   /** The Solo Focus lifecycle: marker store, job scheduler and queue (Phase 4B). */
   readonly focusSessionLifecycle: {
     readonly markers: DisconnectMarkerStore;
+    /** The decision's atomic Redis read: presence, the epoch and the marker (E17). */
+    readonly snapshotUser: (userId: string) => Promise<DecisionSnapshot>;
     readonly scheduler: FocusSessionScheduler;
     readonly queue: FocusSessionQueue;
   };
@@ -240,6 +246,9 @@ export const createRuntime = async (
   // routes read it too: a pause or stop at or after the planned end decides with it (E7, E8).
   const markerConnection = createRedisClient(config, logger);
   const focusSessionMarkers = createDisconnectMarkerStore({ redis: markerConnection });
+  // Every decision for a running session reads the marker, presence and the epoch in one
+  // MULTI on the general client (E17); the marker connection is only for WATCH writes.
+  const snapshotUser = createDecisionSnapshots(presenceStore);
 
   // Built for every role so the process is wired the same way; a worker-only process
   // simply never listens, so it serves no HTTP and accepts no sockets.
@@ -251,6 +260,7 @@ export const createRuntime = async (
     authDeps,
     focusSessions: {
       checkUser: presenceStore.checkUser,
+      snapshotUser,
       presenceRecoveryMs: config.INSTANCE_TTL_MS,
       changes: focusSessionChanges,
       graceMs: config.FOCUS_GRACE_MS,
@@ -294,6 +304,7 @@ export const createRuntime = async (
   const lifecycleDeps: LifecycleDeps = {
     db,
     checkUser: presenceStore.checkUser,
+    snapshotUser,
     presenceRecoveryMs: config.INSTANCE_TTL_MS,
     changes: focusSessionChanges,
     markers: focusSessionMarkers,
@@ -483,6 +494,7 @@ export const createRuntime = async (
     focusSessionChanges,
     focusSessionLifecycle: {
       markers: focusSessionMarkers,
+      snapshotUser,
       scheduler: focusSessionScheduler,
       queue: focusSessionQueue,
     },

@@ -31,6 +31,7 @@ const fakeStore = (overrides: Partial<PresenceStore>): PresenceStore => ({
   add: () => Promise.resolve(),
   remove: unexpected,
   checkUser: unexpected,
+  checkUserWith: unexpected,
   sync: () => Promise.resolve(NOOP_SYNC),
   readInstance: unexpected,
   dropInstance: () => Promise.resolve(),

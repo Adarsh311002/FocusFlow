@@ -14,6 +14,7 @@ import { pino } from 'pino';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { startTestHarness, stopTestHarness, type TestHarness } from '../../../test/harness.js';
+import { scriptedSnapshot } from '../../../test/snapshots.js';
 import { signUpTestUser } from '../../../test/users.js';
 import { focusSessions } from '../../db/schema.js';
 import { bullmqPrefix } from '../../platform/queues.js';
@@ -100,15 +101,17 @@ const rig = (presenceFor: (run: number) => Presence) => {
   });
   let runs = 0;
   let current: Presence = 'unavailable';
+  const checkUser = async () => {
+    if (current === 'unavailable') {
+      throw new Error('Redis is down');
+    }
+    return { online: current.online, checkedAtMs: await nowMs(), epochCreatedAtMs: 0 };
+  };
   const deps: LifecycleDeps = {
     db: h.db,
     markers: requireMarkers(),
-    checkUser: async () => {
-      if (current === 'unavailable') {
-        throw new Error('Redis is down');
-      }
-      return { online: current.online, checkedAtMs: await nowMs(), epochCreatedAtMs: 0 };
-    },
+    checkUser,
+    snapshotUser: scriptedSnapshot(checkUser, requireMarkers()),
     presenceRecoveryMs: PRESENCE_RECOVERY_MS,
     graceMs: GRACE_MS,
     scheduler,

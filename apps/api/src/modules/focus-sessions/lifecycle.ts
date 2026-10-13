@@ -14,7 +14,8 @@ import {
   type SessionKey,
 } from './queries.js';
 import { toSessionChanges, toSoloSession } from './rows.js';
-import { decisionPresence, type FocusSessionsDeps, loadView, observePresence } from './service.js';
+import { decisionPresence, type FocusSessionsDeps, loadView } from './service.js';
+import { type DecisionInputs, readDecisionInputs } from './snapshot.js';
 import {
   complete,
   expire,
@@ -149,9 +150,9 @@ type DecidingJob =
 
 /**
  * Runs the decision for a running session inside the caller's transaction, with the row
- * locked. The marker was read by the caller; presence and the epoch are read here, in one
- * atomic Redis read after the lock (E17) — the approved decision read. Writes nothing to
- * Redis.
+ * locked. The caller read its inputs after the lock: the marker, presence and the epoch in
+ * one atomic Redis snapshot, or the marker alone when that failed (E8, E17). Writes nothing
+ * to Redis.
  */
 const decideLocked = async (
   tx: Tx,
@@ -159,15 +160,15 @@ const decideLocked = async (
   row: FocusSessionRow,
   session: RunningSession,
   nowMs: number,
-  marker: DisconnectMarker | undefined,
+  inputs: DecisionInputs,
   job: DecidingJob,
 ): Promise<Locked> => {
-  const { presence, epochCreatedAtMs } = decisionPresence(await observePresence(deps, row.userId));
+  const { presence, epochCreatedAtMs } = decisionPresence(inputs.presence);
   const { decision, clearStaleMarker } = decideRunningSession({
     sessionId: row.id,
     session,
     nowMs,
-    marker: marker ?? null,
+    marker: inputs.marker ?? null,
     presence,
     epochCreatedAtMs,
     graceMs: deps.graceMs,
@@ -306,8 +307,8 @@ export const runSoloEndJob = async (deps: LifecycleDeps, job: SoloEndJob): Promi
         followUps: [],
       };
     }
-    const marker = await deps.markers.read(row.userId);
-    return decideLocked(tx, deps, row, session, nowMs, marker, { kind: 'end' });
+    const inputs = await readDecisionInputs(deps, row.userId);
+    return decideLocked(tx, deps, row, session, nowMs, inputs, { kind: 'end' });
   });
   return finish(deps, job.userId, job.sessionId, locked);
 };
@@ -330,7 +331,8 @@ export const runSoloGraceJob = async (
     if (!isRunning(session)) {
       return noOp('not_running');
     }
-    const marker = await deps.markers.read(row.userId);
+    const inputs = await readDecisionInputs(deps, row.userId);
+    const { marker } = inputs;
     if (
       marker === undefined ||
       marker.sessionId !== row.id ||
@@ -339,7 +341,7 @@ export const runSoloGraceJob = async (
       return noOp('marker_changed');
     }
     const nowMs = await databaseNowMs(tx);
-    return decideLocked(tx, deps, row, session, nowMs, marker, {
+    return decideLocked(tx, deps, row, session, nowMs, inputs, {
       kind: 'grace',
       disconnectedAtMs: job.disconnectedAtMs,
     });
@@ -395,14 +397,15 @@ export const reconcileRunningSession = async (
         return noOp('not_running');
       }
       const nowMs = await databaseNowMs(tx);
-      let marker: DisconnectMarker | undefined;
+      let inputs: DecisionInputs;
       try {
-        marker = await deps.markers.read(row.userId);
+        inputs = await readDecisionInputs(deps, row.userId);
       } catch {
-        // An unreadable marker may hide E8 evidence: decide nothing (H2).
+        // Neither the snapshot nor the marker could be read, and an unreadable marker may
+        // hide E8 evidence: decide nothing (H2).
         throw new RetryLaterError('marker_unknown');
       }
-      const decided = await decideLocked(tx, deps, row, session, nowMs, marker, {
+      const decided = await decideLocked(tx, deps, row, session, nowMs, inputs, {
         kind: 'reconciler',
       });
       if (decided.outcome.kind === 'settled' || hasReachedPlannedEnd(session, nowMs)) {

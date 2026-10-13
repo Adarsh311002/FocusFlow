@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { beginHeldTransaction } from '../../../test/db-locks.js';
 import { startTestHarness, stopTestHarness, type TestHarness } from '../../../test/harness.js';
+import { scriptedSnapshot } from '../../../test/snapshots.js';
 import { signUpTestUser } from '../../../test/users.js';
 import { focusSessions } from '../../db/schema.js';
 import { parseEpoch } from '../../platform/epoch.js';
@@ -97,26 +98,29 @@ const world = () => {
     published.push(change);
   });
   const store = requireMarkers();
+  const markers: DisconnectMarkerStore = {
+    ...store,
+    read: (userId) =>
+      state.unreadableMarkers.has(userId)
+        ? Promise.reject(new Error('marker connection lost'))
+        : store.read(userId),
+  };
+  const checkUser = async (userId: string) => {
+    const presence = state.byUser.get(userId) ?? state.presence;
+    if (presence === 'unavailable') {
+      throw new Error('Redis is down');
+    }
+    return {
+      online: presence.online,
+      checkedAtMs: await nowMs(),
+      epochCreatedAtMs: state.epochCreatedAtMs,
+    };
+  };
   const deps: LifecycleDeps = {
     db: requireHarness().db,
-    markers: {
-      ...store,
-      read: (userId) =>
-        state.unreadableMarkers.has(userId)
-          ? Promise.reject(new Error('marker connection lost'))
-          : store.read(userId),
-    },
-    checkUser: async (userId) => {
-      const presence = state.byUser.get(userId) ?? state.presence;
-      if (presence === 'unavailable') {
-        throw new Error('Redis is down');
-      }
-      return {
-        online: presence.online,
-        checkedAtMs: await nowMs(),
-        epochCreatedAtMs: state.epochCreatedAtMs,
-      };
-    },
+    markers,
+    checkUser,
+    snapshotUser: scriptedSnapshot(checkUser, markers),
     presenceRecoveryMs: PRESENCE_RECOVERY_MS,
     graceMs: GRACE_MS,
     scheduler,
@@ -654,6 +658,7 @@ describe('races with the other deciders: one terminal outcome, one event', () =>
   const serviceDeps = (w: World) => ({
     db: w.deps.db,
     checkUser: w.deps.checkUser,
+    snapshotUser: w.deps.snapshotUser,
     presenceRecoveryMs: w.deps.presenceRecoveryMs,
     markers: w.deps.markers,
     graceMs: w.deps.graceMs,
@@ -753,6 +758,7 @@ describe('a fresh epoch for every decision (E17)', () => {
     const deps: LifecycleDeps = {
       ...w.deps,
       checkUser: (userId) => h.runtime.presence.checkUser(userId),
+      snapshotUser: h.runtime.focusSessionLifecycle.snapshotUser,
       presenceRecoveryMs: h.config.INSTANCE_TTL_MS,
     };
     const sessions: Running[] = [];

@@ -15,6 +15,7 @@ import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startTestHarness, stopTestHarness, type TestHarness } from '../../../test/harness.js';
+import { scriptedSnapshot } from '../../../test/snapshots.js';
 import { signUpTestUser } from '../../../test/users.js';
 import { focusSessions } from '../../db/schema.js';
 import { bullmqPrefix } from '../../platform/queues.js';
@@ -95,13 +96,15 @@ const world = () => {
   changes.subscribe((change) => {
     published.push(change);
   });
+  const checkUser = () =>
+    state.presence === 'unavailable'
+      ? Promise.reject(new Error('Redis is down'))
+      : Promise.resolve({ ...state.presence, epochCreatedAtMs: state.epochCreatedAtMs });
   const deps: LifecycleDeps = {
     db: requireHarness().db,
     markers: requireMarkers(),
-    checkUser: () =>
-      state.presence === 'unavailable'
-        ? Promise.reject(new Error('Redis is down'))
-        : Promise.resolve({ ...state.presence, epochCreatedAtMs: state.epochCreatedAtMs }),
+    checkUser,
+    snapshotUser: scriptedSnapshot(checkUser, requireMarkers()),
     presenceRecoveryMs: PRESENCE_RECOVERY_MS,
     graceMs: GRACE_MS,
     scheduler,
@@ -594,6 +597,7 @@ describe('pause or stop against the end job (E7, E9)', () => {
   const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
     db: deps.db,
     checkUser: deps.checkUser,
+    snapshotUser: deps.snapshotUser,
     presenceRecoveryMs: deps.presenceRecoveryMs,
     markers: deps.markers,
     graceMs: deps.graceMs,
@@ -778,6 +782,7 @@ describe('expired grace at or after T_end is one outcome for every caller', () =
   const serviceDeps = ({ deps }: ReturnType<typeof world>): FocusSessionsDeps => ({
     db: deps.db,
     checkUser: deps.checkUser,
+    snapshotUser: deps.snapshotUser,
     presenceRecoveryMs: deps.presenceRecoveryMs,
     markers: deps.markers,
     graceMs: deps.graceMs,

@@ -7,12 +7,7 @@ import { AppError } from '../../platform/http/errors.js';
 import type { PresenceCheck } from '../presence/store.js';
 import { lockOwnedTaskForShare } from '../tasks/queries.js';
 import type { FocusSessionChanges, FocusSessionTransition } from './changes.js';
-import {
-  decideRunningSession,
-  type DisconnectMarker,
-  type PresenceObservation,
-  presenceTrust,
-} from './decision.js';
+import { decideRunningSession, type PresenceObservation, presenceTrust } from './decision.js';
 import type { DisconnectMarkerStore } from './marker-store.js';
 import {
   databaseNowMs,
@@ -25,6 +20,7 @@ import {
   saveSession,
 } from './queries.js';
 import { toSessionChanges, toSoloSession } from './rows.js';
+import { type DecisionInputs, type DecisionSnapshot, readDecisionInputs } from './snapshot.js';
 import {
   complete,
   expire,
@@ -51,10 +47,9 @@ import { toFocusSessionView } from './views.js';
 // - PostgreSQL now() is the clock for every stored value (E9).
 // - Redis is read only for the presence checks the protocol requires: before the
 //   transaction for start and resume ("user connected"), and inside it only at the
-//   approved point — the decision for a running session (the disconnect marker and
-//   checkUser) when a pause or stop arrives at or after the planned end (E7). The epoch
-//   comes from the same atomic read as presence, never from a cached value (E17). Nothing is
-//   written to Redis here.
+//   approved point — the decision for a running session when a pause or stop arrives at or
+//   after the planned end (E7): the disconnect marker, presence and the epoch in one atomic
+//   read, never a cached epoch (E17). Nothing is written to Redis here.
 // - Follow-up work (events, jobs, markers) runs only after the commit (`changes`).
 
 export type FocusSessionsDeps = {
@@ -64,9 +59,17 @@ export type FocusSessionsDeps = {
    * and the epoch (E17).
    */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
+  /**
+   * The decision's Redis inputs in one atomic read: `checkUser` plus the disconnect marker
+   * (E10, E17). Used by every decision for a running session.
+   */
+  readonly snapshotUser: (userId: string) => Promise<DecisionSnapshot>;
   /** E18: how long after an epoch is created presence is not trusted (INSTANCE_TTL_MS). */
   readonly presenceRecoveryMs: number;
-  /** The disconnect marker (E10), read by the decision at or after the planned end. */
+  /**
+   * The disconnect marker (E10) on its own: read by a decision only when the snapshot
+   * failed, so observed evidence through the end can still decide (E8).
+   */
   readonly markers: Pick<DisconnectMarkerStore, 'read'>;
   /** The reconnect grace (`FOCUS_GRACE_MS`), the same value the lifecycle jobs use. */
   readonly graceMs: number;
@@ -256,12 +259,13 @@ export const getCurrentFocusSession = async (
  * after a definite Redis loss during the stretch (E9) — the same outcome the end job and
  * the grace job reach, so the result never depends on which of them takes the row lock
  * first. This is the one approved point where Redis is read inside the transaction (the
- * marker, then checkUser with the epoch), while the row lock is held. The marker is read
- * before this request's own follow-up could clear it, so an observed disconnect through
- * the end still completes the session (E8). A request never applies E16: online with a
- * disconnect still recorded is not a completion here, and the pause or stop applies. When
- * the decision cannot be made (presence or epoch unknown, or inside the presence-recovery
- * window) the request fails with 503 and changes nothing (H2, E18).
+ * marker, presence and the epoch in one snapshot; the marker alone if that fails), while
+ * the row lock is held. The marker is read before this request's own follow-up could clear
+ * it, so an observed disconnect through the end still completes the session (E8). A request
+ * never applies E16: online with a disconnect still recorded is not a completion here, and
+ * the pause or stop applies. When the decision cannot be made (presence or epoch unknown, or
+ * inside the presence-recovery window) the request fails with 503 and changes nothing (H2,
+ * E18).
  */
 type Settlement =
   | { readonly kind: 'completed' }
@@ -275,20 +279,20 @@ const settlementAtPlannedEnd = async (
   session: RunningSession,
   nowMs: number,
 ): Promise<Settlement | null> => {
-  let marker: DisconnectMarker | undefined;
+  let inputs: DecisionInputs;
   try {
-    marker = await deps.markers.read(userId);
+    inputs = await readDecisionInputs(deps, userId);
   } catch {
-    // An unreadable marker may hide the evidence of presence through the end: decide
-    // nothing, like an unknown presence (H2).
+    // Neither the snapshot nor the marker could be read; the marker may hide the evidence
+    // of presence through the end: decide nothing, like an unknown presence (H2).
     throw presenceUnavailable();
   }
   const { decision } = decideRunningSession({
     sessionId,
     session,
     nowMs,
-    marker: marker ?? null,
-    ...decisionPresence(await observePresence(deps, userId)),
+    marker: inputs.marker ?? null,
+    ...decisionPresence(inputs.presence),
     graceMs: deps.graceMs,
     presenceRecoveryMs: deps.presenceRecoveryMs,
   });
