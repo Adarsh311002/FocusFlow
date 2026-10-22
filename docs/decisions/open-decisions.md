@@ -10,7 +10,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 |---|---|---|---|
 | D2 | Account deletion and data retention. What happens to rooms a deleted user hosts? | No deletion feature in the MVP. User-owned data cascades; deleting a room host is blocked until this is decided. | Public launch (data-protection law) |
 | D12 | Public room discovery, and room size limits | No public listing in the MVP: join by link/code, plus "My Rooms". A global safety limit on people present in a room (e.g. 50). | Before building discovery |
-| D18 | Timezone for "days" in reviews | The client passes `tz` (IANA) on summary requests. A stored per-user timezone arrives with personalization. | Personalization phase |
+| D18 | Timezone for "days" in reviews | The client passes `tz` (IANA) on summary requests. A stored per-user timezone arrives with personalization. **Implemented as this default in Phase 5** (V3, V5). | Personalization phase |
 | D20 | Must the host be online for someone to knock? | Yes. Knocking when the host is offline returns `HOST_OFFLINE`. Offline join requests would be a separate later feature. | — |
 | D24 | Short temporary chat backlog for late joiners | None in the MVP (still temporary under D7 if added). | — |
 | D26 | Guest (logged-out) timer | Browser-only timer with no persistence, or drop the legacy `/timer` route. | Before public launch |
@@ -18,7 +18,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | D31 | Opting in to the room's focus during a break (for the next focus) | MVP: opt-in only during a focus phase. | — |
 | D32 | Does the next room phase start automatically? | No. Manual start is safe when the host is absent (D10). | — |
 | D33 | Landing page claims (pricing, analytics, offline mode, soundscapes) | Rewrite to match what exists. | Public launch |
-| D34 | Do abandoned sessions' partial minutes count toward review totals? | The summary returns both `completedFocusedSeconds` and `totalFocusedSeconds`; the UI decides what to show. | Review UI design |
+| D34 | Do abandoned sessions' partial minutes count toward review totals? | The summary returns both `completedFocusedSeconds` and `totalFocusedSeconds`; the UI decides what to show. **Implemented as this default in Phase 5**: the Review page shows both, labelled (V6, V8). | Review UI design |
 | D36 | Can a member removed from a public room rejoin immediately? | Yes: removal is a "kick" in the MVP. Private rooms require a new knock. Bans are a later feature. | — |
 | D37 | Recorded focused time for sessions abandoned as `timer_lost` | 0, because it cannot be known. | — |
 | D39 | Email verification and password reset flows | Not needed for the MVP build (D1 removed the security dependency). **Password reset must exist before public launch.** | Public launch |
@@ -46,6 +46,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | API bundler | esbuild directly or via `tsdown`. |
 | Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
 | Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
+| V1–V8 — Phase 5 review details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Review decisions"): history `from`/`to` are instants, `[from, to)` on `started_at`; history lists every status, `started_at DESC, id DESC`, owner-scoped id cursor, limit 50/100; summary `from`/`to` are inclusive dates in `tz`, ≤ 366 days, ≥ 1970; `tz` is `UTC` or an `Area/Location` name validated and computed with `Intl` only; the summary counts ended sessions only; a session counts on its local start date, dense `days`; `/review` shows the last 7 days in the browser zone. |
 
 ## Tracked follow-ups
 

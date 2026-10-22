@@ -11,8 +11,9 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
 - Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
 - Phase 4A (presence hardening): **merged** into `main` (checkpoint: tag `phase-4a-presence-hardening`); see "Phase 4A" below.
-- Phase 4B (Solo Focus): **started — design approved (E1–E16), implementation not started**. See "Phase 4B" below.
-- Phase 1b and Phase 5 onwards: **not started**. Each phase begins only when explicitly instructed.
+- Phase 4B (Solo Focus): **in progress** on `v2/phase-4b-solo-focus` — E1–E23 approved; Milestones 1–4 (API, lifecycle jobs, presence integration, reconciler and recovery) implemented; Milestone 5 (web Solo Focus) **not started**. See "Phase 4B" below.
+- Phase 5 (review): **in progress** on `v2/phase-5-review` (branched from the Phase 4B branch) — history and summary endpoints and the `/review` page implemented with technical defaults V1–V8 awaiting review; legacy deletion **waits** for the owner's answer on deployment and MongoDB data (`decisions/open-decisions.md`). See "Phase 5" below.
+- Phase 1b and Phase 6 onwards: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
@@ -198,7 +199,7 @@ Naming: UPPER_SNAKE_CASE, units in the name (`_SECONDS`, `_MS`), `_URL` for conn
 | 2 Tasks | Tasks, current task, soft delete (D3, D38, D43) | 1 | Ownership, soft-delete and current-task rules tested | — |
 | 3 Real-time foundation | Authenticated sockets, Redis adapter and emitter, per-user presence, BullMQ, `ROLE`, reconciler skeleton, epoch check, clock sync | 1 | Presence, revocation and dead-instance cleanup tested | — |
 | 4 Solo focus | Solo sessions with pause, server-driven completion, grace, stale cleanup | 2, 3 | Every solo transition and race tested | — |
-| 5 Review | History and summary | 4 | Timezone aggregation tested | **Solo core loop**; legacy deleted |
+| 5 Review | History and summary | 4 | Timezone aggregation tested | **Solo core loop**; legacy deleted (still waiting on the owner's answer, see "Phase 5") |
 | 6 Rooms and presence | Rooms, membership, knocks, room presence, temporary chat; Playwright added | 3 | Permission, knock and multi-client tests | — |
 | 7 Room timer | Pure timer logic, version-checked writes, host commands, phase-end jobs, D16 settings | 6 | Property and race tests pass | — |
 | 8 Room focus runs | Opt-in, run ledger, settlement, grace, full reconciler, Redis-loss recovery | 4, 7 | Grace, settlement and Redis-failure scenarios pass | **MVP feature-complete** |
@@ -328,6 +329,16 @@ Decisions E1–E23 (`decisions/decision-log.md`); protocol in `architecture/focu
 - **Web:** a solo timer on the dashboard: TanStack Query only, no optimistic updates (E12), countdown from the Redis-TIME clock offset, restore after reload, the socket event applied and followed by a refetch.
 - **Tests:** pure timing/transition unit tests with `fast-check` properties (E13); API, PostgreSQL concurrency, Redis/BullMQ and realtime integration tests; web component tests. Playwright stays deferred.
 - **Not in Phase 4B:** rooms, room timers, focus runs, chat, history and summary (Phase 5), AI, notifications, analytics, payments.
+
+## Phase 5 — Review
+
+Started 2026-10-16 on `v2/phase-5-review`, branched from the unmerged Phase 4B branch (its Milestone 4 commits are not on `main` yet). Details: V1–V8 in `decisions/decision-log.md`.
+
+- **API:** `GET /focus-sessions` (history: every status, `started_at DESC, id DESC`, `[from, to)` instants, owner-scoped id cursor, task joined with the owner, soft-deleted tasks marked) and `GET /focus-sessions/summary` (inclusive dates in an IANA `tz`, ended sessions only, counted on their local start date, dense `days`). Read-only, PostgreSQL only; served by the existing `ix_focus_sessions_user_id_started_at`, no migration. The time zone is validated and applied only in Node (`Intl`); PostgreSQL sums per UTC minute.
+- **Contracts:** query and response schemas, `focusSessionPaths.summary`, and calendar-date / time zone helpers shared with the web app (`packages/contracts/src/dates.ts`).
+- **Web:** `/review` with the last 7 days' summary (both totals, a per-day table) and the paged history; a small authenticated navigation.
+- **Tests:** contract unit tests; API integration tests against real PostgreSQL covering authentication, isolation, validation, ordering and pagination, task references, every status, both totals, and time zone boundaries (half-hour offsets, ±14/−11 h, DST start/end, a missing midnight, a 30-minute DST change) checked against an independent per-session calculation; web component tests.
+- **Exit criterion still open:** deleting the legacy app (I12) needs the owner's answer on whether the legacy app is deployed or has MongoDB data worth keeping.
 
 ## Phase 0 review follow-ups
 
