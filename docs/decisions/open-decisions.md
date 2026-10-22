@@ -47,6 +47,7 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
 | Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
 | V1–V8 — Phase 5 review details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Review decisions"): history `from`/`to` are instants, `[from, to)` on `started_at`; history lists every status, `started_at DESC, id DESC`, owner-scoped id cursor, limit 50/100; summary `from`/`to` are inclusive dates in `tz`, ≤ 366 days, ≥ 1970; `tz` is `UTC` or an `Area/Location` name validated and computed with `Intl` only; the summary counts ended sessions only; a session counts on its local start date, dense `days`; `/review` shows the last 7 days in the browser zone. |
+| W1–W6 — Phase 4B Milestone 5 web details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Solo Focus web decisions"): the timer is a `/dashboard` panel; `GET /focus-sessions/current` is the truth and `focus:session:updated` only triggers refetches (current, history, summary); the countdown is display only and says "Finishing…" at zero; controls disable while pending and duplicates join; presets 15/25/50 min plus custom 1–240; the API emits the event from its own after-commit listener |
 
 ## Tracked follow-ups
 

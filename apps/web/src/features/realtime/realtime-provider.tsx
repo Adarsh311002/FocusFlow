@@ -35,6 +35,15 @@ export function RealtimeProvider({
   return <RealtimeContext value={client}>{children}</RealtimeContext>;
 }
 
+/** The app's live connection, for subscribing to its events. */
+export function useRealtimeClient(): RealtimeClient {
+  const client = useContext(RealtimeContext);
+  if (client === null) {
+    throw new Error('useRealtimeClient must be called inside a <RealtimeProvider>.');
+  }
+  return client;
+}
+
 /** The live connection's status, for rendering. */
 export function useRealtimeStatus(): RealtimeStatus {
   const client = useContext(RealtimeContext);

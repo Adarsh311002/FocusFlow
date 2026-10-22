@@ -1,8 +1,12 @@
 import type { FocusSessionView } from '@focus-flow/contracts';
 import { describe, expect, it } from 'vitest';
 
-import type { FocusSessionChange, FocusSessionTransition } from './changes.js';
-import { followUpChange } from './follow-ups.js';
+import {
+  createFocusSessionChanges,
+  type FocusSessionChange,
+  type FocusSessionTransition,
+} from './changes.js';
+import { attachSessionNotifications, followUpChange } from './follow-ups.js';
 import type { FocusSessionScheduler } from './lifecycle.js';
 import type { ClearRule } from './marker.js';
 import type { DisconnectMarkerStore } from './marker-store.js';
@@ -68,4 +72,70 @@ describe('followUpChange', () => {
       expect(clears).toEqual([{ kind: 'session', sessionId: SESSION }]);
     },
   );
+});
+
+describe('attachSessionNotifications', () => {
+  const silentLogger = { debug: () => undefined, error: () => undefined } as never;
+
+  const notifier = () => {
+    const sent: { room: string; event: string; payload: unknown }[] = [];
+    return {
+      sent,
+      notifier: {
+        to: (room: string) => ({
+          emit: (event: 'focus:session:updated', payload: { session: FocusSessionView }) => {
+            sent.push({ room, event, payload });
+          },
+        }),
+      },
+    };
+  };
+
+  it('sends the committed session to the owner’s room, derived on the server (E6)', async () => {
+    const changes = createFocusSessionChanges(silentLogger);
+    const { sent, notifier: target } = notifier();
+    attachSessionNotifications(changes, target);
+
+    const published = change('stopped');
+    await changes.publish(published);
+
+    expect(sent).toEqual([
+      {
+        room: `user:${USER}`,
+        event: 'focus:session:updated',
+        payload: { session: published.session },
+      },
+    ]);
+  });
+
+  it('stops sending after the returned unsubscribe', async () => {
+    const changes = createFocusSessionChanges(silentLogger);
+    const { sent, notifier: target } = notifier();
+    const unsubscribe = attachSessionNotifications(changes, target);
+    unsubscribe();
+    await changes.publish(change('paused'));
+    expect(sent).toEqual([]);
+  });
+
+  it('a failing notifier does not stop other listeners, and they do not stop it', async () => {
+    const changes = createFocusSessionChanges(silentLogger);
+    const order: string[] = [];
+    changes.subscribe(() => {
+      order.push('first');
+    });
+    attachSessionNotifications(changes, {
+      to: () => ({
+        emit: () => {
+          order.push('notify');
+          throw new Error('emit failed');
+        },
+      }),
+    });
+    changes.subscribe(() => {
+      order.push('last');
+    });
+
+    await expect(changes.publish(change('stopped'))).resolves.toBeUndefined();
+    expect(order).toEqual(['first', 'notify', 'last']);
+  });
 });

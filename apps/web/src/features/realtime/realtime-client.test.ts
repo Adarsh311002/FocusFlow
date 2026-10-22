@@ -20,6 +20,7 @@ type FakeSocket = Omit<RealtimeSocket, 'connected' | 'active'> & {
   serverConnects: () => void;
   serverRefuses: (code: string | undefined, options?: { transport?: boolean }) => void;
   serverDisconnects: (reason: string) => void;
+  serverEmits: (payload: unknown) => void;
 };
 
 /** A fake Socket.IO client driven by the test, mirroring the real client's semantics. */
@@ -31,6 +32,7 @@ const createFakeSocket = (
     const connectListeners: (() => void)[] = [];
     const disconnectListeners: ((reason: string) => void)[] = [];
     const errorListeners: ((error: Error) => void)[] = [];
+    const focusListeners: ((payload: unknown) => void)[] = [];
     const fake: FakeSocket = {
       connected: false,
       active: false,
@@ -57,6 +59,12 @@ const createFakeSocket = (
       onConnect: (listener) => connectListeners.push(listener),
       onDisconnect: (listener) => disconnectListeners.push(listener),
       onConnectError: (listener) => errorListeners.push(listener),
+      onFocusSessionUpdated: (listener) => focusListeners.push(listener),
+      serverEmits: (payload) => {
+        focusListeners.forEach((listener) => {
+          listener(payload);
+        });
+      },
       timeSync: (request) => {
         fake.timeSyncRequests.push(request);
         return Promise.resolve({ ok: true, serverNowMs });
@@ -325,5 +333,48 @@ describe('realtime client clock resync', () => {
       vi.useRealTimers();
     }
     await flush();
+  });
+});
+
+describe('realtime client focus events', () => {
+  const session = {
+    id: '0190f3a0-0000-7000-8000-000000000001',
+    context: { kind: 'solo' },
+    task: null,
+    plannedSeconds: 1500,
+    focusedSeconds: 0,
+    startedAt: '2026-01-01T10:00:00.000Z',
+    status: 'in_progress',
+    runningSince: '2026-01-01T10:00:00.000Z',
+  };
+
+  it('delivers validated events, drops malformed ones and stops after unsubscribe', () => {
+    const { client, fake } = setup();
+    const seen: unknown[] = [];
+    const off = client.onFocusSessionUpdated((event) => seen.push(event));
+    client.connect();
+
+    fake.socket().serverEmits({ session });
+    fake.socket().serverEmits({ session: { id: 'nope' } });
+    fake.socket().serverEmits(undefined);
+    off();
+    fake.socket().serverEmits({ session });
+
+    expect(seen).toEqual([{ session }]);
+  });
+
+  it('announces every successful connect, including reconnects', () => {
+    const { client, fake } = setup();
+    let connects = 0;
+    const off = client.onConnected(() => (connects += 1));
+    client.connect();
+
+    fake.socket().serverConnects();
+    fake.socket().serverDisconnects('transport close');
+    fake.socket().serverConnects();
+    off();
+    fake.socket().serverConnects();
+
+    expect(connects).toBe(2);
   });
 });

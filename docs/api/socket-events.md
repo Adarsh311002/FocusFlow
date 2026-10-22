@@ -14,7 +14,7 @@ Status: **Architecture**, implementing F5, F6, F7, D9, D10, D11, D16, D17, D19. 
 - **Disconnect:** handled per user and per room as described in the timing protocol. A plain disconnect never abandons a session immediately; `room:leave` does.
 - **Transports:** Socket.IO defaults, polling upgraded to WebSocket (R5). Multiple API instances with polling need sticky sessions. Messages are limited to 16 KB.
 - **Handshake refusals** (`connect_error`, `err.data.code`): `UNAUTHENTICATED`, `SESSION_REVOKED`, `INTERNAL`.
-- **Implemented in Phase 3:** the handshake, the `user:`/`session:` rooms, token-expiry and revocation disconnects, and `time:sync` (answered with Redis TIME, R2). No server → client product events yet (R8).
+- **Implemented in Phase 3:** the handshake, the `user:`/`session:` rooms, token-expiry and revocation disconnects, and `time:sync` (answered with Redis TIME, R2). Phase 4B adds the first server → client product event, `focus:session:updated` (R8, E6; see "Server → client").
 
 ## Client → server
 

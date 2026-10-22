@@ -382,7 +382,35 @@ Technical defaults chosen while implementing Phase 5 (history and summary), 2026
 - **Why:** pause intervals are not stored (D6), so the time actually focused on each side of midnight cannot be reconstructed; the start date is deterministic, matches the history filter and the index, and never changes after a session ends. Every UTC offset in use is a whole number of minutes, so a minute never straddles a local midnight; minute sums keep the rows bounded however many sessions a range holds.
 
 ### V8 — Review web page
-- **Decision:** `/review` (authenticated) shows the last 7 days ending today in the browser's zone (falling back to `UTC` when the browser reports no valid IANA name), with both totals labelled, a per-day table and the paged history (the history list is the whole history, not restricted to the summary range: it sends no `from`/`to`). TanStack Query only, no optimistic updates (E12); review queries refetch whenever the page is shown, because `focus:session:updated` (E6) has no web listener yet.
+- **Decision:** `/review` (authenticated) shows the last 7 days ending today in the browser's zone (falling back to `UTC` when the browser reports no valid IANA name), with both totals labelled, a per-day table and the paged history (the history list is the whole history, not restricted to the summary range: it sends no `from`/`to`). TanStack Query only, no optimistic updates (E12); review queries refetch whenever the page is shown and, since Milestone 5, whenever `focus:session:updated` (E6) arrives (W2).
+
+### Solo Focus web decisions (Phase 4B Milestone 5)
+
+Technical defaults chosen during implementation, awaiting the owner's review. Nothing here changes E1–E23: the server stays authoritative and the browser never decides an outcome.
+
+### W1 — Placement
+- **Decision:** the solo timer is a panel on `/dashboard`, above the tasks; there is no new route.
+- **Why:** the loop is "decide what to work on, then focus", and the dashboard already shows the current task (T5). A separate page would only add navigation between two halves of one step.
+
+### W2 — Source of truth and cache writes
+- **Decision:** `GET /focus-sessions/current` is the truth. A lifecycle answer is written to the cache only after `cancelQueries`, and only about the session the cache already holds; a start alone may fill an empty cache. A late pause, resume or stop for another session therefore cannot replace or hide a newer one, and a session a read saw ending cannot be revived. `focus:session:updated` never writes the current session: it validates the payload, remembers a terminal session for the "what just happened" notice, and invalidates every `['focus-sessions', userId]` query (current, Review history, Review summary), restarting a read already in flight (and asking again once a still-loading first read settles) so that a read answered before the change cannot stand in for it. Every socket (re)connect, the first included, invalidates as well.
+- **Why:** views carry no version, so responses and events can arrive in any order and cannot be ranked; the next read can. Events sent between the handshake and the room join are lost, so a connect must refetch. This also replaces V8's "refetch whenever the page is shown" as the only freshness mechanism. Residual: while the answer to a lifecycle request about the session on screen is late, the screen can show that answer's state for one round trip; the refetch that follows every answer corrects it. With no panel mounted nothing refetches until the next mount, which reads fresh.
+
+### W3 — Countdown is display only
+- **Decision:** remaining time = planned − focused − (server now − `runningSince`) when running, frozen when paused, clamped to `[0, planned]`; a note says the time may be off until the first clock sample. At 0:00 the panel shows "Finishing… waiting for the server to confirm" and re-asks the server (about 0, 2 and 5 s, then every 10 s). It never completes, abandons or stops a session.
+- **Why:** completion can lag the planned end (jobs, grace, the presence-recovery window, E7, E8, E18) and a client clock can be wrong or throttled; D35 puts the decision on the server.
+
+### W4 — Controls
+- **Decision:** all lifecycle controls are disabled while any request is pending; a repeated request with the same variables joins the one in flight; `409 SESSION_IN_PROGRESS` on start adopts the existing session; every mutation error refetches because the request may have committed; stopping asks for an in-page confirmation; keyboard focus follows a replaced control only when focus is free or already inside the panel.
+- **Why:** start is not idempotent but pause, resume and stop are (E11), and the session row lock serialises the rest (E7).
+
+### W5 — Start form
+- **Decision:** 15, 25 or 50 minutes, or custom whole minutes 1–240 (E1); an optional task from the open tasks, preselecting the user's open current task as a visible convenience; starting is not gated on the local socket state, so `409 NOT_CONNECTED` and `503` (E21) are shown as the server's answer.
+- **Why:** E3 forbids the server inferring a task, not the form suggesting one; the local socket state can disagree with the server's presence record, which alone decides.
+
+### W6 — Server emission of `focus:session:updated`
+- **Decision:** the API publishes the event from a listener of its own on the after-commit change bus, separate from the job follow-ups, to `user:{userId}` derived from the session owner. It is typed in `packages/contracts` (`ServerToClientEvents`) and covers requests, jobs and the reconciler alike, since all publish through the same bus.
+- **Why:** persist, then emit; a failing emit must not block scheduling, nor the reverse. The Redis emitter publishes without awaiting, so a failure cannot be caught, but its connection queues commands while Redis is away and clients heal on reconnect.
 
 ## Accepted architecture direction
 

@@ -13,7 +13,10 @@ import {
   createFocusSessionChanges,
   type FocusSessionChanges,
 } from '../modules/focus-sessions/changes.js';
-import { attachFollowUps } from '../modules/focus-sessions/follow-ups.js';
+import {
+  attachFollowUps,
+  attachSessionNotifications,
+} from '../modules/focus-sessions/follow-ups.js';
 import {
   createFocusSessionQueue,
   createFocusSessionScheduler,
@@ -315,6 +318,7 @@ export const createRuntime = async (
     scheduler: focusSessionScheduler,
     markers: focusSessionMarkers,
   });
+  attachSessionNotifications(focusSessionChanges, socketEmitter);
   const hintDeps = {
     db,
     markers: focusSessionMarkers,

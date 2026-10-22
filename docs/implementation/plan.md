@@ -11,7 +11,7 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
 - Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
 - Phase 4A (presence hardening): **merged** into `main` (checkpoint: tag `phase-4a-presence-hardening`); see "Phase 4A" below.
-- Phase 4B (Solo Focus): **in progress** on `v2/phase-4b-solo-focus` — E1–E23 approved; Milestones 1–4 (API, lifecycle jobs, presence integration, reconciler and recovery) implemented; Milestone 5 (web Solo Focus) **not started**. See "Phase 4B" below.
+- Phase 4B (Solo Focus): **in progress** on `v2/phase-4b-solo-focus` — E1–E23 approved; Milestones 1–4 (API, lifecycle jobs, presence integration, reconciler and recovery) implemented; Milestone 5 (web Solo Focus and the `focus:session:updated` event, W1–W6 awaiting review) implemented on `v2/phase-5-review`, uncommitted. See "Phase 4B" below.
 - Phase 5 (review): **in progress** on `v2/phase-5-review` (branched from the Phase 4B branch) — history and summary endpoints and the `/review` page implemented with technical defaults V1–V8 awaiting review; legacy deletion **waits** for the owner's answer on deployment and MongoDB data (`decisions/open-decisions.md`). See "Phase 5" below.
 - Phase 1b and Phase 6 onwards: **not started**. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
@@ -319,14 +319,14 @@ Branch: `v2/phase-4a-presence-hardening`. Decisions H1–H4 (`decisions/decision
 
 ## Phase 4B — Solo Focus (in progress)
 
-Decisions E1–E23 (`decisions/decision-log.md`); protocol in `architecture/focus-timing-protocol.md`, "Solo sessions". Milestones 1–4 are implemented on `v2/phase-4b-solo-focus`; Milestone 5 starts only when explicitly instructed.
+Decisions E1–E23 (`decisions/decision-log.md`); protocol in `architecture/focus-timing-protocol.md`, "Solo sessions". Milestones 1–4 are implemented on `v2/phase-4b-solo-focus`. Milestone 5 (web) was built on `v2/phase-5-review`, on top of Phase 5; decisions W1–W6.
 
 - **Schema:** one migration adding `focus_sessions` (solo only: no room columns, solo abandon reasons only, planned 60–14,400 s, `0 ≤ focused ≤ planned`, `ended_at ≥ started_at`, `running_since ≥ started_at`, completed ⇒ `focused = planned`, one in-progress session per user) (`domain/model.md`).
 - **API:** `POST /focus-sessions`, `GET /focus-sessions/current`, `POST /focus-sessions/:id/pause|resume|stop`, each in one transaction locking the session row, then `focus:session:updated` (E6).
 - **Jobs:** a `focus-session` queue with solo end and solo grace jobs; one decision procedure for running sessions shared by the jobs, the reconciler sweep and pause/stop at the planned end (E7, E8, E9); the monotonic disconnect marker with observed/detected evidence, cleared only while it belongs to the session (E10); reconnect-within-grace recovery (E16); reconciler steps 5–6 (late grace, definite-Redis-loss expiry, 12 h stale cleanup).
 - **Recovery (Milestone 4, E17–E23):** decisions read the epoch atomically with presence and defer during the presence-recovery window; scheduling ensures jobs (retained completed/failed BullMQ jobs re-run with attempts reset); the sweep settles terminal outcomes directly under `FOR UPDATE SKIP LOCKED`; stale cleanup runs after it and without Redis; each worker process owns a reconcile trigger that restores a lost schedule and reconciles directly when runs stop.
 - **Presence:** one small change to the Phase 4A layer: a clean shutdown's cleanup reports the new offline reason `instance_shutdown` instead of `disconnect` (E10), so that only a socket's own disconnect counts as `observed` evidence.
-- **Web:** a solo timer on the dashboard: TanStack Query only, no optimistic updates (E12), countdown from the Redis-TIME clock offset, restore after reload, the socket event applied and followed by a refetch.
+- **Web (Milestone 5, W1–W6):** a solo timer panel on `/dashboard` (`features/focus`): start with a duration and an optional task, running/paused display, pause/resume/stop with an in-page confirmation, restore after reload without a second session, and the server's completion or abandonment shown from `GET /focus-sessions/current`. TanStack Query only, no optimistic updates (E12). The countdown is display only, from the Redis-TIME clock offset. The typed `focus:session:updated` event (emitted by the API after commit, to every tab of the owner) never sets the current session: it triggers a refetch of current, history and summary, as does every socket reconnect.
 - **Tests:** pure timing/transition unit tests with `fast-check` properties (E13); API, PostgreSQL concurrency, Redis/BullMQ and realtime integration tests; web component tests. Playwright stays deferred.
 - **Not in Phase 4B:** rooms, room timers, focus runs, chat, history and summary (Phase 5), AI, notifications, analytics, payments.
 

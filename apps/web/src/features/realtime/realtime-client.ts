@@ -1,6 +1,8 @@
 import {
   type ClientToServerEvents,
   connectErrorDataSchema,
+  type FocusSessionUpdatedEvent,
+  focusSessionUpdatedEventSchema,
   type ServerToClientEvents,
   SOCKET_IO_PATH,
   timeSyncAckSchema,
@@ -21,8 +23,9 @@ import { clearAccessToken, getAccessToken } from '../auth/token-store';
 // Like the access token, it lives in a module rather than React state: non-component code
 // owns it, and React only renders its status.
 //
-// Phase 3 carries no product events: the socket authenticates, keeps presence alive and
-// measures the clock offset. Reconnection rules:
+// The socket authenticates, keeps presence alive, measures the clock offset and delivers
+// `focus:session:updated` (a hint: consumers refetch, docs/api/socket-events.md).
+// Reconnection rules:
 // - The handshake sends the current in-memory access token (never in the URL).
 // - UNAUTHENTICATED (expired or missing token): one shared refresh, then one reconnect.
 //   Refused again with a fresh token → the session is over.
@@ -44,6 +47,8 @@ export type RealtimeSocket = {
   readonly onConnect: (listener: () => void) => void;
   readonly onDisconnect: (listener: (reason: string) => void) => void;
   readonly onConnectError: (listener: (error: Error) => void) => void;
+  /** The raw payload; the client validates it before anyone sees it. */
+  readonly onFocusSessionUpdated: (listener: (payload: unknown) => void) => void;
   readonly timeSync: (request: TimeSyncRequest) => Promise<unknown>;
 };
 
@@ -84,6 +89,9 @@ export const createSocketIoSocket: SocketFactory = (auth) => {
     onConnectError: (listener) => {
       socket.on('connect_error', listener);
     },
+    onFocusSessionUpdated: (listener) => {
+      socket.on('focus:session:updated', listener);
+    },
     timeSync: (request) =>
       new Promise((resolve, reject) => {
         socket
@@ -114,6 +122,15 @@ export type RealtimeClient = {
   readonly disconnect: () => void;
   readonly getStatus: () => RealtimeStatus;
   readonly subscribe: (listener: () => void) => () => void;
+  /**
+   * Validated `focus:session:updated` events. Registered on the client, not the socket, so
+   * it survives the socket being re-created. Malformed payloads are dropped.
+   */
+  readonly onFocusSessionUpdated: (
+    listener: (event: FocusSessionUpdatedEvent) => void,
+  ) => () => void;
+  /** Fires on every successful (re)connect, so consumers can heal events missed meanwhile. */
+  readonly onConnected: (listener: () => void) => () => void;
 };
 
 export type RealtimeDeps = {
@@ -153,6 +170,8 @@ export const createRealtimeClient = ({
   let syncTimer: ReturnType<typeof setInterval> | undefined;
   let socket: RealtimeSocket | undefined;
   const listeners = new Set<() => void>();
+  const focusListeners = new Set<(event: FocusSessionUpdatedEvent) => void>();
+  const connectedListeners = new Set<() => void>();
 
   const setStatus = (next: RealtimeStatus): void => {
     if (next !== status) {
@@ -218,11 +237,24 @@ export const createRealtimeClient = ({
       refreshedSinceConnect = false;
       retryDelayMs = initialRetryMs;
       setStatus('connected');
+      for (const listener of connectedListeners) {
+        listener();
+      }
       void syncClock(created);
       clearInterval(syncTimer);
       syncTimer = setInterval(() => {
         void syncClock(created);
       }, syncIntervalMs);
+    });
+
+    created.onFocusSessionUpdated((payload) => {
+      const parsed = focusSessionUpdatedEventSchema.safeParse(payload);
+      if (!parsed.success) {
+        return;
+      }
+      for (const listener of focusListeners) {
+        listener(parsed.data);
+      }
     });
 
     created.onDisconnect((reason) => {
@@ -303,6 +335,18 @@ export const createRealtimeClient = ({
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+      };
+    },
+    onFocusSessionUpdated: (listener) => {
+      focusListeners.add(listener);
+      return () => {
+        focusListeners.delete(listener);
+      };
+    },
+    onConnected: (listener) => {
+      connectedListeners.add(listener);
+      return () => {
+        connectedListeners.delete(listener);
       };
     },
   };
