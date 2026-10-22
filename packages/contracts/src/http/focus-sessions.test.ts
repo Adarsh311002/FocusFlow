@@ -5,11 +5,17 @@ import { focusSessionIdSchema } from '../ids';
 import {
   abandonReasonSchema,
   currentFocusSessionResponseSchema,
+  FOCUS_SESSION_LIST_DEFAULT_LIMIT,
+  FOCUS_SESSION_LIST_MAX_LIMIT,
   FOCUS_SESSION_PLANNED_SECONDS_MAX,
   FOCUS_SESSION_PLANNED_SECONDS_MIN,
+  FOCUS_SESSION_SUMMARY_MAX_DAYS,
   focusSessionParamsSchema,
   focusSessionStatusSchema,
+  focusSessionSummaryQuerySchema,
+  focusSessionSummaryResponseSchema,
   focusSessionViewSchema,
+  listFocusSessionsQuerySchema,
   sessionInProgressDetailsSchema,
   startFocusSessionRequestSchema,
 } from './focus-sessions';
@@ -186,7 +192,126 @@ describe('responses and errors', () => {
   });
 });
 
+describe('listFocusSessionsQuerySchema (V1, V2)', () => {
+  it('defaults the limit and leaves the range open', () => {
+    expect(listFocusSessionsQuerySchema.parse({})).toEqual({
+      limit: FOCUS_SESSION_LIST_DEFAULT_LIMIT,
+    });
+    expect(FOCUS_SESSION_LIST_DEFAULT_LIMIT).toBe(50);
+    expect(FOCUS_SESSION_LIST_MAX_LIMIT).toBe(100);
+  });
+
+  it('takes instants with an offset and needs from < to', () => {
+    expect(
+      listFocusSessionsQuerySchema.safeParse({ from: AT, to: '2026-10-07T15:30:00.000+05:30' })
+        .success,
+    ).toBe(false);
+    expect(listFocusSessionsQuerySchema.safeParse({ from: AT, to: LATER }).success).toBe(true);
+    expect(listFocusSessionsQuerySchema.safeParse({ from: AT, to: AT }).success).toBe(false);
+    for (const from of ['2026-10-07', '2026-10-07T10:00:00', '2026-10-07T10:00:00.0001Z']) {
+      expect(listFocusSessionsQuerySchema.safeParse({ from }).success).toBe(false);
+    }
+  });
+
+  it('accepts the supported instant range exactly', () => {
+    expect(
+      listFocusSessionsQuerySchema.safeParse({
+        from: '1970-01-01T00:00:00.000Z',
+        to: '9999-12-31T23:59:59.999Z',
+      }).success,
+    ).toBe(true);
+    // The instant counts, not the wall time: this is 1970-01-01T00:00:00Z.
+    expect(
+      listFocusSessionsQuerySchema.safeParse({ from: '1970-01-01T05:30:00.000+05:30' }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    '0000-01-01T00:00:00.000Z',
+    '0001-01-01T00:00:00Z',
+    '1969-12-31T23:59:59.999Z',
+    // In range as a wall time, but 1969-12-31T18:30:00Z as an instant.
+    '1970-01-01T00:00:00.000+05:30',
+    // Four-digit years, pushed out of range by the offset: year 10000 and the BC era.
+    '9999-12-31T23:59:59.999-12:00',
+    '0000-01-01T00:00:00.000+14:00',
+    '+010000-01-01T00:00:00.000Z',
+    // Shaped like an instant but not one: an impossible date and a leap second.
+    '2026-02-31T00:00:00.000Z',
+    '2026-12-31T23:59:60.000Z',
+  ])('rejects the unsupported instant %s as either bound', (bound) => {
+    expect(listFocusSessionsQuerySchema.safeParse({ from: bound }).success).toBe(false);
+    expect(listFocusSessionsQuerySchema.safeParse({ to: bound }).success).toBe(false);
+  });
+
+  it('rejects unknown keys and out-of-range limits', () => {
+    for (const query of [
+      { userId: SESSION_ID },
+      { limit: '0' },
+      { limit: '101' },
+      { limit: 'abc' },
+      { limit: '' },
+      { limit: '1.5' },
+      { cursor: '' },
+      { cursor: 'x'.repeat(129) },
+      // Express hands a repeated query parameter over as an array, never a string.
+      { limit: ['2', '3'] },
+      { cursor: ['a', 'b'] },
+      { from: [AT, LATER] },
+    ]) {
+      expect(listFocusSessionsQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+});
+
+describe('focusSessionSummaryQuerySchema (V3–V5)', () => {
+  const valid = { from: '2026-10-01', to: '2026-10-07', tz: 'Europe/Berlin' };
+
+  it('accepts a range of dates in an IANA zone, up to 366 days', () => {
+    expect(focusSessionSummaryQuerySchema.parse(valid)).toEqual(valid);
+    expect(
+      focusSessionSummaryQuerySchema.safeParse({ ...valid, from: '2026-10-07', to: '2026-10-07' })
+        .success,
+    ).toBe(true);
+    expect(
+      focusSessionSummaryQuerySchema.safeParse({ ...valid, from: '2027-01-01', to: '2028-01-01' })
+        .success,
+    ).toBe(true);
+    expect(FOCUS_SESSION_SUMMARY_MAX_DAYS).toBe(366);
+  });
+
+  it.each([
+    { ...valid, to: '2026-09-30' },
+    { ...valid, from: '2027-01-01', to: '2028-01-02' },
+    { ...valid, tz: '+05:30' },
+    { ...valid, tz: undefined },
+    { ...valid, from: '1969-12-31' },
+    { ...valid, from: '2026-10-01T00:00:00Z' },
+    { ...valid, extra: 'x' },
+  ])('rejects %j', (query) => {
+    expect(focusSessionSummaryQuerySchema.safeParse(query).success).toBe(false);
+  });
+
+  it('describes a dense, non-negative summary', () => {
+    const response = {
+      completedCount: 1,
+      completedFocusedSeconds: 1_500,
+      totalFocusedSeconds: 1_800,
+      days: [{ date: '2026-10-07', completedFocusedSeconds: 1_500, totalFocusedSeconds: 1_800 }],
+    };
+    expect(focusSessionSummaryResponseSchema.parse(response)).toEqual(response);
+    expect(
+      focusSessionSummaryResponseSchema.safeParse({ ...response, completedCount: -1 }).success,
+    ).toBe(false);
+  });
+});
+
 describe('paths', () => {
+  it('serves the summary at its own path, never as a session id', () => {
+    expect(focusSessionPaths.summary).toBe('/focus-sessions/summary');
+    expect(focusSessionParamsSchema.safeParse({ sessionId: 'summary' }).success).toBe(false);
+  });
+
   it('builds per-session paths and validates their parameters', () => {
     const sessionId = focusSessionIdSchema.parse(SESSION_ID);
     expect(focusSessionPath(focusSessionPaths.pause, sessionId)).toBe(
