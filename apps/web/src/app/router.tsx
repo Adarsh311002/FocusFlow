@@ -1,24 +1,12 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 
 import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { ReviewPage } from '../features/review/review-page';
 import { SystemStatus } from '../features/system/system-status';
-
-/** Minimal shell: the app name and a slot for the active route. No design work yet. */
-function RootLayout() {
-  return (
-    <div className="min-h-screen bg-white text-slate-900">
-      <header className="border-b border-slate-200 px-6 py-4">
-        <h1 className="text-lg font-semibold">Focus Flow</h1>
-      </header>
-      <main className="px-6 py-8">
-        <Outlet />
-      </main>
-    </div>
-  );
-}
+import { RootLayout } from './root-layout';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -59,8 +47,29 @@ const dashboardRoute = createRoute({
   component: ProtectedDashboard,
 });
 
+/** The review step of the loop (Phase 5): history and summary, guarded like the dashboard. */
+function ProtectedReview() {
+  return (
+    <RequireAuth>
+      <ReviewPage />
+    </RequireAuth>
+  );
+}
+
+const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/review',
+  component: ProtectedReview,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
-const routeTree = rootRoute.addChildren([indexRoute, loginRoute, signupRoute, dashboardRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  loginRoute,
+  signupRoute,
+  dashboardRoute,
+  reviewRoute,
+]);
 
 export const router = createRouter({ routeTree });
 
