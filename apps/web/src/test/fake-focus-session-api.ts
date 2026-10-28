@@ -78,7 +78,7 @@ export const emptySummary = (days: readonly string[] = []): FakeSummary => ({
   days: days.map((date) => ({ date, completedFocusedSeconds: 0, totalFocusedSeconds: 0 })),
 });
 
-export type FakeAction = 'start' | 'current' | 'pause' | 'resume' | 'stop';
+export type FakeAction = 'start' | 'current' | 'pause' | 'resume' | 'stop' | 'history';
 
 /** What the fake needs to know about a task; the task fake's rows can be mapped onto it. */
 export type FakeTaskLookup = (
@@ -328,6 +328,10 @@ export function createFakeFocusSessionApi(
       );
     }
     if (path === focusSessionPaths.collection && request.method === 'GET') {
+      const failure = consume('history');
+      if (failure !== undefined) {
+        return failure;
+      }
       const limit = Number(url.searchParams.get('limit') ?? options.pageSize ?? 50);
       const cursor = url.searchParams.get('cursor');
       const first =

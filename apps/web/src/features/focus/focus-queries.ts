@@ -4,6 +4,7 @@ import type {
   StartFocusSessionRequest,
 } from '@focus-flow/contracts';
 import {
+  hashKey,
   type QueryClient,
   skipToken,
   useMutation,
@@ -15,6 +16,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { useAuth } from '../auth/auth-context';
 import { useRealtimeClient, useRealtimeStatus } from '../realtime/realtime-provider';
+import { listFocusSessions } from '../review/review-client';
 import { focusSessionKeys } from '../review/review-queries';
 import {
   getCurrentFocusSession,
@@ -44,6 +46,10 @@ export const focusCurrentKey = (userId: string): readonly unknown[] =>
 
 const lastEndedKey = (userId: string): readonly unknown[] =>
   [...focusSessionKeys.all(userId), 'last-ended'] as const;
+
+/** The id of the session whose notice the user dismissed, so a late answer cannot bring it back. */
+const dismissedKey = (userId: string): readonly unknown[] =>
+  [...focusSessionKeys.all(userId), 'dismissed-ending'] as const;
 
 const isEnded = (session: FocusSessionView): boolean => session.status !== 'in_progress';
 
@@ -77,6 +83,11 @@ function rememberEnded(queryClient: QueryClient, userId: string, session: FocusS
   if (!isEnded(session) || session.status === 'in_progress') {
     return;
   }
+  // The user already dismissed this session's notice; a slow read or a duplicate event must
+  // not put it back.
+  if (queryClient.getQueryData<string | null>(dismissedKey(userId)) === session.id) {
+    return;
+  }
   // A late event about an older session must not shadow a newer one that is running now.
   const current = queryClient.getQueryData<FocusSessionView | null>(focusCurrentKey(userId));
   if (
@@ -95,6 +106,95 @@ function rememberEnded(queryClient: QueryClient, userId: string, session: FocusS
     return;
   }
   queryClient.setQueryData(lastEndedKey(userId), session);
+}
+
+/** How many of the newest sessions are read to find the one that was running. */
+const RECONCILE_HISTORY_LIMIT = 10;
+
+/**
+ * A session this tab saw running has disappeared from `GET /focus-sessions/current`, and no
+ * event or answer said how it ended (the tab was offline when the server settled it). Looks
+ * that exact session up in the history and, only if the server records it as ended, remembers
+ * it for the "what just happened" notice. Nothing is concluded otherwise: a failed history
+ * read, a missing record, a record still in progress, or a newer session in front of it all
+ * leave the notice unset, because then the record cannot be told to be this session's outcome.
+ *
+ * Resolves `false` only when the history could not be read, so the caller can try again on a
+ * later read; every other outcome, including "nothing to say", is final.
+ */
+async function reconcileUnseenEnding(
+  queryClient: QueryClient,
+  userId: string,
+  running: FocusSessionView,
+): Promise<boolean> {
+  const known = queryClient.getQueryData<FocusSessionView | null>(lastEndedKey(userId));
+  if (known?.id === running.id) {
+    return true;
+  }
+  let newest: FocusSessionView | undefined;
+  let record: FocusSessionView | undefined;
+  try {
+    const page = await listFocusSessions({ limit: RECONCILE_HISTORY_LIMIT });
+    newest = page.sessions[0];
+    record = page.sessions.find((session) => session.id === running.id);
+  } catch {
+    return false;
+  }
+  // Signed out or switched user while reading: that cache no longer exists.
+  if (queryClient.getQueryState(focusCurrentKey(userId)) === undefined) {
+    return true;
+  }
+  // Matched by id, and only while it is the newest record: if the server has a newer one, the
+  // user has since started (and ended) another session and this outcome would be misleading.
+  if (record === undefined || newest?.id !== record.id) {
+    return true;
+  }
+  rememberEnded(queryClient, userId, record);
+  return true;
+}
+
+/**
+ * Remembers the last in-progress session this tab has seen and reacts when a read that really
+ * landed says there is none: the session ended without this tab being told how.
+ * Manual cache writes (our own mutation answers) are skipped: they already carry the outcome.
+ * Returns the unsubscribe function.
+ */
+function watchForUnseenEnding(queryClient: QueryClient, userId: string): () => void {
+  const key = focusCurrentKey(userId);
+  const currentHash = hashKey(key);
+  const initial = queryClient.getQueryData<FocusSessionView | null>(key);
+  let lastRunning: FocusSessionView | null = initial?.status === 'in_progress' ? initial : null;
+  return queryClient.getQueryCache().subscribe((event) => {
+    if (
+      event.type !== 'updated' ||
+      event.action.type !== 'success' ||
+      event.query.queryHash !== currentHash
+    ) {
+      return;
+    }
+    const data = event.query.state.data as FocusSessionView | null | undefined;
+    if (data?.status === 'in_progress') {
+      lastRunning = data;
+      // A different session is running now: an earlier session's notice must not linger and
+      // read as the outcome of this one when it ends.
+      const shown = queryClient.getQueryData<FocusSessionView | null>(lastEndedKey(userId));
+      if (shown !== null && shown !== undefined && shown.id !== data.id) {
+        queryClient.setQueryData(lastEndedKey(userId), null);
+      }
+    } else if (data === null) {
+      const running = lastRunning;
+      lastRunning = null;
+      if (running !== null && event.action.manual !== true) {
+        void reconcileUnseenEnding(queryClient, userId, running).then((settled) => {
+          // The history could not be read (a flapping connection is when this matters most):
+          // keep the session so the next read that finds none tries again.
+          if (!settled && lastRunning === null) {
+            lastRunning = running;
+          }
+        });
+      }
+    }
+  });
 }
 
 /**
@@ -117,6 +217,10 @@ export function useDismissLastEnded(): () => void {
   const queryClient = useQueryClient();
   const userId = useUserId();
   return useCallback(() => {
+    const shown = queryClient.getQueryData<FocusSessionView | null>(lastEndedKey(userId));
+    if (shown !== null && shown !== undefined) {
+      queryClient.setQueryData(dismissedKey(userId), shown.id);
+    }
     queryClient.setQueryData(lastEndedKey(userId), null);
   }, [queryClient, userId]);
 }
@@ -316,12 +420,14 @@ export function useFocusSessionEvents(): void {
     // Events between the handshake and the room join are lost, so every connect (including
     // the first, and one that happened before this subscription) refetches.
     const offConnected = client.onConnected(refresh);
+    const stopWatching = watchForUnseenEnding(queryClient, userId);
     if (client.getStatus() === 'connected') {
       refresh();
     }
     return () => {
       offEvent();
       offConnected();
+      stopWatching();
     };
   }, [client, queryClient, userId]);
 }

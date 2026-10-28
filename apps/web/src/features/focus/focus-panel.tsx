@@ -10,6 +10,9 @@ import { StartSessionForm } from './start-session-form';
  */
 export function FocusPanel() {
   const current = useCurrentFocusSession();
+  // A session (or "no session") from an earlier successful read. It is what the page last
+  // knew, not proof that the server can be reached now.
+  const known = current.data !== undefined;
 
   let body;
   if (current.isPending) {
@@ -18,23 +21,9 @@ export function FocusPanel() {
         Checking for a running session…
       </p>
     );
-  } else if (current.isError) {
-    body = (
-      <div className="space-y-2">
-        <p role="alert" className="text-sm text-red-700">
-          {focusErrorMessage(current.error)}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            void current.refetch();
-          }}
-          className="rounded border border-slate-300 px-3 py-1 text-sm"
-        >
-          Retry
-        </button>
-      </div>
-    );
+  } else if (current.isError && !known) {
+    // Nothing to show instead: no session was ever read, so the error is all there is.
+    body = <ReadFailure error={current.error} onRetry={current.refetch} />;
   } else if (current.data === null) {
     body = (
       <div className="space-y-3">
@@ -57,7 +46,51 @@ export function FocusPanel() {
       <h3 id="focus-heading" className="text-sm font-semibold uppercase text-slate-600">
         Focus
       </h3>
+      {/* A failed background read must not hide what is already known: the notice sits
+          beside the session, with a way to try again, and says what is shown. */}
+      {current.isError && known && (
+        <ReadFailure
+          error={current.error}
+          onRetry={current.refetch}
+          retrying={current.isFetching}
+          note="Showing what was last known."
+        />
+      )}
       {body}
     </section>
+  );
+}
+
+function ReadFailure({
+  error,
+  onRetry,
+  retrying = false,
+  note,
+}: {
+  error: unknown;
+  onRetry: () => unknown;
+  retrying?: boolean;
+  note?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <p role="alert" className="text-sm text-red-700">
+        {focusErrorMessage(error)}
+        {note === undefined ? '' : ` ${note}`}
+      </p>
+      <button
+        type="button"
+        // Not `disabled`: a disabled button drops keyboard focus while the read is running.
+        aria-disabled={retrying}
+        onClick={() => {
+          if (!retrying) {
+            void onRetry();
+          }
+        }}
+        className="rounded border border-slate-300 px-3 py-1 text-sm aria-disabled:opacity-50"
+      >
+        Retry
+      </button>
+    </div>
   );
 }
