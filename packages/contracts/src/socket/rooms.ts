@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { roomMemberViewSchema, roomTimerSettingsSchema, roomViewSchema } from '../http/rooms';
 import { roomIdSchema, userIdSchema } from '../ids';
+import { timerViewSchema } from './room-timer';
 
 // Room events (Phase 6; docs/api/socket-events.md). Identity never travels in a payload:
 // the server knows who is asking from the handshake, and every `userId` below names
@@ -51,6 +52,8 @@ export const roomSnapshotSchema = z.object({
   presence: z.array(presenceUserSchema),
   /** Host only: knocks waiting for an answer. */
   pendingKnocks: z.array(knockViewSchema).optional(),
+  /** The shared room timer (Phase 7). */
+  timer: timerViewSchema,
   serverNowMs: z.number().int().nonnegative(),
 });
 export type RoomSnapshot = z.infer<typeof roomSnapshotSchema>;

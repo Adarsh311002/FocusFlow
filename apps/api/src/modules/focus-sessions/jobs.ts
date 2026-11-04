@@ -64,6 +64,20 @@ const PENDING_STATES: ReadonlySet<string> = new Set([
 
 export const ENSURE_MAX_ROUNDS = 3;
 
+/** The part of a BullMQ queue `ensureJob` needs (shared with the room-timer queue). */
+export type EnsurableQueue = {
+  readonly getJobState: (jobId: string) => Promise<string>;
+  readonly getJob: (jobId: string) => Promise<
+    | {
+        readonly retry: (
+          state: 'completed' | 'failed',
+          options: { resetAttemptsMade: boolean; resetAttemptsStarted: boolean },
+        ) => Promise<void>;
+      }
+    | undefined
+  >;
+};
+
 export type EnsureOutcome = 'added' | 'pending' | 'retried';
 
 /**
@@ -78,7 +92,7 @@ export type EnsureOutcome = 'added' | 'pending' | 'retried';
  * again is safe: it re-reads everything under the row lock.
  */
 export const ensureJob = async (
-  queue: FocusSessionQueue,
+  queue: EnsurableQueue,
   jobId: string,
   add: () => Promise<unknown>,
 ): Promise<EnsureOutcome> => {

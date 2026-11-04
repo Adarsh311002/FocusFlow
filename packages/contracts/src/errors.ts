@@ -35,6 +35,9 @@ export const errorCodes = [
   'HOST_OFFLINE',
   'ROOM_FULL',
   'RATE_LIMITED',
+  // Room timer (Phase 7, docs/api/socket-events.md)
+  'VERSION_CONFLICT',
+  'INVALID_TRANSITION',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);

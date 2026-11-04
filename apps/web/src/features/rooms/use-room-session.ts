@@ -16,9 +16,13 @@ import { socketErrorMessage } from './room-messages';
  *
  * Returns `rejoin`, for a manual retry after a refusal that is worth trying again.
  */
-export function useRoomSession(roomId: RoomId, enabled: boolean): { rejoin: () => void } {
+export function useRoomSession(
+  roomId: RoomId,
+  enabled: boolean,
+): { rejoin: () => void; refresh: () => void } {
   const client = useRealtimeClient();
   const joinRef = useRef<() => void>(() => undefined);
+  const refreshRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     if (!enabled) {
@@ -64,6 +68,11 @@ export function useRoomSession(roomId: RoomId, enabled: boolean): { rejoin: () =
       join(true);
     };
 
+    // Like rejoin, but does nothing while a join is already out (its answer replaces the state).
+    refreshRef.current = () => {
+      join(false);
+    };
+
     const offConnected = client.onConnected(() => {
       join(false);
     });
@@ -89,11 +98,15 @@ export function useRoomSession(roomId: RoomId, enabled: boolean): { rejoin: () =
       offStatus();
       offEvent();
       joinRef.current = () => undefined;
+      refreshRef.current = () => undefined;
     };
   }, [client, roomId, enabled]);
 
   const rejoin = useCallback(() => {
     joinRef.current();
   }, []);
-  return { rejoin };
+  const refresh = useCallback(() => {
+    refreshRef.current();
+  }, []);
+  return { rejoin, refresh };
 }

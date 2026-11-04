@@ -13,8 +13,10 @@ import { CopyCodeButton, HostBadge, PrivacyBadge } from './room-badges';
 import { getRoomLiveStore, useRoomLive } from './room-live-store';
 import { roomErrorMessage, socketErrorMessage } from './room-messages';
 import { useForgetRoom, useLeaveRoomPermanently, useRoom } from './room-queries';
+import { TimerPanel } from './timer-panel';
 import { TimerSettingsForm } from './timer-settings-form';
 import { useRoomSession } from './use-room-session';
+import { useTimerCommands } from './use-timer-commands';
 
 function BackToRooms() {
   return (
@@ -188,7 +190,8 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
   const { user } = useAuth();
   const realtime = useRealtimeStatus();
   const joined = useRoomLive(room.id, (state) => state.joinStatus === 'joined');
-  const { rejoin } = useRoomSession(room.id, true);
+  const { rejoin, refresh } = useRoomSession(room.id, true);
+  const timerCommands = useTimerCommands(room.id, refresh);
 
   if (user === null) {
     return null;
@@ -209,10 +212,18 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
         <RoomConnection roomId={room.id} rejoin={rejoin} />
       </header>
 
+      <TimerPanel roomId={room.id} isHost={isHost} commands={timerCommands} rejoin={rejoin} />
+
       <MemberList roomId={room.id} isHost={isHost} currentUserId={user.id} />
 
       {isHost && room.isPrivate && <KnockList roomId={room.id} />}
-      {isHost && <TimerSettingsForm roomId={room.id} settings={room.timerSettings} />}
+      {isHost && (
+        <TimerSettingsForm
+          roomId={room.id}
+          settings={room.timerSettings}
+          commands={timerCommands}
+        />
+      )}
 
       <ChatPanel
         roomId={room.id}

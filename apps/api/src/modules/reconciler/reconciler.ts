@@ -12,6 +12,9 @@ import {
   type SweepSummary,
 } from '../focus-sessions/sweep.js';
 import type { InstanceRemovalReason } from '../presence/presence.js';
+import type { RoomTimerScheduler } from '../room-timer/jobs.js';
+import type { RoomTimerService, RoomTimerStore } from '../room-timer/types.js';
+import { type RoomTimerSweepSummary, sweepRoomTimers } from './room-timers.js';
 
 // The reconciler (docs/architecture/focus-timing-protocol.md, "Reconciler"): repairs what
 // the event-driven path can miss. It runs at startup, after Redis recovery and every
@@ -23,7 +26,7 @@ import type { InstanceRemovalReason } from '../presence/presence.js';
 //
 // Implemented steps (the others belong to the phases that own their state):
 //   1. dead instances' presence                                (Phase 3)
-//   2. overdue room timers / missing phase-end jobs             (Phase 7)
+//   2. overdue room timers run their phase end; running timers' phase-end jobs ensured (Phase 7)
 //   3. closed runs in the unsettled set                         (Phase 8)
 //   4. room participants past their grace                       (Phase 8)
 //   5. every running solo session: the decision, settled or its jobs ensured  (Phase 4B)
@@ -36,6 +39,8 @@ export type InstanceCleanup = {
 
 export type ReconcileSummary = {
   readonly deadInstances: readonly string[];
+  /** Step 2 (absent when the room timer is not wired, or the step itself failed). */
+  readonly roomTimers?: RoomTimerSweepSummary;
   /** Step 5 (absent when the focus steps are not wired, or the step itself failed). */
   readonly runningSessions?: SweepSummary;
   /** Step 6. */
@@ -51,6 +56,12 @@ type ReconcilerDeps = {
   readonly logger: Logger;
   /** Solo Focus steps 5 and 6 (Phase 4B). */
   readonly focusSessions?: { readonly deps: LifecycleDeps; readonly options?: SweepOptions };
+  /** Room timer step 2 (Phase 7). */
+  readonly roomTimers?: {
+    readonly store: RoomTimerStore;
+    readonly service: Pick<RoomTimerService, 'completePhase'>;
+    readonly scheduler: RoomTimerScheduler;
+  };
 };
 
 /** How long the liveness record is kept: far longer than any threshold reading it. */
@@ -63,6 +74,7 @@ export const createReconciler = ({
   intervalMs,
   logger,
   focusSessions,
+  roomTimers,
 }: ReconcilerDeps) => {
   let stopping = false;
 
@@ -110,12 +122,19 @@ export const createReconciler = ({
     }
   };
 
-  /** Steps 1, 5 and 6, then the liveness record. Fails (after all steps) if one failed. */
+  /** Steps 1, 2, 5 and 6, then the liveness record. Fails (after all steps) if one failed. */
   const fullRun = async (job: ReconcileJob): Promise<ReconcileSummary> => {
     const errors: unknown[] = [];
     // Step 1 first: its instance_dead hints record markers at the last heartbeat, so step
     // 5 does not start late grace from a later detection time for those users.
     const deadInstances = (await runStep(errors, 'dead instances', removeDeadInstances)) ?? [];
+    // Step 2: room timers are independent of the solo steps; a failing step never stops the next.
+    const roomTimerSummary =
+      roomTimers === undefined
+        ? undefined
+        : await runStep(errors, 'room timers', () =>
+            sweepRoomTimers({ ...roomTimers, redis, logger }, budget()),
+          );
     const runningSessions =
       focusSessions === undefined
         ? undefined
@@ -138,11 +157,14 @@ export const createReconciler = ({
     });
     const summary: ReconcileSummary = {
       deadInstances,
+      ...(roomTimerSummary === undefined ? {} : { roomTimers: roomTimerSummary }),
       ...(runningSessions === undefined ? {} : { runningSessions }),
       ...(staleSessions === undefined ? {} : { staleSessions }),
     };
     const settledAny =
       deadInstances.length > 0 ||
+      (roomTimerSummary?.advanced ?? 0) > 0 ||
+      (roomTimerSummary?.jobsRepaired ?? 0) > 0 ||
       Object.keys(runningSessions?.outcomes ?? {}).some((label) => label.startsWith('settled')) ||
       (staleSessions?.outcomes.expired ?? 0) > 0;
     const log =

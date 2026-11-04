@@ -25,9 +25,9 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
 | `ff:instance:{instanceId}:rooms` | Set | `{roomId}:{userId}:{socketId}`: reverse index of room presence (M5) | Kept equal to the instance's sockets in Socket.IO rooms by its sync on every heartbeat; emptied by clean shutdown or the reconciler. Always changed together with the presence sets |
-| `ff:room:{roomId}:settings` | Hash | `focusSeconds, shortBreakSeconds, longBreakSeconds` (live copy of D16) | Reloaded from PostgreSQL when missing |
-| `ff:room:{roomId}:timer` | Hash | `phase, status, durationMs, segmentStartedAtMs, elapsedBeforeMs, version, focusRunId, updatedAtMs` | Absent = idle focus with saved durations |
-| `ff:rooms:timers:running` | Sorted set | `roomId` scored by `endsAtMs` | Used by the reconciler to find overdue timers |
+| ~~`ff:room:{roomId}:settings`~~ | — | **Not implemented (RT8):** phase durations are read from PostgreSQL whenever a phase is created | — |
+| `ff:room:{roomId}:timer` | Hash | `phase, status, durationMs, segmentStartedAtMs, elapsedBeforeMs, version` (Phase 8 adds `focusRunId`) | Materialised at first access as idle focus with the saved durations, `version` starting at the Redis TIME in milliseconds (RT1, RT2); never expires; recreated after a Redis loss |
+| `ff:rooms:timers:running` | Sorted set | `roomId` scored by `endsAtMs` | Written in the same atomic operation as the timer hash (member present exactly while the timer is running); used by the reconciler to find overdue timers and running timers without a job (RT12) |
 | `ff:room:{roomId}:run:{runId}` | Hash | `status (open\|closed), closeReason, closedAtMs, elapsedAtCloseMs, durationMs` | Deleted after settlement |
 | `ff:room:{roomId}:run:{runId}:participants` | Hash | `userId → { sessionId, optedInAtMs, elapsedAtOptInMs, disconnectedAtMs?, elapsedAtDisconnectMs? }` | Entries removed as participants settle |
 | `ff:runs:unsettled` | Set | `{roomId}/{runId}` | Removed when every participant is settled |

@@ -23,6 +23,9 @@ export const JOIN_RATE: RateRule = { action: 'join', limit: 30, windowMs: 10_000
 /** Cancelling a knock: 10 per minute per user (F6). */
 export const KNOCK_CANCEL_RATE: RateRule = { action: 'knock-cancel', limit: 10, windowMs: 60_000 };
 
+/** Timer commands: 20 per 10 seconds per user (RT5). */
+export const TIMER_RATE: RateRule = { action: 'timer', limit: 20, windowMs: 10_000 };
+
 export type RateLimiter = {
   /** Counts one attempt; `true` while the user is within the limit. */
   readonly consume: (rule: RateRule, userId: string) => Promise<boolean>;

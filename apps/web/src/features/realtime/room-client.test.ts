@@ -163,3 +163,88 @@ describe('room events', () => {
     expect(parseRoomServerEvent('focus:session:updated', {})).toBeNull();
   });
 });
+
+describe('timer commands', () => {
+  const timer = {
+    roomId: ROOM_ID,
+    phase: 'focus',
+    status: 'running',
+    durationMs: 1_500_000,
+    elapsedBeforeMs: 0,
+    segmentStartedAtMs: 1_000,
+    endsAtMs: 1_501_000,
+    version: 1_001,
+  };
+
+  it('sends only the room and the command, and validates an accepted answer', async () => {
+    const { client, sent, serverConnects } = setup(() =>
+      Promise.resolve({ ok: true, timer, serverNowMs: 2_000 }),
+    );
+    serverConnects();
+    const ack = await client.sendTimerCommand(ROOM, { type: 'reset', expectedVersion: 1_000 });
+    expect(ack).toMatchObject({ ok: true, timer: { version: 1_001 }, serverNowMs: 2_000 });
+    expect(sent).toEqual([
+      {
+        event: 'room:timer:command',
+        payload: { roomId: ROOM_ID, command: { type: 'reset', expectedVersion: 1_000 } },
+      },
+    ]);
+  });
+
+  it('keeps the details of a rejection so the caller can catch up', async () => {
+    const details = { timer, serverNowMs: 2_000 };
+    const { client, serverConnects } = setup(() =>
+      Promise.resolve({
+        ok: false,
+        error: { code: 'VERSION_CONFLICT', message: 'Changed.', details },
+      }),
+    );
+    serverConnects();
+    expect(await client.sendTimerCommand(ROOM, { type: 'start' })).toEqual({
+      ok: false,
+      error: { code: 'VERSION_CONFLICT', message: 'Changed.', details },
+    });
+  });
+
+  it('answers MALFORMED_RESPONSE for an accepted answer without a valid timer', async () => {
+    const { client, serverConnects } = setup(() =>
+      Promise.resolve({ ok: true, timer: { ...timer, status: 'exploding' }, serverNowMs: 1 }),
+    );
+    serverConnects();
+    expect(await client.sendTimerCommand(ROOM, { type: 'pause' })).toMatchObject({
+      ok: false,
+      error: { code: 'MALFORMED_RESPONSE' },
+    });
+  });
+
+  it('answers OFFLINE without sending while disconnected, and TIMEOUT when unanswered', async () => {
+    const offline = setup();
+    expect(await offline.client.sendTimerCommand(ROOM, { type: 'start' })).toMatchObject({
+      ok: false,
+      error: { code: 'OFFLINE' },
+    });
+    expect(offline.sent).toHaveLength(0);
+
+    const slow = setup(() => Promise.reject(new Error('operation has timed out')));
+    slow.serverConnects();
+    expect(await slow.client.sendTimerCommand(ROOM, { type: 'start' })).toMatchObject({
+      ok: false,
+      error: { code: 'TIMEOUT' },
+    });
+  });
+
+  it('delivers validated room:timer:state events and drops malformed ones', () => {
+    const { client, serverSends } = setup();
+    const seen: RoomServerEvent[] = [];
+    client.onRoomEvent((event) => seen.push(event));
+    serverSends('room:timer:state', { roomId: ROOM_ID, timer, serverNowMs: 5 });
+    serverSends('room:timer:state', {
+      roomId: ROOM_ID,
+      timer: { ...timer, version: -1 },
+      serverNowMs: 5,
+    });
+    serverSends('room:timer:state', { roomId: ROOM_ID, timer });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ name: 'room:timer:state' });
+  });
+});

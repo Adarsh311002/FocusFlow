@@ -1,6 +1,7 @@
 import {
   type Browser,
   type BrowserContext,
+  type BrowserContextOptions,
   expect,
   type Locator,
   type Page,
@@ -22,9 +23,15 @@ const unique = (): string => Math.random().toString(36).slice(2, 8);
 export const PASSWORD = 'correct horse battery staple';
 
 /** Opens a fresh context, signs a new, uniquely named user up and lands on the dashboard. */
-export async function signUp(browser: Browser, label: string): Promise<Person> {
+export const emailOf = (name: string): string => `${name.toLowerCase()}@e2e.test`;
+
+export async function signUp(
+  browser: Browser,
+  label: string,
+  contextOptions: BrowserContextOptions = {},
+): Promise<Person> {
   const name = `${label}${unique()}`;
-  const context = await browser.newContext();
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   const person: Person = { name, context, page, errors: [], ignoreErrors: false };
 
@@ -53,7 +60,7 @@ export async function signUp(browser: Browser, label: string): Promise<Person> {
 
   await page.goto('/signup');
   await page.getByLabel('Display name').fill(name);
-  await page.getByLabel('Email').fill(`${name.toLowerCase()}@e2e.test`);
+  await page.getByLabel('Email').fill(emailOf(name));
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL(/\/dashboard/);

@@ -4,6 +4,7 @@ import {
   roomIdSchema,
   roomJoinRequestSchema,
   roomRequestSchema,
+  roomTimerCommandRequestSchema,
   userIdSchema,
 } from '@focus-flow/contracts';
 import type { Redis } from 'ioredis';
@@ -15,6 +16,8 @@ import { redisTimeMs } from '../../platform/redis.js';
 import type { SocketEmitter } from '../../platform/socket.js';
 import type { PresenceCheck } from '../presence/store.js';
 import { type AppSocket, roomRoom, userRoom } from '../realtime/types.js';
+import { timerMachine } from '../room-timer/machine.js';
+import type { RoomTimerService } from '../room-timer/types.js';
 import type { ChatDedupe } from './chat.js';
 import type { KnockStore } from './knocks.js';
 import {
@@ -23,6 +26,7 @@ import {
   KNOCK_CANCEL_RATE,
   KNOCK_RATE,
   type RateLimiter,
+  TIMER_RATE,
 } from './limiter.js';
 import { findRoom, findRoomForMember, findUserProfiles, isRoomMember } from './queries.js';
 import type { RoomPresence } from './room-presence.js';
@@ -37,11 +41,14 @@ import { buildSnapshot } from './snapshot.js';
 
 export class SocketAckError extends Error {
   readonly code: ErrorCode;
+  /** Structured context for the client (e.g. the current timer on a conflict, RT6). */
+  readonly details: object | undefined;
 
-  constructor(code: ErrorCode, message: string) {
+  constructor(code: ErrorCode, message: string, details?: object) {
     super(message);
     this.name = 'SocketAckError';
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -54,6 +61,8 @@ export type RoomHandlerDeps = {
   readonly knocks: KnockStore;
   readonly limiter: RateLimiter;
   readonly chat: ChatDedupe;
+  /** The shared room timer (Phase 7). */
+  readonly timer: RoomTimerService;
   /** User-level presence (the host must be online to be knocked on, D20). */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
   readonly maxPresent: number;
@@ -93,7 +102,14 @@ export const respondTo = async (
     reply(ack, { ok: true, ...(await work()) });
   } catch (error) {
     if (error instanceof SocketAckError) {
-      reply(ack, { ok: false, error: { code: error.code, message: error.message } });
+      reply(ack, {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.details === undefined ? {} : { details: error.details }),
+        },
+      });
       return;
     }
     logger.error({ err: error, event }, 'Room event failed');
@@ -102,7 +118,7 @@ export const respondTo = async (
 };
 
 export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): void => {
-  const { db, redis, emitter, logger, presence, knocks, limiter, chat } = deps;
+  const { db, redis, emitter, logger, presence, knocks, limiter, chat, timer } = deps;
   const { userId } = socket.data;
   // Rooms in which this socket recorded presence; its disconnect removes exactly these.
   const recorded = new Set<string>();
@@ -179,25 +195,42 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
     // Everything slow is read first and the presence list last (F3): the socket is already
     // in the Socket.IO room, so any change after the presence read reaches it as an event,
     // and the snapshot is never older than an event the client has applied.
-    const pending = room.hostId === userId ? await knocks.list(roomId) : [];
-    const knockers = await findUserProfiles(
-      db,
-      pending.map((knock) => knock.userId),
-    );
-    const [presentByRoom, serverNowMs] = await Promise.all([
-      presence.present([roomId]),
-      redisTimeMs(redis),
-    ]);
-    return {
-      snapshot: buildSnapshot({
-        room,
-        viewerId: userId,
-        present: presentByRoom.get(roomId) ?? [],
-        knocks: pending,
-        knockers,
-        serverNowMs,
-      }),
-    };
+    // A failure while assembling the snapshot (a Redis blip, a malformed timer) must not
+    // leave a half-joined socket: the join is undone before the error is reported.
+    try {
+      const pending = room.hostId === userId ? await knocks.list(roomId) : [];
+      const knockers = await findUserProfiles(
+        db,
+        pending.map((knock) => knock.userId),
+      );
+      // The timer is created on first access (RT1). Read before the presence list: a change
+      // after this read reaches the socket (already in the Socket.IO room) as an event with a
+      // higher version, which the client applies over the snapshot.
+      const current = await timer.get(roomId);
+      if (current === undefined) {
+        throw new SocketAckError('ROOM_NOT_FOUND', 'This room does not exist.');
+      }
+      const [presentByRoom, serverNowMs] = await Promise.all([
+        presence.present([roomId]),
+        redisTimeMs(redis),
+      ]);
+      return {
+        snapshot: buildSnapshot({
+          room,
+          viewerId: userId,
+          present: presentByRoom.get(roomId) ?? [],
+          knocks: pending,
+          knockers,
+          timer: timerMachine.toView(roomId, current.state),
+          serverNowMs,
+        }),
+      };
+    } catch (error) {
+      if (!wasInRoom) {
+        await undoJoin(roomId);
+      }
+      throw error;
+    }
   };
 
   const leave = async (request: unknown): Promise<object> => {
@@ -297,6 +330,39 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
     return claim.ids;
   };
 
+  const timerCommand = async (request: unknown): Promise<object> => {
+    const { roomId, command } = parsePayload(roomTimerCommandRequestSchema, request);
+    // A socket outside the room learns and changes nothing.
+    if (!inRoom(roomId)) {
+      throw new SocketAckError('NOT_JOINED', 'You have not joined this room.');
+    }
+    if (!(await limiter.consume(TIMER_RATE, userId))) {
+      throw new SocketAckError('RATE_LIMITED', 'You are sending timer commands too fast.');
+    }
+    // The host is decided by PostgreSQL on every command (RT5), never by the socket.
+    const room = await findRoom(db, roomId);
+    if (room === undefined) {
+      throw new SocketAckError('ROOM_NOT_FOUND', 'This room does not exist.');
+    }
+    if (room.hostId !== userId) {
+      throw new SocketAckError('NOT_HOST', 'Only the host can control the timer.');
+    }
+    const outcome = await timer.command(roomId, command);
+    if (outcome.ok) {
+      return { timer: timerMachine.toView(roomId, outcome.state), serverNowMs: outcome.nowMs };
+    }
+    if (outcome.code === 'ROOM_NOT_FOUND') {
+      throw new SocketAckError('ROOM_NOT_FOUND', outcome.message);
+    }
+    throw new SocketAckError(
+      outcome.code,
+      outcome.message,
+      outcome.state === undefined || outcome.nowMs === undefined
+        ? undefined
+        : { timer: timerMachine.toView(roomId, outcome.state), serverNowMs: outcome.nowMs },
+    );
+  };
+
   socket.on('room:join', (request, ack) => {
     void respondTo(logger, 'room:join', ack, () => join(request));
   });
@@ -311,6 +377,10 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
   });
   socket.on('room:chat:send', (request, ack) => {
     void respondTo(logger, 'room:chat:send', ack, () => sendChat(request));
+  });
+
+  socket.on('room:timer:command', (request, ack) => {
+    void respondTo(logger, 'room:timer:command', ack, () => timerCommand(request));
   });
 
   socket.on('disconnect', () => {

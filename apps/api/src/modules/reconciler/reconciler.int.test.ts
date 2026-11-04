@@ -302,6 +302,8 @@ describe('shutdown order', () => {
       'maintenance queue',
       'focus-session worker',
       'focus-session queue',
+      'room-timer worker',
+      'room-timer queue',
       'redis connections',
     ]);
   });

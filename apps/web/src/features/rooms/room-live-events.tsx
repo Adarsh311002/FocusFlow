@@ -27,6 +27,10 @@ export function RoomLiveEvents({ client, userId }: { client: RealtimeClient; use
         case 'room:presence:left':
           getRoomLiveStore(event.payload.roomId).getState().presenceLeft(event.payload.userId);
           return;
+        case 'room:timer:state':
+          // Applied only if newer than the held state; the store enforces it (RT2).
+          getRoomLiveStore(event.payload.roomId).getState().timerReceived(event.payload.timer);
+          return;
         case 'room:chat:message':
           getRoomLiveStore(event.payload.roomId).getState().chatReceived(event.payload);
           return;

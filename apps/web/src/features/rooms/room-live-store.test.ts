@@ -6,11 +6,13 @@ import {
   type RoomId,
   roomIdSchema,
   roomSnapshotSchema,
+  type TimerView,
   type UserId,
   userIdSchema,
 } from '@focus-flow/contracts';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { timerView } from '../../test/fake-room-client';
 import {
   type ChatEntry,
   createRoomLiveStore,
@@ -26,13 +28,15 @@ const OTHER_ROOM: RoomId = roomIdSchema.parse('0191a3b2-7c4d-7e5f-8a9b-0c1d2e3f4
 const ADA: UserId = userIdSchema.parse('3f1c4b0a-5b6d-4e2f-9a8b-7c6d5e4f3a2b');
 const GRACE: UserId = userIdSchema.parse('7b0a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d');
 
+const TIMER = timerView(ROOM);
+
 const person = (userId: UserId, displayName: string): PresenceUser => ({
   userId,
   displayName,
   avatarUrl: null,
 });
 
-const snapshot = (present: PresenceUser[]) =>
+const snapshot = (present: PresenceUser[], timer: TimerView = TIMER) =>
   roomSnapshotSchema.parse({
     room: {
       id: ROOM,
@@ -44,6 +48,7 @@ const snapshot = (present: PresenceUser[]) =>
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     presence: present,
+    timer,
     serverNowMs: 1,
   });
 
@@ -284,5 +289,89 @@ describe('knock store', () => {
     expect(getRoomLiveStore(ROOM).getState().presence).toEqual([]);
     expect(useKnockStore.getState().incoming).toEqual({});
     expect(useKnockStore.getState().outgoing).toEqual({});
+  });
+});
+
+describe('room live store: the shared timer', () => {
+  const at = (version: number, overrides: Partial<TimerView> = {}) =>
+    timerView(ROOM, { version, ...overrides });
+
+  it('has no timer until the first snapshot, which is authoritative', () => {
+    const store = createRoomLiveStore(ROOM);
+    expect(store.getState().timer).toBeNull();
+    store.getState().joined(snapshot([], at(5)));
+    expect(store.getState().timer?.version).toBe(5);
+  });
+
+  it('applies a newer event and ignores an older or equal one', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joined(snapshot([], at(10)));
+    store.getState().timerReceived(at(11, { status: 'paused' }));
+    expect(store.getState().timer).toMatchObject({ version: 11, status: 'paused' });
+    store.getState().timerReceived(at(10, { status: 'running' }));
+    store.getState().timerReceived(at(11, { status: 'running' }));
+    expect(store.getState().timer).toMatchObject({ version: 11, status: 'paused' });
+  });
+
+  it("ignores another room's timer", () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joined(snapshot([], at(10)));
+    store.getState().timerReceived(timerView(OTHER_ROOM, { version: 99 }));
+    expect(store.getState().timer?.version).toBe(10);
+  });
+
+  it('lets a snapshot replace the held timer even when its version is lower (after Redis loss)', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joined(snapshot([], at(500, { status: 'paused' })));
+    store.getState().joining();
+    store.getState().joined(snapshot([], at(3)));
+    expect(store.getState().timer).toMatchObject({ version: 3, status: 'idle' });
+  });
+
+  it('replays the newest event that arrived between the request and an older snapshot', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().timerReceived(at(8, { status: 'running' }));
+    store.getState().timerReceived(at(9, { status: 'paused' }));
+    store.getState().timerReceived(at(7));
+    store.getState().joined(snapshot([], at(6)));
+    expect(store.getState().timer).toMatchObject({ version: 9, status: 'paused' });
+  });
+
+  it('keeps the snapshot when it is newer than the buffered events', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().timerReceived(at(8));
+    store.getState().joined(snapshot([], at(12, { status: 'running' })));
+    expect(store.getState().timer).toMatchObject({ version: 12, status: 'running' });
+  });
+
+  it('does not carry a buffered event into a later join once answered or abandoned', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().timerReceived(at(50));
+    store.getState().joined(snapshot([], at(1)));
+    expect(store.getState().timer?.version).toBe(50);
+    store.getState().joining();
+    store.getState().joined(snapshot([], at(2)));
+    expect(store.getState().timer?.version).toBe(2);
+
+    store.getState().joining();
+    store.getState().timerReceived(at(70));
+    store.getState().disconnected();
+    store.getState().joined(snapshot([], at(3)));
+    expect(store.getState().timer?.version).toBe(3);
+  });
+
+  it('keeps the last timer while disconnected, and forgets it on removal or reset', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joined(snapshot([], at(10)));
+    store.getState().disconnected();
+    expect(store.getState().timer?.version).toBe(10);
+    store.getState().memberRemoved('removed');
+    expect(store.getState().timer).toBeNull();
+    store.getState().joined(snapshot([], at(10)));
+    store.getState().reset();
+    expect(store.getState().timer).toBeNull();
   });
 });

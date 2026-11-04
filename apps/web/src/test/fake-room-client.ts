@@ -1,4 +1,4 @@
-import type { ErrorCode } from '@focus-flow/contracts';
+import { type ErrorCode, type TimerView, timerViewSchema } from '@focus-flow/contracts';
 import { vi } from 'vitest';
 
 import type { RealtimeClient } from '../features/realtime/realtime-client';
@@ -13,6 +13,7 @@ import {
   type RoomServerEvent,
   type RoomServerEventName,
   type SocketFailureCode,
+  type TimerAck,
 } from '../features/realtime/room-events';
 import type { FakeRoom } from './fake-room-api';
 import { NAMES } from './fake-room-api';
@@ -30,11 +31,26 @@ export const presenceUser = (userId: string) => ({
   avatarUrl: null,
 });
 
+/** A validated timer as the server would send it; an idle 25-minute focus phase by default. */
+export const timerView = (roomId: string, overrides: Partial<TimerView> = {}): TimerView =>
+  timerViewSchema.parse({
+    roomId,
+    phase: 'focus',
+    status: 'idle',
+    durationMs: 1_500_000,
+    elapsedBeforeMs: 0,
+    segmentStartedAtMs: null,
+    endsAtMs: null,
+    version: 1_000,
+    ...overrides,
+  });
+
 /** A validated `room:join` acknowledgement (so ids are branded, as in production). */
 export function joinOk(
   room: FakeRoom,
   presentIds: string[],
   pendingKnocks?: Array<{ userId: string; expiresAtMs: number }>,
+  timer?: Partial<TimerView>,
 ): JoinAck {
   return roomAckSchemas.join.parse({
     ok: true,
@@ -57,10 +73,15 @@ export function joinOk(
               expiresAtMs: knock.expiresAtMs,
             })),
           }),
+      timer: timerView(room.id, timer),
       serverNowMs: Date.now(),
     },
   });
 }
+
+/** A validated accepted-command acknowledgement. */
+export const timerOk = (timer: TimerView): TimerAck =>
+  roomAckSchemas.timer.parse({ ok: true, timer, serverNowMs: Date.now() });
 
 /** A validated server event, so a test cannot push a payload the real client would drop. */
 export function serverEvent(name: RoomServerEventName, payload: unknown): RoomServerEvent {
@@ -72,7 +93,7 @@ export function serverEvent(name: RoomServerEventName, payload: unknown): RoomSe
 }
 
 /**
- * The stub realtime client with the five room requests as programmable mocks. Each defaults
+ * The stub realtime client with the six room requests as programmable mocks. Each defaults
  * to a refusal until a test says what the server answers.
  */
 export function createFakeRoomClient() {
@@ -87,12 +108,16 @@ export function createFakeRoomClient() {
     Promise.resolve(roomAckSchemas.empty.parse({ ok: true })),
   );
   const sendChat = vi.fn<RealtimeClient['sendChat']>((): Promise<ChatAck> => refuse());
+  const sendTimerCommand = vi.fn<RealtimeClient['sendTimerCommand']>((): Promise<TimerAck> =>
+    refuse(),
+  );
   return Object.assign(stub, {
     joinRoom,
     leaveRoom,
     knockRoom,
     cancelKnock,
     sendChat,
+    sendTimerCommand,
     /** Pushes a server event, validated like the real client does. */
     push: (name: RoomServerEventName, payload: unknown) => {
       stub.emitRoomEvent(serverEvent(name, payload));

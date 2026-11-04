@@ -4,6 +4,11 @@ import { focusSessionViewSchema } from '../http/focus-sessions';
 import type { AuthSessionId, UserId } from '../ids';
 import { type Ack, type AckError, ackErrorSchema } from './ack';
 import type {
+  RoomTimerCommandRequest,
+  RoomTimerCommandResult,
+  RoomTimerStateEvent,
+} from './room-timer';
+import type {
   RoomChatMessageEvent,
   RoomChatSendRequest,
   RoomChatSendResult,
@@ -59,6 +64,10 @@ export type ClientToServerEvents = {
     request: RoomChatSendRequest,
     ack: (response: Ack<RoomChatSendResult>) => void,
   ) => void;
+  'room:timer:command': (
+    request: RoomTimerCommandRequest,
+    ack: (response: Ack<RoomTimerCommandResult>) => void,
+  ) => void;
 };
 
 /**
@@ -82,6 +91,7 @@ export type ServerToClientEvents = {
   'room:knock:resolved': (event: RoomKnockResolvedEvent) => void;
   'room:chat:message': (event: RoomChatMessageEvent) => void;
   'room:resync': (event: RoomResyncEvent) => void;
+  'room:timer:state': (event: RoomTimerStateEvent) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

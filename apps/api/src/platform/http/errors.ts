@@ -50,6 +50,8 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
   HOST_OFFLINE: 409,
   ROOM_FULL: 409,
   RATE_LIMITED: 429,
+  VERSION_CONFLICT: 409,
+  INVALID_TRANSITION: 409,
 };
 
 /** An AppError with the default status of its code. */

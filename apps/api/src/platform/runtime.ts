@@ -48,6 +48,18 @@ import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
 import { createRoomRealtime, type RoomRealtime } from '../modules/room-realtime/module.js';
+import { attachTimerFollowUps } from '../modules/room-realtime/timer-follow-ups.js';
+import {
+  createRoomTimerQueue,
+  createRoomTimerScheduler,
+  createRoomTimerWorker,
+  type RoomTimerQueue,
+  type RoomTimerScheduler,
+} from '../modules/room-timer/jobs.js';
+import { createRoomTimerService } from '../modules/room-timer/service.js';
+import { createTimerSettingsReader } from '../modules/room-timer/settings.js';
+import { createRoomTimerStore } from '../modules/room-timer/store.js';
+import type { RoomTimerService, RoomTimerStore } from '../modules/room-timer/types.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
 import { createEpochMonitor, type EpochMonitor } from './epoch.js';
@@ -132,6 +144,13 @@ export type Runtime = {
   readonly presence: Presence;
   /** The realtime side of rooms (Phase 6); exposed so tests can observe and gate its seams. */
   readonly roomRealtime: RoomRealtime;
+  /** The shared room timer (Phase 7): store, use cases, phase-end queue and scheduler. */
+  readonly roomTimer: {
+    readonly store: RoomTimerStore;
+    readonly service: RoomTimerService;
+    readonly scheduler: RoomTimerScheduler;
+    readonly queue: RoomTimerQueue;
+  };
   /** After-commit focus-session changes (events and jobs attach here in later milestones). */
   readonly focusSessionChanges: FocusSessionChanges;
   /** The Solo Focus lifecycle: marker store, job scheduler and queue (Phase 4B). */
@@ -261,6 +280,23 @@ export const createRuntime = async (
   // MULTI on the general client (E17); the marker connection is only for WATCH writes.
   const snapshotUser = createDecisionSnapshots(presenceStore);
 
+  // The room timer (Phase 7): every role can enqueue its phase-end jobs and emit its state
+  // (a worker-only process advances phases); only workers process the queue.
+  const roomTimerStore = createRoomTimerStore(redis);
+  const roomTimerService = createRoomTimerService({
+    store: roomTimerStore,
+    readSettings: createTimerSettingsReader(db),
+    logger,
+  });
+  const roomTimerQueue = createRoomTimerQueue(queueConnection, config);
+  const roomTimerScheduler = createRoomTimerScheduler(roomTimerQueue);
+  // Schedule first, then emit (RT13); both only log their failures.
+  attachTimerFollowUps(roomTimerService, {
+    scheduler: roomTimerScheduler,
+    emitter: socketEmitter,
+    logger,
+  });
+
   // The realtime side of rooms (Phase 6): room presence, knocks, chat. The REST module
   // reaches it only through the RoomLive port.
   const roomRealtime = createRoomRealtime({
@@ -272,6 +308,7 @@ export const createRuntime = async (
     instanceTtlMs: config.INSTANCE_TTL_MS,
     knockTtlMs: config.KNOCK_TTL_MS,
     maxPresent: config.ROOM_MAX_PRESENT,
+    timer: roomTimerService,
     checkUser: presenceStore.checkUser,
   });
 
@@ -383,6 +420,19 @@ export const createRuntime = async (
           },
         });
 
+  const roomTimerWorkerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const roomTimerWorker =
+    roomTimerWorkerConnection === undefined
+      ? undefined
+      : createRoomTimerWorker({
+          connection: roomTimerWorkerConnection,
+          config,
+          logger,
+          service: roomTimerService,
+        });
+
   const reconciler = createReconciler({
     redis,
     presence: instanceCleanup,
@@ -390,6 +440,7 @@ export const createRuntime = async (
     intervalMs: config.RECONCILER_INTERVAL_MS,
     logger,
     focusSessions: { deps: lifecycleDeps },
+    roomTimers: { store: roomTimerStore, service: roomTimerService, scheduler: roomTimerScheduler },
   });
   const maintenanceWorker =
     workerConnection === undefined
@@ -459,6 +510,15 @@ export const createRuntime = async (
           },
         ]),
     { name: 'focus-session queue', run: () => focusSessionQueue.close() },
+    ...(roomTimerWorker === undefined
+      ? []
+      : [
+          {
+            name: 'room-timer worker',
+            run: () => roomTimerWorker.close(roomTimerWorkerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'room-timer queue', run: () => roomTimerQueue.close() },
     {
       name: 'redis connections',
       run: () =>
@@ -469,6 +529,7 @@ export const createRuntime = async (
           markerConnection,
           ...(workerConnection === undefined ? [] : [workerConnection]),
           ...(focusWorkerConnection === undefined ? [] : [focusWorkerConnection]),
+          ...(roomTimerWorkerConnection === undefined ? [] : [roomTimerWorkerConnection]),
         ),
     },
   ];
@@ -494,6 +555,9 @@ export const createRuntime = async (
     started = true;
     await heartbeat.start();
     await ensureSchedule();
+    roomTimerWorker?.run().catch((error: unknown) => {
+      logger.error({ err: error, instanceId }, 'The room-timer worker stopped unexpectedly');
+    });
     focusSessionWorker?.run().catch((error: unknown) => {
       logger.error({ err: error, instanceId }, 'The focus-session worker stopped unexpectedly');
     });
@@ -544,6 +608,12 @@ export const createRuntime = async (
       snapshotUser,
       scheduler: focusSessionScheduler,
       queue: focusSessionQueue,
+    },
+    roomTimer: {
+      store: roomTimerStore,
+      service: roomTimerService,
+      scheduler: roomTimerScheduler,
+      queue: roomTimerQueue,
     },
     maintenanceQueue,
     maintenanceWorker,

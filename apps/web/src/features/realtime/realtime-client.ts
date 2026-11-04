@@ -4,6 +4,7 @@ import {
   type FocusSessionUpdatedEvent,
   focusSessionUpdatedEventSchema,
   type RoomId,
+  type RoomTimerCommandRequest,
   type ServerToClientEvents,
   SOCKET_IO_PATH,
   timeSyncAckSchema,
@@ -33,6 +34,7 @@ import {
   type RoomFailureAck,
   type RoomServerEvent,
   type SocketFailureCode,
+  type TimerAck,
 } from './room-events';
 
 // The live connection to the API (docs/architecture/auth.md, "Socket authentication").
@@ -201,6 +203,14 @@ export type RealtimeClient = {
   readonly cancelKnock: (roomId: RoomId) => Promise<EmptyRoomAck>;
   /** A retry with the same `clientMessageId` is answered, not delivered twice (M8). */
   readonly sendChat: (roomId: RoomId, clientMessageId: string, body: string) => Promise<ChatAck>;
+  /**
+   * A host timer command (Phase 7). A rejection for a stale version or an impossible
+   * transition carries the current timer in `error.details` (RT6).
+   */
+  readonly sendTimerCommand: (
+    roomId: RoomId,
+    command: RoomTimerCommandRequest['command'],
+  ) => Promise<TimerAck>;
 };
 
 export type RealtimeDeps = {
@@ -470,6 +480,8 @@ export const createRealtimeClient = ({
     cancelKnock: (roomId) => sendRoomEvent('room:knock:cancel', { roomId }, roomAckSchemas.empty),
     sendChat: (roomId, clientMessageId, body) =>
       sendRoomEvent('room:chat:send', { roomId, clientMessageId, body }, roomAckSchemas.chat),
+    sendTimerCommand: (roomId, command) =>
+      sendRoomEvent('room:timer:command', { roomId, command }, roomAckSchemas.timer),
   };
 };
 

@@ -76,6 +76,7 @@ export function createStubRealtimeClient(): RealtimeClient & {
     knockRoom: () => Promise.resolve(OFFLINE),
     cancelKnock: () => Promise.resolve(OFFLINE),
     sendChat: () => Promise.resolve(OFFLINE),
+    sendTimerCommand: () => Promise.resolve(OFFLINE),
     setStatus,
     emitRoomEvent: (event) => {
       for (const listener of [...roomListeners]) {

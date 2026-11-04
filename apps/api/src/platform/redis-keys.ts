@@ -29,6 +29,10 @@ export const redisKeys = {
   /** Set of `{roomId}:{userId}:{socketId}` served by one instance: the reverse index (M5). */
   instanceRooms: (instanceId: string) => `instance:${instanceId}:rooms`,
   /** Sorted set: the userId of a pending knock, scored by its expiresAtMs (M7). */
+  /** Hash: the room timer state (RT1, RT2); created at first access, never expires. */
+  roomTimer: (roomId: string) => `room:${roomId}:timer`,
+  /** Sorted set: roomId scored by `endsAtMs` of every running timer (the reconciler, RT12). */
+  runningTimers: `rooms:timers:running`,
   roomKnocks: (roomId: string) => `room:${roomId}:knocks`,
   /**
    * `SET NX` marker holding `messageId:sentAtMs` for 60 s (M8), per user, room and client

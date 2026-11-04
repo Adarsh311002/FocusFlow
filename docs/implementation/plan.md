@@ -201,7 +201,7 @@ Naming: UPPER_SNAKE_CASE, units in the name (`_SECONDS`, `_MS`), `_URL` for conn
 | 4 Solo focus | Solo sessions with pause, server-driven completion, grace, stale cleanup | 2, 3 | Every solo transition and race tested | — |
 | 5 Review | History and summary | 4 | Timezone aggregation tested | **Solo core loop**; legacy deleted (still waiting on the owner's answer, see "Phase 5") |
 | 6 Rooms and presence | Rooms, membership, knocks, room presence, temporary chat; Playwright added | 3 | Permission, knock and multi-client tests | — |
-| 7 Room timer | Pure timer logic, version-checked writes, host commands, phase-end jobs, D16 settings | 6 | Property and race tests pass | — |
+| 7 Room timer | Pure timer logic, version-checked writes, host commands, phase-end jobs, D16 settings | 6 | Property and race tests pass | Implemented on `v2/phase-7-room-timer` (RT1–RT13 awaiting review) |
 | 8 Room focus runs | Opt-in, run ledger, settlement, grace, full reconciler, Redis-loss recovery | 4, 7 | Grace, settlement and Redis-failure scenarios pass | **MVP feature-complete** |
 | 9 Launch readiness | Production images, Nginx single origin, migration job, backups, security review, E2E required, D39, D2, D33 | 8 | Launch checklist complete | **Launchable MVP** |
 | 10+ | AI foundation, then D13; notifications; analytics; payments | 9 | — | — |
@@ -340,7 +340,19 @@ Started 2026-10-16 on `v2/phase-5-review`, branched from the unmerged Phase 4B b
 - **Tests:** contract unit tests; API integration tests against real PostgreSQL covering authentication, isolation, validation, ordering and pagination, task references, every status, both totals, and time zone boundaries (half-hour offsets, ±14/−11 h, DST start/end, a missing midnight, a 30-minute DST change) checked against an independent per-session calculation; web component tests.
 - **Exit criterion still open:** deleting the legacy app (I12) needs the owner's answer on whether the legacy app is deployed or has MongoDB data worth keeping.
 
-## Phase 6 — Rooms and presence (in progress)
+## Phase 7 — Shared room timer (in progress)
+
+Branch `v2/phase-7-room-timer`, branched from `v2/phase-6-rooms` (neither merged into `main`). Decisions D10, D16, D32, I8 and RT1–RT13 (`decisions/decision-log.md`).
+
+- **Domain:** `modules/room-timer/machine.ts`, a pure function (`state, command, nowMs, settings`) with example and property tests (elapsed never exceeds the duration, versions only increase, no illegal transitions, a stale `expectedVersion` never applies).
+- **Redis:** the timer hash and the running-timers index (`ff:room:{id}:timer`, `ff:rooms:timers:running`), written by one tiny version-checked Lua operation; `store.ts`, `service.ts` (bounded retry, materialise once, phase end) and PostgreSQL settings reads.
+- **Realtime:** `room:timer:command` (host only), `room:timer:state`, the snapshot's `timer`; `VERSION_CONFLICT` and `INVALID_TRANSITION` carry the current timer.
+- **Jobs:** BullMQ queue `room-timer`, delayed `phase-end` jobs with ensure semantics, reconciler step 2 (overdue and job-less running timers).
+- **Web:** the timer panel in the room page: phase, remaining time from the synced server clock, host controls with pending, confirmation and error states, read-only for others, offline/reconnecting and "Finishing…" states.
+- **Tests:** machine properties; store and service races; jobs, reconciler repair and Redis loss; multi-client Socket.IO; web component tests; Playwright journeys with several browsers (`e2e/tests/room-timer.spec.ts`).
+- **Not in Phase 7:** room focus sessions, runs, participants and settlement (Phase 8), automatic start of the next phase (D32), AI, notifications, analytics, payments.
+
+## Phase 6 — Rooms and presence (done, pushed on `v2/phase-6-rooms`)
 
 Branch `v2/phase-6-rooms`, branched from `v2/phase-5-review` (neither is merged into `main`). Decisions D8, D9, D10, D16, D20, D36 and M1–M13 (`decisions/decision-log.md`).
 

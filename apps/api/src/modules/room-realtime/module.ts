@@ -6,6 +6,7 @@ import type { Db } from '../../db/client.js';
 import type { SocketEmitter } from '../../platform/socket.js';
 import type { PresenceCheck } from '../presence/store.js';
 import { type AppServer, type AppSocket, roomRoom } from '../realtime/types.js';
+import type { RoomTimerService } from '../room-timer/types.js';
 import type { RoomLive } from '../rooms/ports.js';
 import { createChatDedupe } from './chat.js';
 import { dropNonMemberSockets } from './guard.js';
@@ -25,6 +26,8 @@ export type RoomRealtimeDeps = {
   readonly instanceTtlMs: number;
   readonly knockTtlMs: number;
   readonly maxPresent: number;
+  /** The shared room timer (Phase 7). */
+  readonly timer: RoomTimerService;
   /** User-level presence, for "the host is online" (D20). */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
 };
@@ -95,6 +98,7 @@ export const createRoomRealtime = (deps: RoomRealtimeDeps): RoomRealtime => {
         knocks,
         limiter,
         chat,
+        timer: deps.timer,
         checkUser: deps.checkUser,
         maxPresent: deps.maxPresent,
       });

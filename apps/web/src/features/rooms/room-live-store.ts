@@ -5,6 +5,7 @@ import type {
   RoomId,
   RoomMemberRemovedEvent,
   RoomSnapshot,
+  TimerView,
   UserId,
 } from '@focus-flow/contracts';
 import { create, createStore, type StoreApi, useStore } from 'zustand';
@@ -38,6 +39,12 @@ export type RoomLiveState = {
   /** One entry per person, whatever the number of their tabs (server-side presence is per user). */
   readonly presence: readonly PresenceUser[];
   readonly messages: readonly ChatEntry[];
+  /**
+   * The shared room timer (Phase 7), as the server last told us; `null` until the first
+   * snapshot. Fed only by the join snapshot (authoritative, replaces whatever is held, RT2)
+   * and by newer-versioned `room:timer:state` events.
+   */
+  readonly timer: TimerView | null;
   /** Set when this user's membership ended (removed by the host, or left elsewhere). */
   readonly removed: RoomMemberRemovedEvent['reason'] | null;
   readonly joining: () => void;
@@ -47,6 +54,11 @@ export type RoomLiveState = {
   readonly disconnected: () => void;
   readonly presenceJoined: (user: PresenceUser) => void;
   readonly presenceLeft: (userId: UserId) => void;
+  /**
+   * A `room:timer:state` event, or the current timer from a rejected command's details: applied
+   * only when its version is greater than the held one. Other rooms' timers are ignored.
+   */
+  readonly timerReceived: (timer: TimerView) => void;
   readonly chatPending: (entry: ChatEntry) => void;
   readonly chatReceived: (event: RoomChatMessageEvent) => void;
   readonly chatSent: (
@@ -95,6 +107,7 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     joinError: null,
     presence: [],
     messages: [],
+    timer: null,
     removed: null,
   } as const;
 
@@ -102,32 +115,50 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
   // be older than them (events can be delivered before the ack), so they are replayed over it;
   // presence operations are idempotent by user id. `null` = no request outstanding.
   let sinceRequest: PresenceOp[] | null = null;
+  // The same for timer events (F3): the newest one seen since the request is replayed over the
+  // snapshot, which wins unless the event's version is greater.
+  let timerSinceRequest: TimerView | null = null;
 
   return createStore<RoomLiveState>()((set) => ({
     roomId,
     ...initial,
     joining: () => {
       sinceRequest = [];
+      timerSinceRequest = null;
       set((state) => (state.joinStatus === 'joined' ? state : { joinStatus: 'joining' }));
     },
     joined: (snapshot) => {
       // The snapshot is the authoritative picture at the moment of joining (M6); a repeated
       // join (reconnect, resync) replaces whatever the events had built up.
       const replay = sinceRequest ?? [];
+      const bufferedTimer = timerSinceRequest;
       sinceRequest = null;
+      timerSinceRequest = null;
+      // The snapshot's timer replaces the held one whatever its version (RT2: after a Redis
+      // loss a recreated timer's version is higher anyway); an event that arrived while the
+      // request was out is replayed only if it is newer than the snapshot.
+      const timer =
+        bufferedTimer !== null &&
+        bufferedTimer.roomId === roomId &&
+        bufferedTimer.version > snapshot.timer.version
+          ? bufferedTimer
+          : snapshot.timer;
       set({
         joinStatus: 'joined',
         joinError: null,
         presence: replay.reduce(applyPresenceOp, snapshot.presence),
+        timer,
         removed: null,
       });
     },
     joinFailed: (status, message) => {
       sinceRequest = null;
+      timerSinceRequest = null;
       set({ joinStatus: status, joinError: message });
     },
     disconnected: () => {
       sinceRequest = null;
+      timerSinceRequest = null;
       set((state) => (state.joinStatus === 'idle' ? state : { joinStatus: 'idle' }));
     },
     presenceJoined: (user) => {
@@ -139,6 +170,20 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
       const op: PresenceOp = { kind: 'left', userId };
       sinceRequest?.push(op);
       set((state) => ({ presence: applyPresenceOp(state.presence, op) }));
+    },
+    timerReceived: (timer) => {
+      if (timer.roomId !== roomId) {
+        return;
+      }
+      if (
+        sinceRequest !== null &&
+        (timerSinceRequest === null || timer.version > timerSinceRequest.version)
+      ) {
+        timerSinceRequest = timer;
+      }
+      set((state) =>
+        state.timer === null || timer.version > state.timer.version ? { timer } : state,
+      );
     },
     chatPending: (entry) => {
       set((state) =>
@@ -222,10 +267,12 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     },
     memberRemoved: (reason) => {
       sinceRequest = null;
-      set({ removed: reason, joinStatus: 'idle', presence: [], messages: [] });
+      timerSinceRequest = null;
+      set({ removed: reason, joinStatus: 'idle', presence: [], messages: [], timer: null });
     },
     reset: () => {
       sinceRequest = null;
+      timerSinceRequest = null;
       set({ ...initial });
     },
   }));

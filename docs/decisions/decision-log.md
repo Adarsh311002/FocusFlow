@@ -461,6 +461,54 @@ Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, 
 ### M12 — End-to-end tests
 - **Decision:** Playwright (`e2e/`, `pnpm test:e2e`) against the real API, PostgreSQL and Redis with the Vite dev server, using the machine's installed Chrome (no browser download), several browser contexts for several people.
 
+## Room timer decisions (Phase 7: RT1–RT13, technical defaults awaiting review)
+Chosen during implementation on top of D10, D16, D32 and I8; the owner has not reviewed them.
+
+### RT1 — Materialised at first access
+- **Decision:** The timer hash `ff:room:{roomId}:timer` is created at the first access (join snapshot or first command) as an idle `focus` phase whose `durationMs` comes from the room's saved settings (PostgreSQL), by a version-checked write that requires the key to be absent. A phase's duration is therefore always fixed when the phase is created (D16). `reset` is allowed from any status, including `idle`, so the host can "apply now" a settings change to a phase that has not started (the protocol table listed running and paused only).
+
+### RT2 — Version base
+- **Decision:** A new timer's `version` starts at the Redis TIME in milliseconds instead of 0; every accepted change adds 1. After a Redis loss or rollback the recreated timer's version is above any version a client or a leftover job holds, so an old phase-end job id (`phase-end_{roomId}_{version}`) cannot collide and clients do not ignore the new state. A join snapshot is authoritative: the client replaces its timer with it whatever its version; `room:timer:state` events apply only when their version is greater.
+
+### RT3 — State without runs
+- **Decision:** The timer state has `phase, status, durationMs, elapsedBeforeMs, segmentStartedAtMs, version` only. `focusRunId`, the run ledger and participants arrive with Phase 8 (additive hash fields).
+
+### RT4 — Phase-end jobs
+- **Decision:** Queue `room-timer`, job `phase-end`, id `phase-end_{roomId}_{version}`, delayed to `endsAtMs − Redis now`, payload `{ schemaVersion, roomId, version }`. Scheduling uses the E20 "ensure" semantics (retained completed or failed jobs are re-run). A job never trusts its payload: it calls the service, which re-reads the timer; an outdated version or a non-running timer is a no-op, an early job asks to run again after the remaining time, and a duplicate delivery advances nothing twice (the write is version-checked).
+
+### RT5 — Commands
+- **Decision:** `room:timer:command` needs the socket to be in the room (`NOT_JOINED`), the caller to be the room's host (`NOT_HOST`, checked against `rooms.host_id` in PostgreSQL on every command), at most 20 commands per 10 s per user (`RATE_LIMITED`) and a strictly valid payload. A command naming a room the socket has not joined changes nothing and reveals nothing.
+
+### RT6 — Rejection details
+- **Decision:** `VERSION_CONFLICT` and `INVALID_TRANSITION` acknowledgements carry `error.details = { timer, serverNowMs }` so a stale client catches up without another round trip. The shared ack error shape gained an optional `details`.
+
+### RT7 — Conflicts
+- **Decision:** Writes retry up to 3 times, re-reading and re-evaluating the pure function each time. `start`, `pause` and `resume` are judged against the fresh state; `reset` and `setPhase` carry `expectedVersion`, and a mismatch against the fresh state is `VERSION_CONFLICT`. A repeated `pause` while paused or `resume` while running is a successful no-op: no write, no version change. `start` while running or paused and `resume` while idle are `INVALID_TRANSITION`.
+
+### RT8 — Settings source
+- **Decision:** Phase durations are read from PostgreSQL whenever a phase is created. There is no Redis copy of the settings (the `ff:room:{roomId}:settings` key in the first Redis design is not implemented): phase creation is rare and a primary-key read is cheap, and it removes a second copy that could disagree. `PATCH timer-settings` still only saves and announces (`room:settings:updated`); it never touches the running timer.
+
+### RT9 — Next phase
+- **Decision:** The next phase is never started automatically (D32): `focus → short_break`, any break `→ focus`, always `idle`. `long_break` is reachable only through `setPhase`.
+
+### RT10 — Host and presence
+- **Decision:** A phase end happens whoever is present; a host disconnect changes nothing (D10). Commands cannot arrive without the host's socket.
+
+### RT11 — Redis loss
+- **Decision:** After a Redis loss the timer is recreated idle with the saved durations (RT1, RT2); Phase 6 already sends `room:resync`, and the rejoin snapshot carries the recreated timer.
+
+### RT12 — Reconciler
+- **Decision:** Step 2: (a) running timers past `endsAtMs` get their phase end run (`ff:rooms:timers:running` scored by `endsAtMs`), (b) every running timer gets its phase-end job ensured. Batches of at most 100, single-flight, one room's failure is logged and never fatal.
+
+### RT13 — Order of effects
+- **Decision:** After every committed change: ensure the phase-end job when the new state is running, then emit `room:timer:state { roomId, timer, serverNowMs }` to the room. A failed schedule is repaired by the reconciler; a failed emit by the clients' resync on reconnect.
+
+### Accepted limits of the room timer (Phase 7 reviews)
+- **Lost state events:** a viewer whose `room:timer:state` event was lost (a Redis pub/sub drop with the socket alive) shows a stale status until the next event, the "Finishing…" re-read at 0:00, a reconnect or a `room:resync`; there is no periodic re-read. Acceptable for the MVP.
+- **PostgreSQL outage:** a phase end reads the room settings from PostgreSQL (RT8), so during a PostgreSQL outage a timer past its end cannot advance; the job retries (5 attempts, backoff), the reconciler retries every interval, and clients show "Finishing…" until PostgreSQL returns.
+- **`start` has no `expectedVersion`:** a stale host tab can start a phase another tab just switched to (RT7, by design); two simultaneous `start` commands answer the second `INVALID_TRANSITION`.
+- **Lost job latency:** if a phase-end job is lost, the phase ends at the next reconciler run: up to one `RECONCILER_INTERVAL_MS` (30 s), or about 90 s if the repeating reconciler job itself stalls (E23).
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

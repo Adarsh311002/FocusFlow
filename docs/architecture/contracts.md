@@ -59,16 +59,17 @@ FocusSessionView = {
   | { status: "abandoned"; endedAt: string; abandonReason: AbandonReason }
 )
 
-TimerView = {
+TimerView = {                                // implemented in Phase 7 (RT1–RT13); no focusRunId until Phase 8
+  roomId: RoomId
   phase: "focus" | "short_break" | "long_break"
-  version: number
-  durationMs: number
-  focusRunId: FocusRunId | null
-} & (
-  | { status: "idle"; remainingMs: number }
-  | { status: "running"; endsAtMs: number }
-  | { status: "paused"; remainingMs: number }
-)
+  status: "idle" | "running" | "paused"
+  durationMs: number                           // fixed from the room settings when the phase was created
+  elapsedBeforeMs: number
+  segmentStartedAtMs: number | null            // running only
+  endsAtMs: number | null                      // running only
+  version: number                              // starts at Redis TIME ms, +1 per accepted change (RT2)
+}
+// remaining: running → endsAtMs − now; otherwise durationMs − elapsedBeforeMs (display only)
 
 TimerCommand =
   | { type: "start" } | { type: "pause" } | { type: "resume" }
