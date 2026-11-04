@@ -57,11 +57,17 @@ export const createInstanceHeartbeat = ({
   let timer: NodeJS.Timeout | undefined;
   let published = false;
   let rejoinPending = false;
+  // Set by `stop`: a heartbeat already awaiting Redis TIME must not re-add the instance
+  // after the clean-shutdown removal.
+  let stopped = false;
   const rejoinHandlers: (() => unknown)[] = [];
   const tickHandlers: (() => unknown)[] = [];
 
   const publish = async (): Promise<void> => {
     const nowMs = await redisTimeMs(redis);
+    if (stopped) {
+      return;
+    }
     // ZADD answers 1 only when the member was not in the set.
     const added = (await redis.zadd(redisKeys.instances, nowMs, instanceId)) === 1;
     if (added && published) {
@@ -101,6 +107,7 @@ export const createInstanceHeartbeat = ({
 
   return {
     start: async () => {
+      stopped = false;
       await tick('tick');
       timer ??= setInterval(() => {
         void tick('tick');
@@ -109,6 +116,7 @@ export const createInstanceHeartbeat = ({
       timer.unref();
     },
     stop: async () => {
+      stopped = true;
       clearInterval(timer);
       timer = undefined;
       published = false;
