@@ -537,6 +537,8 @@ function createFakeSocket() {
       onFocus = listener;
     },
     timeSync: () => Promise.reject(new Error('no clock in this test')),
+    onRoomEvent: () => undefined,
+    emitWithAck: () => Promise.reject(new Error('no rooms in this test')),
   };
   return {
     socket,

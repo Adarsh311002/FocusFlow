@@ -86,7 +86,7 @@ describe('the app /review route', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Dashboard', 'Review']);
+    ).toEqual(['Dashboard', 'Review', 'Rooms']);
     await waitFor(() => {
       expect(screen.getByText('No focus sessions yet.')).not.toBeNull();
     });

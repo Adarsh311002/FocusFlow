@@ -38,10 +38,16 @@ import {
   createDecisionSnapshots,
   type DecisionSnapshot,
 } from '../modules/focus-sessions/snapshot.js';
-import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
+import {
+  createPresence,
+  type InstanceRemovalReason,
+  localSocketRefs,
+  type Presence,
+} from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
+import { createRoomRealtime, type RoomRealtime } from '../modules/room-realtime/module.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
 import { createEpochMonitor, type EpochMonitor } from './epoch.js';
@@ -124,6 +130,8 @@ export type Runtime = {
   readonly onSocketConnect: ((socket: AppSocket) => void)[];
   /** Per-user presence: which users have a live socket on a live instance. */
   readonly presence: Presence;
+  /** The realtime side of rooms (Phase 6); exposed so tests can observe and gate its seams. */
+  readonly roomRealtime: RoomRealtime;
   /** After-commit focus-session changes (events and jobs attach here in later milestones). */
   readonly focusSessionChanges: FocusSessionChanges;
   /** The Solo Focus lifecycle: marker store, job scheduler and queue (Phase 4B). */
@@ -253,6 +261,20 @@ export const createRuntime = async (
   // MULTI on the general client (E17); the marker connection is only for WATCH writes.
   const snapshotUser = createDecisionSnapshots(presenceStore);
 
+  // The realtime side of rooms (Phase 6): room presence, knocks, chat. The REST module
+  // reaches it only through the RoomLive port.
+  const roomRealtime = createRoomRealtime({
+    redis,
+    db,
+    emitter: socketEmitter,
+    logger,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+    knockTtlMs: config.KNOCK_TTL_MS,
+    maxPresent: config.ROOM_MAX_PRESENT,
+    checkUser: presenceStore.checkUser,
+  });
+
   // Built for every role so the process is wired the same way; a worker-only process
   // simply never listens, so it serves no HTTP and accepts no sockets.
   const app = createApp({
@@ -269,6 +291,7 @@ export const createRuntime = async (
       graceMs: config.FOCUS_GRACE_MS,
       markers: focusSessionMarkers,
     },
+    rooms: { live: roomRealtime.live, logger },
   });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
@@ -288,13 +311,29 @@ export const createRuntime = async (
     logger,
   });
   onSocketConnect.push(presence.track);
+  onSocketConnect.push(roomRealtime.attachSocket);
   // Presence is synchronised with the live sockets on every heartbeat, so any missed
   // write is repaired within one interval; data loss and a rejoin sync at once.
-  heartbeat.onTick(() => presence.syncLocal());
+  heartbeat.onTick(async () => {
+    await presence.syncLocal();
+    await roomRealtime.syncLocal(io);
+  });
   epoch.onLocalRecovery(async () => {
     await presence.syncLocal();
+    await roomRealtime.recover(io);
   });
-  heartbeat.onRejoined(() => presence.syncLocal());
+  heartbeat.onRejoined(async () => {
+    await presence.syncLocal();
+    await roomRealtime.syncLocal(io);
+  });
+  // Removing an instance's presence (dead, or a clean shutdown) covers its users and its
+  // room entries; the reconciler and the shutdown sequence both use it.
+  const instanceCleanup = {
+    removeInstance: async (targetId: string, reason: InstanceRemovalReason): Promise<void> => {
+      await presence.removeInstance(targetId, reason);
+      await roomRealtime.removeInstance(targetId);
+    },
+  };
 
   // Solo Focus lifecycle (Phase 4B): the focus-session queue (every role enqueues; workers
   // process), the after-commit follow-ups, and the presence hints.
@@ -346,7 +385,7 @@ export const createRuntime = async (
 
   const reconciler = createReconciler({
     redis,
-    presence,
+    presence: instanceCleanup,
     instanceTtlMs: config.INSTANCE_TTL_MS,
     intervalMs: config.RECONCILER_INTERVAL_MS,
     logger,
@@ -391,7 +430,10 @@ export const createRuntime = async (
     { name: 'instance heartbeat', run: heartbeat.stop },
     // A clean shutdown removes this instance's presence at once instead of leaving it
     // for the reconciler to find after the heartbeat TTL.
-    { name: 'presence', run: () => presence.removeInstance(instanceId, 'instance_shutdown') },
+    {
+      name: 'presence',
+      run: () => instanceCleanup.removeInstance(instanceId, 'instance_shutdown'),
+    },
     ...(maintenanceWorker === undefined
       ? []
       : [
@@ -495,6 +537,7 @@ export const createRuntime = async (
     socketEmitter,
     onSocketConnect,
     presence,
+    roomRealtime,
     focusSessionChanges,
     focusSessionLifecycle: {
       markers: focusSessionMarkers,

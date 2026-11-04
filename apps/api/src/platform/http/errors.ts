@@ -19,6 +19,43 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * The HTTP status each error code is answered with by default. A Record over the closed
+ * ErrorCode union, so adding a code without deciding its status does not compile.
+ * Handlers may still pass an explicit status to AppError (for example 503 for INTERNAL).
+ */
+export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
+  VALIDATION_FAILED: 400,
+  NOT_FOUND: 404,
+  INTERNAL: 500,
+  EMAIL_TAKEN: 409,
+  INVALID_CREDENTIALS: 401,
+  UNAUTHENTICATED: 401,
+  SESSION_INVALID: 401,
+  SESSION_REVOKED: 401,
+  TASK_NOT_FOUND: 404,
+  TASK_NOT_OPEN: 409,
+  SESSION_IN_PROGRESS: 409,
+  NOT_CONNECTED: 409,
+  ROOM_NOT_FOUND: 404,
+  NOT_A_MEMBER: 403,
+  NOT_JOINED: 409,
+  NOT_HOST: 403,
+  HOST_CANNOT_LEAVE: 409,
+  CANNOT_REMOVE_HOST: 409,
+  KNOCK_REQUIRED: 403,
+  KNOCK_EXPIRED: 410,
+  NOT_PRIVATE: 409,
+  ALREADY_MEMBER: 409,
+  HOST_OFFLINE: 409,
+  ROOM_FULL: 409,
+  RATE_LIMITED: 429,
+};
+
+/** An AppError with the default status of its code. */
+export const appError = (code: ErrorCode, message: string, details?: unknown): AppError =>
+  new AppError(code, ERROR_STATUS[code], message, details);
+
 export const notFound = (message: string): AppError => new AppError('NOT_FOUND', 404, message);
 
 export const internal = (message: string): AppError => new AppError('INTERNAL', 500, message);

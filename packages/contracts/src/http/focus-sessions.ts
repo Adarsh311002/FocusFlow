@@ -5,8 +5,8 @@ import { focusSessionIdSchema, taskIdSchema } from '../ids';
 import { TASK_TITLE_MAX_LENGTH } from './tasks';
 
 // Solo focus sessions (Phase 4B; docs/architecture/contracts.md "Key contract shapes",
-// docs/api/rest.md "Focus sessions", decisions E1–E16). Room sessions arrive in Phase 6,
-// which widens `AbandonReason` and `FocusSessionContext` (E4, E5).
+// docs/api/rest.md "Focus sessions", decisions E1–E16). Room sessions arrive in Phase 8,
+// which widens `AbandonReason` and `FocusSessionContext` (E4, E5, M1).
 
 /** Matches the `ck_focus_sessions_planned_seconds` CHECK constraint (E1). */
 export const FOCUS_SESSION_PLANNED_SECONDS_MIN = 60;
@@ -21,7 +21,7 @@ export const plannedSecondsSchema = z
 export const focusSessionStatusSchema = z.enum(['in_progress', 'completed', 'abandoned']);
 export type FocusSessionStatus = z.infer<typeof focusSessionStatusSchema>;
 
-/** Phase 4B allows only the solo reasons (E5); Phase 6 adds the room-only ones. */
+/** Phase 4B allows only the solo reasons (E5); Phase 8 adds the room-only ones. */
 export const abandonReasonSchema = z.enum(['stopped', 'grace_expired', 'expired']);
 export type AbandonReason = z.infer<typeof abandonReasonSchema>;
 

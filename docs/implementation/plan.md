@@ -267,7 +267,7 @@ Branch: `v2/phase-0-foundation`, merged through a pull request.
 - [x] `git diff` shows no changes to `Client/`, `Server/`, the root `docker-compose.yml` or `archi/`
 
 ### Deliberately not in Phase 0
-Database schema, Drizzle schema files and migrations (Phase 1); authentication (Phase 1); Socket.IO, BullMQ, the worker role and presence (Phase 3); Zustand (Phase 6); Dockerfiles and a full-stack Compose profile (Phase 9, or earlier if CI end-to-end tests need them); `e2e/` and Playwright (Phase 6); Radix.
+Database schema, Drizzle schema files and migrations (Phase 1); authentication (Phase 1); Socket.IO, BullMQ, the worker role and presence (Phase 3); Zustand (Phase 6, done); Dockerfiles and a full-stack Compose profile (Phase 9, or earlier if CI end-to-end tests need them); `e2e/` and Playwright (Phase 6, done); Radix.
 
 ## Decisions resolved before Phase 0
 
@@ -339,6 +339,18 @@ Started 2026-10-16 on `v2/phase-5-review`, branched from the unmerged Phase 4B b
 - **Web:** `/review` with the last 7 days' summary (both totals, a per-day table) and the paged history; a small authenticated navigation.
 - **Tests:** contract unit tests; API integration tests against real PostgreSQL covering authentication, isolation, validation, ordering and pagination, task references, every status, both totals, and time zone boundaries (half-hour offsets, ±14/−11 h, DST start/end, a missing midnight, a 30-minute DST change) checked against an independent per-session calculation; web component tests.
 - **Exit criterion still open:** deleting the legacy app (I12) needs the owner's answer on whether the legacy app is deployed or has MongoDB data worth keeping.
+
+## Phase 6 — Rooms and presence (in progress)
+
+Branch `v2/phase-6-rooms`, branched from `v2/phase-5-review` (neither is merged into `main`). Decisions D8, D9, D10, D16, D20, D36 and M1–M13 (`decisions/decision-log.md`).
+
+- **Schema:** migration `0003_create_rooms`: `rooms` (unique 6-character code, name and duration CHECKs, host `ON DELETE RESTRICT`) and `room_members`. No change to `focus_sessions`: room columns, room abandon reasons and `NOT_SOLO_SESSION` move to Phase 8 (M1).
+- **API (REST):** `modules/rooms`: create, list mine, look up by code, read, members, timer-settings, join/leave membership, host removal, knock approve/reject. Permissions are checked against PostgreSQL; non-members never learn more than the preview (M4).
+- **API (realtime):** `modules/room-realtime`: `room:join` (authoritative snapshot), `room:leave`, knocks (Redis sorted set with TTL), temporary chat (deduplicated, rate limited), room presence in Redis with a per-instance reverse index, synchronised on every heartbeat and cleaned up for dead instances (M5), and the `RoomLive` port the REST module announces through.
+- **Contracts:** `RoomId`, room codes, room/member/preview views and requests, `roomPaths`, the room socket events and their payloads, the new error codes.
+- **Web:** `/rooms` (my rooms, create, join by code, knock) and `/rooms/$roomId` (members and live presence, host controls, temporary chat), with a Zustand store per room fed only by the snapshot and socket events (M11).
+- **Tests:** schema constraints, permission matrix and cross-user isolation, idempotency and races, knock lifecycle, multi-client and two-instance Socket.IO tests (presence, chat, eviction, instance death, resync), web component tests, and a Playwright smoke suite (`e2e/`, `pnpm test:e2e`, M12).
+- **Not in Phase 6:** the room timer (Phase 7), room focus sessions and runs (Phase 8), discovery of public rooms (D12), persisted chat and chat backlog (D7, D24), AI, notifications, analytics, payments.
 
 ## Phase 0 review follow-ups
 

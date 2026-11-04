@@ -49,7 +49,7 @@ Presence is tracked at two levels, both in Redis and both keyed by `{instanceId}
 - Closing a tab is detected immediately. On mobile, a locked screen usually drops the socket (accepted consequence of D14/15/35).
 - `room:leave` is sent only for an explicit "Leave room" action. Navigating elsewhere in the app does not leave the room.
 - If an API instance dies, its sockets never run their disconnect handlers. Its entries stop counting as soon as its heartbeat (the `ff:instances` score, Redis TIME) is older than the TTL, and the reconciler removes them through the `ff:instance:{instanceId}:sockets` index and treats affected users as disconnected at the instance's last heartbeat. A normal deploy, where clients reconnect within 60 seconds, therefore does not abandon anyone's focus.
-- **Implemented in Phase 3** (user level): per-socket entries, read-time liveness filtering, the "user went offline" hook, and reconciler step 1. **Hardened in Phase 4A** (H1–H4): the two-way sync, `disconnectedAtMs`, the online hook and offline-as-hint semantics below. Room-level presence arrives with rooms.
+- **Implemented in Phase 3** (user level): per-socket entries, read-time liveness filtering, the "user went offline" hook, and reconciler step 1. **Hardened in Phase 4A** (H1–H4): the two-way sync, `disconnectedAtMs`, the online hook and offline-as-hint semantics below. Room-level presence arrived with rooms in Phase 6 (M5): the same per-socket entries and reverse index, the same heartbeat-time sync and dead-instance cleanup, in `room:{roomId}:presence` and `instance:{instanceId}:rooms`. Room participants and their grace (D19) arrive in Phase 8.
 
 ### Synchronisation (H1)
 

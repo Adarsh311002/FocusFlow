@@ -27,3 +27,5 @@ export type AppSocket = Socket<
  */
 export const userRoom = (userId: string): string => `user:${userId}`;
 export const sessionRoom = (sid: string): string => `session:${sid}`;
+/** The Socket.IO room of everyone joined to a room through `room:join` (M5). */
+export const roomRoom = (roomId: string): string => `room:${roomId}`;

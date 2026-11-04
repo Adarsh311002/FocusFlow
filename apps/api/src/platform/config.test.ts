@@ -36,6 +36,8 @@ describe('loadConfig', () => {
       ROLE: 'all',
       RECONCILER_INTERVAL_MS: 30_000,
       FOCUS_GRACE_MS: 60_000,
+      KNOCK_TTL_MS: 120_000,
+      ROOM_MAX_PRESENT: 50,
     });
   });
 
@@ -109,6 +111,15 @@ describe('loadConfig', () => {
     expect(config.ACCESS_TOKEN_TTL_SECONDS).toBe(300);
     expect(config.REFRESH_TOKEN_TTL_SECONDS).toBe(86_400);
     expect(config.REFRESH_OVERLAP_SECONDS).toBe(5);
+  });
+
+  it('reads the room limits', () => {
+    const config = loadConfig({ ...baseEnv, KNOCK_TTL_MS: '5000', ROOM_MAX_PRESENT: '3' });
+
+    expect(config.KNOCK_TTL_MS).toBe(5_000);
+    expect(config.ROOM_MAX_PRESENT).toBe(3);
+    expect(() => loadConfig({ ...baseEnv, ROOM_MAX_PRESENT: '0' })).toThrow(/ROOM_MAX_PRESENT/);
+    expect(() => loadConfig({ ...baseEnv, KNOCK_TTL_MS: '5' })).toThrow(/KNOCK_TTL_MS/);
   });
 
   it('fails and names the variable when DATABASE_URL is missing', () => {

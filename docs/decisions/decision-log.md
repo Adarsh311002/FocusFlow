@@ -412,6 +412,55 @@ Technical defaults chosen during implementation, awaiting the owner's review. No
 - **Decision:** the API publishes the event from a listener of its own on the after-commit change bus, separate from the job follow-ups, to `user:{userId}` derived from the session owner. It is typed in `packages/contracts` (`ServerToClientEvents`) and covers requests, jobs and the reconciler alike, since all publish through the same bus.
 - **Why:** persist, then emit; a failing emit must not block scheduling, nor the reverse. The Redis emitter publishes without awaiting, so a failure cannot be caught, but its connection queues commands while Redis is away and clients heal on reconnect.
 
+## Rooms decisions (Phase 6: M1–M13, technical defaults awaiting review)
+
+Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, D20, D36, F5–F7); none changes an approved decision. Open owner questions stay in `open-decisions.md`.
+
+### M1 — Scope and what waits for later phases
+- **Decision:** Phase 6 adds rooms, memberships, knocks, room presence and temporary chat. It changes nothing in `focus_sessions`: the room columns (`room_id`, `focus_run_id`), the room-only abandon reasons (E4, E5), `NOT_SOLO_SESSION` and the abandonment of a participant on leave or removal arrive with Phase 8 (focus runs), which edits the same leave/remove transactions. There is no room timer, no timer events and no `timer`/`participants` in the join snapshot until Phases 7 and 8; both additions are additive.
+- **Why:** a leave or removal can abandon nothing while no room participation exists; adding the columns without their writers would be a speculative schema.
+
+### M2 — Room codes
+- **Decision:** six characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no I, L, O, 0, 1), uppercase, generated with `crypto.randomInt`, unique (`uq_rooms_code`, `ck_rooms_code`). A collision is retried (at most 5 times) on the unique violation. Lookups forgive case and spaces. Codes do not expire and are not secret: a private room is protected by the knock, not by its code.
+
+### M3 — Phase durations
+- **Decision:** whole seconds: focus 60–14,400 (default 1,500), short break 60–3,600 (default 300), long break 60–7,200 (default 900), as `CHECK`s on `rooms`. `PATCH /rooms/:roomId/timer-settings` (host only) saves to PostgreSQL and emits `room:settings:updated` with `effectiveFrom: "next_phase"`; the Redis live copy belongs to Phase 7, which loads from PostgreSQL.
+
+### M4 — Who may see what
+- **Decision:** a room that does not exist, and a room the caller may not see, answer the same on member-only routes (`404 ROOM_NOT_FOUND`); a non-member never learns more than the preview `{ id, code, name, isPrivate }` that `GET /rooms/by-code/:code` gives anyone holding the code (`presentCount` is `null` for a private room's non-member). A member who is not the host gets `403 NOT_HOST` on host actions; a non-member gets `404`. Leaving a room one is not in answers `204` whether or not the room exists. On sockets a non-member's `room:join` answers `NOT_A_MEMBER`, also for a room that does not exist.
+- **Why:** ownership routes elsewhere answer 404 so existence is not revealed (docs/api/rest.md); the preview is the one deliberate exception (D9 needs a way to find a room).
+
+### M5 — Room presence
+- **Decision:** the keys in `redis-keys.md`: `room:{roomId}:presence` (hash, `userId → { displayName, avatarUrl, firstJoinedAtMs }`) and `room:{roomId}:presence:{userId}` (set of `{instanceId}:{socketId}`), plus a per-instance reverse index `instance:{instanceId}:rooms` (`{roomId}:{userId}:{socketId}`). A socket counts only while its instance's heartbeat is fresh, like user-level presence. `room:presence:joined` is sent when a user's first socket joins, `room:presence:left` when the last one leaves, disconnects, is evicted or its instance dies. The existing H1 synchronisation is extended to rooms: after every heartbeat each instance makes its room entries match its sockets' Socket.IO rooms (both directions), and dead-instance cleanup removes an instance's room entries and announces who left. A socket's Socket.IO room membership (`socket.rooms`), not a client claim and not `socket.data.joinedRooms`, decides whether it may act in a room.
+- **Why:** these are the approved keys; reusing the heartbeat and reverse-index pattern avoids a second liveness mechanism.
+
+### M6 — `room:join`
+- **Decision:** requires a membership row (D9) and is idempotent per socket. It answers a snapshot: the room, who is present, `pendingKnocks` for the host only, and `serverNowMs` (Redis TIME). Clients send `room:join` again after every socket (re)connect and after `room:resync`, for each room they are in. Navigating inside the app does not leave a room; only an explicit `room:leave`, a closed socket, removal or leaving the membership does. A new person is refused with `ROOM_FULL` when `ROOM_MAX_PRESENT` (default 50, the D12 safety limit) people are present.
+
+### M7 — Knocks
+- **Decision:** `room:knock` (private room, caller not a member, the host online — user-level presence, D20) stores the userId in the sorted set `room:{roomId}:knocks` scored by `expiresAtMs` (TTL `KNOCK_TTL_MS`, default 120 s) and sends `room:knock:received` to `user:{hostId}`; a repeated knock refreshes the entry. Knocks are limited to 5 per user per minute (`RATE_LIMITED`). `room:knock:cancel` removes the entry (`room:knock:removed` reason `cancelled`). Approve and reject are REST and host only: approve checks the knock is pending (`410 KNOCK_EXPIRED`; a user who is already a member → `200`), upserts the membership, then removes the knock and sends `room:knock:resolved` to the requester and `room:knock:removed` to the host; reject removes the knock and sends the same two events (`204`, repeatable). The host's pending list is delivered in the join snapshot and by live events; expiry is not announced.
+- **Why:** PostgreSQL first, then Redis, then events (F5); if the last steps fail the requester re-checks access and finds the membership (failure-recovery.md).
+
+### M8 — Chat
+- **Decision:** `room:chat:send` needs a socket that is in the room. The body is trimmed, 1–1,000 characters. A `SET NX` key `chat:dedupe:{userId}:{clientMessageId}` (60 s) holds the first `messageId:sentAtMs`; a repeat is answered with the same ids and not delivered again. Chat is limited to 10 messages per user per 10 s (`RATE_LIMITED`). `sentAtMs` is Redis TIME; `messageId` is a UUIDv7. Nothing is stored (D7); a late joiner sees no backlog (D24).
+
+### M13 — Review hardening (found by the Phase 6 reviews)
+- **Decision:** (1) `room:chat:send` re-checks the membership row (a primary-key lookup) and the heartbeat room sync batch-checks the memberships of its local sockets, taking any non-member's socket out of the room, so a lost eviction message cannot leave a removed member with access; a PostgreSQL failure evicts nobody and answers `INTERNAL` to chat. (2) The `ROOM_MAX_PRESENT` check runs inside the atomic join script. (3) The join snapshot reads presence last, after the slow host-only queries; the web client buffers presence events between sending `room:join` and its answer and replays them over the snapshot. (4) Chat de-duplication is per user and room, and the web client matches its own echo on `clientMessageId` and sender. (5) `room:join` (30 per 10 s) and `room:knock:cancel` (10 per minute) are rate limited. (6) Approve decides against reject through the Redis removal: `RoomLive.resolveKnock` reports whether this call removed the knock, and an approve that lost the race deletes the membership it created and answers `410 KNOCK_EXPIRED`.
+- **Why:** each was a verified or plausible gap between the documented guarantees and the implementation.
+- **Accepted, not fixed:** REST routes (create room, membership, code lookup) are not rate limited yet (production hardening); `room:knock` answers `ROOM_NOT_FOUND`/`NOT_PRIVATE`/`ALREADY_MEMBER` for anyone holding a room UUID, which reveals only what the by-code preview already shows.
+
+### M9 — Leaving and removal
+- **Decision:** `room:leave` ends presence only; membership stays ("My Rooms"). `DELETE .../membership` (a member, never the host) and `DELETE .../members/:userId` (the host removing someone else, never themselves: `409 CANNOT_REMOVE_HOST`) delete the row, then remove that user's room presence, take their sockets out of the room through the emitter (`socketsLeave`) and send `room:member:removed` (reasons `left` / `removed`) to the room and to `user:{userId}`. Both are repeatable. A removed user of a public room may rejoin at once (D36); of a private room, only through a new knock.
+
+### M10 — Membership notifications
+- **Decision:** a new member (public join, approved knock) is announced to the room with `room:member:joined`; it is a hint, the member list is re-readable with `GET /rooms/:roomId/members`.
+
+### M11 — Web
+- **Decision:** `/rooms` (my rooms, create, join by code) and `/rooms/$roomId`. Server data (rooms, members) is TanStack Query; live state (presence, chat, knocks of the open room) is one Zustand store per room fed only by the join snapshot and socket events, as approved in I-stack. The client sends `room:join` for its rooms on every connect. Nothing shown is derived from a client claim.
+
+### M12 — End-to-end tests
+- **Decision:** Playwright (`e2e/`, `pnpm test:e2e`) against the real API, PostgreSQL and Redis with the Vite dev server, using the machine's installed Chrome (no browser download), several browser contexts for several people.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

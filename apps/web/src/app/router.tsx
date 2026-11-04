@@ -5,6 +5,8 @@ import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { ReviewPage } from '../features/review/review-page';
+import { RoomPage } from '../features/rooms/room-page';
+import { RoomsPage } from '../features/rooms/rooms-page';
 import { SystemStatus } from '../features/system/system-status';
 import { RootLayout } from './root-layout';
 
@@ -62,6 +64,35 @@ const reviewRoute = createRoute({
   component: ProtectedReview,
 });
 
+/** Rooms (Phase 6): my rooms, create and join, then one room live. Guarded like the rest. */
+function ProtectedRooms() {
+  return (
+    <RequireAuth>
+      <RoomsPage />
+    </RequireAuth>
+  );
+}
+
+function ProtectedRoom() {
+  return (
+    <RequireAuth>
+      <RoomPage />
+    </RequireAuth>
+  );
+}
+
+const roomsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rooms',
+  component: ProtectedRooms,
+});
+
+const roomRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rooms/$roomId',
+  component: ProtectedRoom,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -69,6 +100,8 @@ const routeTree = rootRoute.addChildren([
   signupRoute,
   dashboardRoute,
   reviewRoute,
+  roomsRoute,
+  roomRoute,
 ]);
 
 export const router = createRouter({ routeTree });

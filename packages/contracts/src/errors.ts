@@ -21,6 +21,20 @@ export const errorCodes = [
   // Focus sessions (Phase 4B, docs/api/rest.md)
   'SESSION_IN_PROGRESS',
   'NOT_CONNECTED',
+  // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
+  'ROOM_NOT_FOUND',
+  'NOT_A_MEMBER',
+  'NOT_JOINED',
+  'NOT_HOST',
+  'HOST_CANNOT_LEAVE',
+  'CANNOT_REMOVE_HOST',
+  'KNOCK_REQUIRED',
+  'KNOCK_EXPIRED',
+  'NOT_PRIVATE',
+  'ALREADY_MEMBER',
+  'HOST_OFFLINE',
+  'ROOM_FULL',
+  'RATE_LIMITED',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);

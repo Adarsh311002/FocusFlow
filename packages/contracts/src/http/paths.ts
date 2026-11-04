@@ -1,4 +1,4 @@
-import type { FocusSessionId, TaskId } from '../ids';
+import type { FocusSessionId, RoomId, TaskId, UserId } from '../ids';
 
 /**
  * Route paths the API serves and the web app calls. Owning them here means the two
@@ -69,3 +69,33 @@ export const focusSessionPath = (
  * drift on the exact header name.
  */
 export const CLIENT_HEADER_NAME = 'x-focus-flow-client';
+
+/** Rooms and membership (Phase 6, docs/api/rest.md "Rooms"). */
+export const roomPaths = {
+  collection: '/rooms',
+  byCode: '/rooms/by-code/:code',
+  item: '/rooms/:roomId',
+  timerSettings: '/rooms/:roomId/timer-settings',
+  members: '/rooms/:roomId/members',
+  member: '/rooms/:roomId/members/:userId',
+  membership: '/rooms/:roomId/membership',
+  approveKnock: '/rooms/:roomId/knocks/:userId/approve',
+  rejectKnock: '/rooms/:roomId/knocks/:userId/reject',
+} as const;
+
+export type RoomPathTemplate = Exclude<
+  (typeof roomPaths)[keyof typeof roomPaths],
+  '/rooms' | '/rooms/by-code/:code'
+>;
+
+/** Builds a concrete room URL path from one of the `roomPaths` templates. */
+export const roomPath = (
+  template: RoomPathTemplate,
+  params: { readonly roomId: RoomId; readonly userId?: UserId },
+): string =>
+  template
+    .replace(':roomId', encodeURIComponent(params.roomId))
+    .replace(':userId', encodeURIComponent(params.userId ?? ''));
+
+export const roomByCodePath = (code: string): string =>
+  roomPaths.byCode.replace(':code', encodeURIComponent(code));

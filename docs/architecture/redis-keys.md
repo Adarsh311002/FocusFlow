@@ -24,16 +24,17 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 | `ff:reconcile:last-finished` | String | When a reconcile run last finished (Redis TIME, ms), written by every run, scheduled or direct (E23) | TTL 24 h. Missing or at least 3 × `RECONCILER_INTERVAL_MS` old: each worker process reconciles directly |
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
+| `ff:instance:{instanceId}:rooms` | Set | `{roomId}:{userId}:{socketId}`: reverse index of room presence (M5) | Kept equal to the instance's sockets in Socket.IO rooms by its sync on every heartbeat; emptied by clean shutdown or the reconciler. Always changed together with the presence sets |
 | `ff:room:{roomId}:settings` | Hash | `focusSeconds, shortBreakSeconds, longBreakSeconds` (live copy of D16) | Reloaded from PostgreSQL when missing |
 | `ff:room:{roomId}:timer` | Hash | `phase, status, durationMs, segmentStartedAtMs, elapsedBeforeMs, version, focusRunId, updatedAtMs` | Absent = idle focus with saved durations |
 | `ff:rooms:timers:running` | Sorted set | `roomId` scored by `endsAtMs` | Used by the reconciler to find overdue timers |
 | `ff:room:{roomId}:run:{runId}` | Hash | `status (open\|closed), closeReason, closedAtMs, elapsedAtCloseMs, durationMs` | Deleted after settlement |
 | `ff:room:{roomId}:run:{runId}:participants` | Hash | `userId → { sessionId, optedInAtMs, elapsedAtOptInMs, disconnectedAtMs?, elapsedAtDisconnectMs? }` | Entries removed as participants settle |
 | `ff:runs:unsettled` | Set | `{roomId}/{runId}` | Removed when every participant is settled |
-| `ff:room:{roomId}:knocks` | Sorted set | `userId` scored by `expiresAtMs` | Expired entries pruned on read |
+| `ff:room:{roomId}:knocks` | Sorted set | `userId` scored by `expiresAtMs` (`KNOCK_TTL_MS`, default 120 s) | Expired entries pruned on read; a repeated knock refreshes its score; removed on approve, reject and cancel |
 | `ff:auth:revoked:{sid}` | String | `1` | TTL = access-token lifetime |
-| `ff:ratelimit:{action}:{userId}` | String | Counter | TTL = rate window |
-| `ff:chat:dedupe:{userId}:{clientMessageId}` | String | `SET NX` marker | TTL 60 s |
+| `ff:ratelimit:{action}:{userId}` | String | Counter | TTL = rate window. Phase 6: `chat` (10 per 10 s), `knock` (5 per minute), `join` (30 per 10 s) and `knock-cancel` (10 per minute); one `MULTI` of `SET key 0 PX window NX` and `INCR`, so it works on Redis 6 and later |
+| `ff:chat:dedupe:{userId}:{roomId}:{clientMessageId}` | String | `SET NX` marker holding `{messageId}:{sentAtMs}`, so a repeat can be answered with the original ids (M8) | TTL 60 s |
 
 Multi-key changes that must be consistent (timer + run close + unsettled set; presence sets + presence hash; participant add guarded by run ID) are written with small atomic Redis operations (Lua). For the timer (I8), the new state is computed in TypeScript from the current state and Redis `TIME`, and the Lua operation only checks that `version` is unchanged before writing all related keys; conflicts are retried a bounded number of times. Lua never contains business rules.
 

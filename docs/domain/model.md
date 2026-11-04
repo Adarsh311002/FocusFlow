@@ -88,7 +88,7 @@ focus_sessions                                     (Phase 4B: solo only, E1–E1
   user_id             FK → users, ON DELETE CASCADE
   task_id             NULL, composite FK (task_id, user_id) → tasks(id, user_id), no ON DELETE action   (D4, P1)
   status              in_progress | completed | abandoned
-  abandon_reason      NULL | stopped | grace_expired | expired                       (E5; room reasons added in Phase 6)
+  abandon_reason      NULL | stopped | grace_expired | expired                       (E5; room reasons added in Phase 8, M1)
   planned_seconds     integer, 60–14,400                                             (E1)
   focused_seconds     integer, default 0, 0 ≤ focused_seconds ≤ planned_seconds    (D6)
   running_since       NULL                                                          (D6)
@@ -103,25 +103,27 @@ focus_sessions                                     (Phase 4B: solo only, E1–E1
   CHECK status <> 'completed' OR focused_seconds = planned_seconds
   UNIQUE (user_id) WHERE status = 'in_progress'      (at most one active session per user)
   INDEX (user_id, started_at DESC)
-  (Room sessions arrive in Phase 6 with their own migration: columns, constraints, index and
-   abandon reasons are defined then, not here — E4, E5.)
+  (Room sessions arrive with their own migration in Phase 8, with focus runs: columns,
+   constraints, index and abandon reasons are defined then, not here — E4, E5, M1.)
 
-rooms
+rooms                                               (Phase 6: D8, D16, M1–M3)
   id                  PK
-  code                UNIQUE (6 chars, no look-alike characters)
-  name                NOT NULL, 1–60 chars
-  host_id             FK → users (ON DELETE RESTRICT until D2 is decided)
-  is_private
-  focus_seconds        DEFAULT 1500, bounded CHECK   (D16)
-  short_break_seconds  DEFAULT 300,  bounded CHECK   (D16)
-  long_break_seconds   DEFAULT 900,  bounded CHECK   (D16)
+  code                UNIQUE (uq_rooms_code), CHECK ^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$   (M2)
+  name                NOT NULL, 1–60 chars (CHECK)
+  host_id             FK → users, ON DELETE RESTRICT until D2 is decided
+  is_private          NOT NULL
+  focus_seconds        DEFAULT 1500, CHECK 60–14,400    (D16, M3)
+  short_break_seconds  DEFAULT 300,  CHECK 60–3,600     (D16, M3)
+  long_break_seconds   DEFAULT 900,  CHECK 60–7,200     (D16, M3)
   created_at, updated_at
+  INDEX (host_id)                                       (the RESTRICT check, "rooms I host")
 
 room_members                                        (D9)
   room_id             FK → rooms, ON DELETE CASCADE
   user_id             FK → users, ON DELETE CASCADE
   joined_at
   PRIMARY KEY (room_id, user_id)
+  INDEX (user_id, joined_at DESC)                       ("My Rooms" and the users cascade)
 ```
 
 ### Rules the database cannot enforce alone
@@ -129,7 +131,8 @@ room_members                                        (D9)
 - `users.current_task_id` must point to an open task that is not soft-deleted. Soft-deleting the current task (D38) or completing it (D43) clears `users.current_task_id` in the same transaction, with a conditional update to avoid races. Setting a completed or deleted task as current is rejected. Setting the current task locks the task row (`FOR SHARE`) before writing the user row — the same task-then-user order that complete and delete use — so a concurrent complete or delete can never leave a completed or deleted task current (covered by a race test).
 - Account deletion (D2, when implemented) clears `users.current_task_id` in the account-deletion transaction before deleting the user's data. It does not rely on `ON DELETE SET NULL` (P1).
 - A session cannot be started or opted into with a deleted task. A solo session can only be started with an open task (E3), locked `FOR SHARE` like the current-task rules above; the server never fills in `users.current_task_id`.
-- The host always has a `room_members` row (created in the same transaction as the room).
+- The host always has a `room_members` row (created in the same transaction as the room, never removed: the host can neither leave nor be removed, D10).
+- A room's membership is the only grant of access: every `room:join` and every member-only route checks `room_members` (D9). Knocks and presence are Redis-only and never grant anything by themselves.
 
 ### Deliberately not in the MVP schema
 
@@ -152,7 +155,7 @@ solo, while in_progress:  running ⇄ paused   (D6)
 ```
 - `completed` and `abandoned` are final. At most one `in_progress` session per user.
 - **Completed** means the planned time was reached and the user was present at the end, allowing the 60-second grace for an actively running session (D14/15/35).
-- **Abandon reasons.** Phase 4B allows only the three solo reasons in the database (E5); the room-only reasons below are added with rooms in Phase 6:
+- **Abandon reasons.** Phase 4B allows only the three solo reasons in the database (E5); the room-only reasons below are added with focus runs in Phase 8 (M1):
 
 | Reason | Applies to | When |
 |---|---|---|

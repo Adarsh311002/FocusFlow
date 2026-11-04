@@ -12,6 +12,8 @@ import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
 import { createFocusSessionsRouter } from '../../modules/focus-sessions/http.js';
 import type { FocusSessionsDeps } from '../../modules/focus-sessions/service.js';
+import { createRoomsRouter } from '../../modules/rooms/http.js';
+import type { RoomsDeps } from '../../modules/rooms/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
 import { createTasksRouter } from '../../modules/tasks/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
@@ -27,6 +29,7 @@ type AppDeps = {
   redis: Redis;
   authDeps: AuthDeps;
   focusSessions: Omit<FocusSessionsDeps, 'db'>;
+  rooms: Omit<RoomsDeps, 'db'>;
 };
 
 export const createApp = ({
@@ -36,6 +39,7 @@ export const createApp = ({
   redis,
   authDeps,
   focusSessions,
+  rooms,
 }: AppDeps): Express => {
   const app = express();
 
@@ -70,6 +74,11 @@ export const createApp = ({
       db: authDeps.db,
       authenticate: requireAuth(authDeps),
     }),
+  );
+
+  app.use(
+    API_BASE_PATH,
+    createRoomsRouter({ ...rooms, db: authDeps.db, authenticate: requireAuth(authDeps) }),
   );
 
   app.use(notFoundHandler);

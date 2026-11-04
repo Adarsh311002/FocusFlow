@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useSyncExternalStore } from 'react';
 
 import { useAuth } from '../auth/auth-context';
+import { RoomLiveEvents } from '../rooms/room-live-events';
 import { getRealtimeClient, type RealtimeClient, type RealtimeStatus } from './realtime-client';
 
 const RealtimeContext = createContext<RealtimeClient | null>(null);
@@ -32,7 +33,12 @@ export function RealtimeProvider({
     };
   }, [client, signedInAs]);
 
-  return <RealtimeContext value={client}>{children}</RealtimeContext>;
+  return (
+    <RealtimeContext value={client}>
+      {signedInAs !== null && <RoomLiveEvents client={client} userId={signedInAs} />}
+      {children}
+    </RealtimeContext>
+  );
 }
 
 /** The app's live connection, for subscribing to its events. */

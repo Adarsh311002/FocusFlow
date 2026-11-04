@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -151,7 +152,7 @@ export const authSessions = pgTable(
 
 // Phase 4B: solo focus sessions (docs/domain/model.md, decisions D6, D14/15/35, E1–E16).
 // Solo only: room sessions add `room_id`, `focus_run_id` and the room-only abandon reasons
-// in Phase 6 (E4, E5). The lifecycle rules that need the clock or presence (completion,
+// in Phase 8 (E4, E5, M1). The lifecycle rules that need the clock or presence (completion,
 // grace, expiry) live in modules/focus-sessions; the table guarantees the invariants that
 // must hold whatever code writes it.
 export const focusSessions = pgTable(
@@ -196,7 +197,7 @@ export const focusSessions = pgTable(
       'ck_focus_sessions_status',
       sql`${table.status} IN ('in_progress', 'completed', 'abandoned')`,
     ),
-    // E5: solo reasons only until Phase 6.
+    // E5: solo reasons only until Phase 8.
     check(
       'ck_focus_sessions_abandon_reason',
       sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired')`,
@@ -239,5 +240,73 @@ export const focusSessions = pgTable(
       .where(sql`${table.status} = 'in_progress'`),
     // History, newest first (Phase 5), and the ON DELETE CASCADE from users.
     index('ix_focus_sessions_user_id_started_at').on(table.userId, table.startedAt.desc()),
+  ],
+);
+
+// Phase 6: rooms and membership (docs/domain/model.md, decisions D8, D9, D16, M1–M10).
+// Persistent shared spaces: presence, knocks and chat are Redis-only. The phase durations
+// are saved here (D16); the live timer arrives in Phase 7. The host also has a
+// `room_members` row, created in the same transaction as the room (a rule the service
+// keeps; the database cannot express it).
+export const rooms = pgTable(
+  'rooms',
+  {
+    id: uuid().notNull(),
+    // Six characters from an alphabet without look-alikes (M2), uppercase.
+    code: text().notNull(),
+    name: text().notNull(),
+    // RESTRICT until account deletion is decided (D2): a host cannot be deleted while
+    // their rooms exist.
+    hostId: uuid().notNull(),
+    isPrivate: boolean().notNull(),
+    focusSeconds: integer().notNull().default(1500),
+    shortBreakSeconds: integer().notNull().default(300),
+    longBreakSeconds: integer().notNull().default(900),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_rooms', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_rooms_host_id',
+      columns: [table.hostId],
+      foreignColumns: [users.id],
+    }).onDelete('restrict'),
+    uniqueIndex('uq_rooms_code').on(table.code),
+    check('ck_rooms_code', sql`${table.code} ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$'`),
+    check('ck_rooms_name', sql`char_length(${table.name}) BETWEEN 1 AND 60`),
+    // M3: duration bounds, in whole seconds.
+    check('ck_rooms_focus_seconds', sql`${table.focusSeconds} BETWEEN 60 AND 14400`),
+    check('ck_rooms_short_break_seconds', sql`${table.shortBreakSeconds} BETWEEN 60 AND 3600`),
+    check('ck_rooms_long_break_seconds', sql`${table.longBreakSeconds} BETWEEN 60 AND 7200`),
+    // The ON DELETE RESTRICT check of users and "rooms I host".
+    index('ix_rooms_host_id').on(table.hostId),
+  ],
+);
+
+export const roomMembers = pgTable(
+  'room_members',
+  {
+    roomId: uuid().notNull(),
+    userId: uuid().notNull(),
+    joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_members', columns: [table.roomId, table.userId] }),
+    foreignKey({
+      name: 'fk_room_members_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_members_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // "My Rooms": a user's rooms, most recently joined first, and the users cascade.
+    index('ix_room_members_user_id_joined_at').on(table.userId, table.joinedAt.desc()),
   ],
 );

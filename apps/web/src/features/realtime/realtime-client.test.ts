@@ -60,6 +60,8 @@ const createFakeSocket = (
       onDisconnect: (listener) => disconnectListeners.push(listener),
       onConnectError: (listener) => errorListeners.push(listener),
       onFocusSessionUpdated: (listener) => focusListeners.push(listener),
+      onRoomEvent: () => undefined,
+      emitWithAck: () => Promise.resolve({ ok: true }),
       serverEmits: (payload) => {
         focusListeners.forEach((listener) => {
           listener(payload);

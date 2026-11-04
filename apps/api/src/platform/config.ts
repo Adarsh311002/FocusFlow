@@ -106,6 +106,11 @@ const configSchema = z
     // Solo Focus (Phase 4B). The reconnect grace is 60 s by decision (D14/15/35); it is
     // configurable only so tests can run the same jobs quickly.
     FOCUS_GRACE_MS: durationMs.default(60_000),
+
+    // Rooms (Phase 6, M6, M7). How long a knock waits for the host, and the safety limit
+    // of people present in one room at once (D12).
+    KNOCK_TTL_MS: durationMs.default(120_000),
+    ROOM_MAX_PRESENT: z.coerce.number().int().min(1).max(10_000).default(50),
   })
   .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
     path: ['INSTANCE_TTL_MS'],

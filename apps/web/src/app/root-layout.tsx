@@ -31,6 +31,15 @@ export function AppNav() {
             Review
           </Link>
         </li>
+        <li>
+          <Link
+            to="/rooms"
+            className={NAV_LINK}
+            activeProps={{ 'aria-current': 'page', className: 'font-semibold' }}
+          >
+            Rooms
+          </Link>
+        </li>
       </ul>
     </nav>
   );

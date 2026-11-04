@@ -18,3 +18,7 @@ export type AuthSessionId = z.infer<typeof authSessionIdSchema>;
 /** A focus session (solo in Phase 4B; room sessions arrive in Phase 6). */
 export const focusSessionIdSchema = z.uuid().brand<'FocusSessionId'>();
 export type FocusSessionId = z.infer<typeof focusSessionIdSchema>;
+
+/** A room (Phase 6): a persistent shared focus space (D8). */
+export const roomIdSchema = z.uuid().brand<'RoomId'>();
+export type RoomId = z.infer<typeof roomIdSchema>;

@@ -79,3 +79,50 @@ export const closeAllSockets = (): void => {
   }
   openClients.clear();
 };
+
+/** Emits an event with an acknowledgement callback and resolves with the server's answer. */
+export const emitWithAck = <T = unknown>(
+  socket: Socket,
+  event: string,
+  payload: unknown,
+  timeoutMs = 5_000,
+): Promise<T> =>
+  new Promise((resolve, reject) => {
+    socket.timeout(timeoutMs).emit(event, payload, (error: Error | null, response: T) => {
+      if (error === null) {
+        resolve(response);
+      } else {
+        reject(error);
+      }
+    });
+  });
+
+/** Records every payload of `event` the socket receives, from now on. */
+export const recordEvents = <T = unknown>(socket: Socket, event: string): T[] => {
+  const received: T[] = [];
+  socket.on(event, (payload: T) => {
+    received.push(payload);
+  });
+  return received;
+};
+
+/** Polls until `condition` holds (a throwing probe counts as "not yet"). */
+export const eventually = async (
+  condition: () => boolean | Promise<boolean>,
+  timeoutMs = 8_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      if (await condition()) {
+        return;
+      }
+    } catch {
+      // Not yet.
+    }
+    if (Date.now() > deadline) {
+      throw new Error('condition not met in time');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+};

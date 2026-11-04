@@ -20,6 +20,7 @@
     "test": "pnpm -r run test",
     "test:watch": "pnpm --parallel -r run test:watch",
     "test:int": "pnpm --filter @focus-flow/api run test:int",
+    "test:e2e": "pnpm --filter @focus-flow/e2e run test:e2e",
     "check:no-js": "tsx scripts/check-no-js.ts",
     "check:commit-msg": "tsx scripts/check-commit-msg.ts",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm check:no-js && pnpm test && pnpm build",

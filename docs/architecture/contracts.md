@@ -40,11 +40,11 @@ Illustrative shapes (written as TypeScript-like pseudocode, not files):
 
 ```
 AbandonReason = "stopped" | "expired" | "grace_expired"            // Phase 4B (E5)
-// Phase 6 widens it with the room reasons:
+// Phase 8 widens it with the room reasons:
 //   "opted_out" | "left_room" | "removed" | "reset" | "phase_changed" | "timer_lost"
 
 FocusSessionContext = { kind: "solo" }                              // Phase 4B (E4)
-// Phase 6 adds: { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
+// Phase 8 adds: { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
 
 FocusSessionView = {
   id: FocusSessionId
@@ -101,7 +101,7 @@ Server-internal states (for example a run that is closing, or a participant wait
 
 ## Error codes
 
-One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_NOT_OPEN`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
+One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_NOT_OPEN`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `ROOM_NOT_FOUND`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `CANNOT_REMOVE_HOST`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `ROOM_FULL`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
 
 ## Future: Node ↔ Python contracts
 

@@ -38,16 +38,18 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Item | Notes / recommended default |
 |---|---|
 | Token lifetimes and overlap window | e.g. access 15 min, refresh 30 days, overlap ~20 s. |
-| Duration bounds | Room phase durations (e.g. 1–240 min), decided with rooms (Phase 6). Solo planned time is decided: 60–14,400 s (E1). |
-| Knock TTL | e.g. 120 s. |
+| Duration bounds | **Decided in Phase 6 (M3):** focus 60–14,400 s, short break 60–3,600 s, long break 60–7,200 s. Solo planned time: 60–14,400 s (E1). |
+| Knock TTL | **Decided in Phase 6 (M7):** `KNOCK_TTL_MS`, default 120 s. |
 | Redis hosting | Must support AOF persistence and `maxmemory-policy noeviction`. |
 | `Idempotency-Key` support | For create endpoints; not required for the MVP. |
-| Rate-limit values | Chat, knocks, auth endpoints. |
+| Rate-limit values | Auth endpoints. **Phase 6 (M7, M8):** chat 10 messages per 10 s and knocks 5 per minute, per user, in Redis. |
 | API bundler | esbuild directly or via `tsdown`. |
 | Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
 | Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
 | V1–V8 — Phase 5 review details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Review decisions"): history `from`/`to` are instants, `[from, to)` on `started_at`; history lists every status, `started_at DESC, id DESC`, owner-scoped id cursor, limit 50/100; summary `from`/`to` are inclusive dates in `tz`, ≤ 366 days, ≥ 1970; `tz` is `UTC` or an `Area/Location` name validated and computed with `Intl` only; the summary counts ended sessions only; a session counts on its local start date, dense `days`; `/review` shows the last 7 days in the browser zone. |
 | W1–W6 — Phase 4B Milestone 5 web details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Solo Focus web decisions"): the timer is a `/dashboard` panel; `GET /focus-sessions/current` is the truth and `focus:session:updated` only triggers refetches (current, history, summary); the countdown is display only and says "Finishing…" at zero; controls disable while pending and duplicates join; presets 15/25/50 min plus custom 1–240; the API emits the event from its own after-commit listener |
+
+| M1–M13 — Phase 6 rooms details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Rooms decisions"): no `focus_sessions` changes until Phase 8; six-character codes without look-alikes; duration bounds; non-members get 404 and only the by-code preview; Redis room presence with a per-instance reverse index synchronised on every heartbeat; `room:join` snapshot; knocks with a 120 s TTL, host must be online, rate limited; temporary deduplicated, rate-limited chat; `room:leave` ends presence only, removal evicts sockets; `room:member:joined`; `ROOM_MAX_PRESENT` 50 (the D12 safety limit); web routes, Zustand per room; Playwright on the installed Chrome. |
 
 ## Tracked follow-ups
 

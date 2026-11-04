@@ -2,7 +2,25 @@ import { z } from 'zod';
 
 import { focusSessionViewSchema } from '../http/focus-sessions';
 import type { AuthSessionId, UserId } from '../ids';
-import { type Ack, ackErrorSchema } from './ack';
+import { type Ack, type AckError, ackErrorSchema } from './ack';
+import type {
+  RoomChatMessageEvent,
+  RoomChatSendRequest,
+  RoomChatSendResult,
+  RoomJoinRequest,
+  RoomJoinResult,
+  RoomKnockReceivedEvent,
+  RoomKnockRemovedEvent,
+  RoomKnockResolvedEvent,
+  RoomKnockResult,
+  RoomMemberJoinedEvent,
+  RoomMemberRemovedEvent,
+  RoomPresenceJoinedEvent,
+  RoomPresenceLeftEvent,
+  RoomRequest,
+  RoomResyncEvent,
+  RoomSettingsUpdatedEvent,
+} from './rooms';
 
 // Typed Socket.IO events (docs/architecture/contracts.md, "Typed Socket.IO"). The one
 // client event is the clock sync; the one server event so far is `focus:session:updated`
@@ -27,8 +45,20 @@ export const timeSyncAckSchema = z.discriminatedUnion('ok', [
   ackErrorSchema,
 ]);
 
+/** An acknowledgement with no result beyond success. */
+export type EmptyAck = { ok: true } | AckError;
+
+/** Every client event is answered through its acknowledgement (docs/api/socket-events.md). */
 export type ClientToServerEvents = {
   'time:sync': (request: TimeSyncRequest, ack: (response: Ack<TimeSyncResult>) => void) => void;
+  'room:join': (request: RoomJoinRequest, ack: (response: Ack<RoomJoinResult>) => void) => void;
+  'room:leave': (request: RoomRequest, ack: (response: EmptyAck) => void) => void;
+  'room:knock': (request: RoomRequest, ack: (response: Ack<RoomKnockResult>) => void) => void;
+  'room:knock:cancel': (request: RoomRequest, ack: (response: EmptyAck) => void) => void;
+  'room:chat:send': (
+    request: RoomChatSendRequest,
+    ack: (response: Ack<RoomChatSendResult>) => void,
+  ) => void;
 };
 
 /**
@@ -39,9 +69,19 @@ export type ClientToServerEvents = {
 export const focusSessionUpdatedEventSchema = z.object({ session: focusSessionViewSchema });
 export type FocusSessionUpdatedEvent = z.infer<typeof focusSessionUpdatedEventSchema>;
 
-/** The first product event (R8); names are `area:action` and payloads never carry identity. */
+/** Names are `area:action` and payloads never carry the receiver's own identity. */
 export type ServerToClientEvents = {
   'focus:session:updated': (event: FocusSessionUpdatedEvent) => void;
+  'room:presence:joined': (event: RoomPresenceJoinedEvent) => void;
+  'room:presence:left': (event: RoomPresenceLeftEvent) => void;
+  'room:member:joined': (event: RoomMemberJoinedEvent) => void;
+  'room:member:removed': (event: RoomMemberRemovedEvent) => void;
+  'room:settings:updated': (event: RoomSettingsUpdatedEvent) => void;
+  'room:knock:received': (event: RoomKnockReceivedEvent) => void;
+  'room:knock:removed': (event: RoomKnockRemovedEvent) => void;
+  'room:knock:resolved': (event: RoomKnockResolvedEvent) => void;
+  'room:chat:message': (event: RoomChatMessageEvent) => void;
+  'room:resync': (event: RoomResyncEvent) => void;
 };
 
 export type InterServerEvents = Record<string, never>;
@@ -57,6 +97,6 @@ export type SocketData = {
   avatarUrl: string | null;
   /** When the access token used for this connection expires; the server disconnects then. */
   tokenExpiresAtMs: number;
-  /** Rooms joined through `room:join` (Phase 6); empty until then. */
+  /** Rooms joined through `room:join`; the socket's Socket.IO rooms stay the authority. */
   joinedRooms: string[];
 };
