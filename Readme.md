@@ -75,7 +75,7 @@ Git hooks (formatting, linting, Conventional Commit messages) are installed by l
 
 ## Status
 
-Phase 0 (foundation) is in place: workspace tooling, shared contracts, the API platform layer with health checks, the web shell and CI. Authentication, tasks, focus sessions and rooms arrive in later phases; see [`docs/implementation/plan.md`](docs/implementation/plan.md).
+Phases 0 to 3 and 4A are merged into `main`. Solo Focus (Phase 4B), Review (Phase 5), rooms (Phase 6) and the shared room timer (Phase 7) are committed and pushed on their own branches, and room focus runs (Phase 8, `v2/phase-8-room-focus-runs`) are implemented; none of these is merged into `main` yet. Phase 1b (Google sign-in) has not started. Phase 9 (production readiness) is the next milestone. See [`docs/implementation/plan.md`](docs/implementation/plan.md).
 
 ## High-level design (v1 reference)
 

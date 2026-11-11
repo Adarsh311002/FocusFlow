@@ -14,7 +14,7 @@ Status: **Architecture**, implementing F5, F6, F7, D9, D10, D11, D16, D17, D19. 
 - **Disconnect:** handled per user and per room as described in the timing protocol. A plain disconnect never abandons a session immediately; `room:leave` does.
 - **Transports:** Socket.IO defaults, polling upgraded to WebSocket (R5). Multiple API instances with polling need sticky sessions. Messages are limited to 16 KB.
 - **Handshake refusals** (`connect_error`, `err.data.code`): `UNAUTHENTICATED`, `SESSION_REVOKED`, `INTERNAL`.
-- **Implemented in Phase 6:** `room:join`, `room:leave`, `room:knock`, `room:knock:cancel`, `room:chat:send` and the presence, member, settings, knock, chat and resync events (M4–M10). The focus-run parts (`room:focus:participants`, the snapshot's `participants`/`me`) arrive in Phase 8.
+- **Implemented in Phase 6:** `room:join`, `room:leave`, `room:knock`, `room:knock:cancel`, `room:chat:send` and the presence, member, settings, knock, chat and resync events (M4–M10). **Implemented in Phase 8:** `room:focus:participants` and the snapshot's `focus` (RF12). `room:join` by a user who becomes present calls the run service (reconnect within grace); the last socket leaving a room starts the 60 s grace (RF7); `room:leave` by the last socket abandons with `left_room` first (RF8).
 - **Implemented in Phase 7:** `room:timer:command`, `room:timer:state` and the snapshot's `timer` (RT1–RT13). Clients treat the join snapshot as authoritative and apply a `room:timer:state` only when its `version` is greater than the one they hold (RT2). `VERSION_CONFLICT` and `INVALID_TRANSITION` acknowledgements carry `error.details = { timer, serverNowMs }` (RT6).
 - **Implemented in Phase 3:** the handshake, the `user:`/`session:` rooms, token-expiry and revocation disconnects, and `time:sync` (answered with Redis TIME, R2). Phase 4B adds the first server → client product event, `focus:session:updated` (R8, E6; see "Server → client").
 
@@ -43,8 +43,12 @@ A socket may act in a room only while it is in that room's Socket.IO room (`room
   pendingKnocks?: KnockView[],        // host only: { userId, displayName, avatarUrl, expiresAtMs }
   serverNowMs: number
   // Phase 7 adds: timer: TimerView
-  // Phase 8 adds: participants: Participant[]  // { userId, displayName, optedInAtMs, connected }
-  //               me: { participation: { sessionId, focusRunId } | null }
+  focus: {                            // Phase 8 (RF12)
+    focusRunId: FocusRunId | null,     // null in a break
+    participantsVersion: number,       // server-owned, per run (G2); 0 outside a focus phase. The snapshot is authoritative
+    participants: Participant[],       // { userId, displayName, avatarUrl, optedInAtMs, connected, disconnectedAtMs }
+    me: { participation: { sessionId, focusRunId } | null }
+  }
 }
 ```
 
@@ -59,7 +63,7 @@ The socket joins the Socket.IO room before the presence list is read, so no even
 | `room:member:joined` | `{ roomId, member: RoomMemberView }` | Room. A new member (a public join or an approved knock); a hint to show them (M10) |
 | `room:timer:state` | `{ roomId, timer: TimerView, serverNowMs }` | Room |
 | `room:settings:updated` | `{ roomId, timerSettings, effectiveFrom: "next_phase" }` | Room |
-| `room:focus:participants` | `{ roomId, focusRunId, participants: Participant[] }` | Room |
+| `room:focus:participants` | `{ roomId, focusRunId, participants: Participant[], participantsVersion }` (a client applies it only for the same `focusRunId` and a higher `participantsVersion`, G2) | Room |
 | `room:knock:received` | `{ roomId, requester: { userId, displayName, avatarUrl }, expiresAtMs }` | `user:{hostId}` |
 | `room:knock:removed` | `{ roomId, userId, reason: "approved" \| "rejected" \| "cancelled" }` | `user:{hostId}` |
 | `room:knock:resolved` | `{ roomId, outcome: "approved" \| "rejected" }` | `user:{requesterId}` only |

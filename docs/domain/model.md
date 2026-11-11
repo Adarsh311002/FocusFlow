@@ -192,7 +192,7 @@ idle | running | paused ──setPhase(p)──► idle(p)
 running ──reaches zero──► idle(next phase)      focus → short_break; any break → focus
 host disconnect: no transition (D10)
 ```
-The next phase never starts automatically (open D32). Full protocol: `architecture/focus-timing-protocol.md`.
+The next phase never starts automatically (D32, a deferred item). Full protocol: `architecture/focus-timing-protocol.md`.
 
 ### Focus run and participant
 ```
@@ -209,7 +209,7 @@ participant:  connected ⇄ disconnected (60 s grace) ──► settled (complet
 | Focus sessions, including in-progress ones and solo pause accounting | PostgreSQL | The record of accomplishment; written at start so no crash can erase that focus began (D6) |
 | Rooms, room settings, memberships | PostgreSQL | Persistent spaces and access grants (D8, D9, D16) |
 | Presence (user-level and room-level) | Redis | Temporary by definition; rebuilt from live sockets |
-| Room timer state, settings live copy | Redis | Changes often, needs atomic updates; settings reload from PostgreSQL |
+| Room timer state (including the active phase's duration) | Redis | Changes often, needs atomic updates; the saved settings are PostgreSQL and are read when a phase is created (RT8) |
 | Focus run ledger and participants | Redis | Links live timer to durable sessions; loss is detected and recorded as `timer_lost` |
 | Knocks | Redis (TTL) | Only meaningful while the room is live |
 | Revoked auth session IDs | Redis (TTL) | Fast revocation checks within one access-token lifetime |

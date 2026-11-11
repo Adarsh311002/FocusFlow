@@ -2,7 +2,7 @@
 
 How the server decides when focus starts, pauses, ends, completes or is abandoned, for room sessions and solo sessions.
 
-Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D19, implementation decisions I7 (worker placement) and I8 (timer implementation), presence hardening H1–H4 and Solo Focus E1–E16. Everything else in this document is **Architecture**.
+Approved decisions implemented here: D5, D6, D10, D11, D14/15/35, D16, D17, D17a, D19, implementation decisions I7 (worker placement) and I8 (timer implementation), presence hardening H1–H4 and Solo Focus E1–E16. Everything else in this document is **Architecture**.
 
 ## Principles
 
@@ -93,7 +93,7 @@ An **online event** `userId` is emitted when a socket of the user is newly recor
 
 Derived: `elapsed = elapsedBeforeMs + (running ? now − segmentStartedAtMs : 0)`; while running, `endsAtMs = segmentStartedAtMs + durationMs − elapsedBeforeMs`.
 
-If a room has no timer key it is `idle` in a new `focus` phase using the room's saved durations. The key is **materialised at the first access** (join snapshot or first command, RT1) by a write that requires the key to be absent, so a phase's duration is fixed when the phase is created. A new timer's `version` starts at the Redis TIME in milliseconds (RT2) rather than 0, so a timer recreated after a Redis loss or rollback has a higher version than any client or leftover job holds. Settings are read from PostgreSQL whenever a phase is created; there is no Redis copy (RT8). In Phase 7 the state has no `focusRunId` (RT3).
+If a room has no timer key it is `idle` in a new `focus` phase using the room's saved durations. The key is **materialised at the first access** (join snapshot or first command, RT1) by a write that requires the key to be absent, so a phase's duration is fixed when the phase is created. A new timer's `version` starts at the Redis TIME in milliseconds (RT2) rather than 0, so a timer recreated after a Redis loss or rollback has a higher version than any client or leftover job holds. Settings are read from PostgreSQL whenever a phase is created; there is no Redis copy (RT8). Since Phase 8 the state also carries `focusRunId` (RF2; the Phase 7 state had none, RT3).
 
 ### How a change is applied (Approved, I8)
 
@@ -108,9 +108,9 @@ Lua is used only for the atomic compare-version-and-write in step 3. It contains
 
 ### Phase durations (D16)
 
-- Saved in PostgreSQL on the room. Redis holds a live copy of the settings.
+- Saved in PostgreSQL on the room, which owns the settings. Redis stores the active timer state including the active phase's duration, fixed when the phase is created; there is no separate Redis copy of the settings (RT8).
 - A phase's `durationMs` is read from the settings **when the phase is created**: on `reset`, on `setPhase`, and on the automatic transition when a phase reaches zero. Changing settings never alters the current phase.
-- The host changes settings over REST; the server updates PostgreSQL, then the Redis copy, then broadcasts `room:settings:updated` with `effectiveFrom: "next_phase"`. The client may offer "apply now", which is a `reset` (and under D17 abandons opted-in sessions).
+- The host changes settings over REST; the server updates PostgreSQL, then broadcasts `room:settings:updated` with `effectiveFrom: "next_phase"`. The client may offer "apply now", which is a `reset` (and under D17 abandons opted-in sessions).
 
 ### Commands
 
@@ -121,14 +121,14 @@ The host sends `room:timer:command`. Each command is applied as described above 
 | `start` | `idle` | `running`; `segmentStartedAtMs = now`; schedule the phase-end job |
 | `pause` | `running` | `elapsedBeforeMs += now − segmentStartedAtMs`; `paused` |
 | `resume` | `paused` | `running`; `segmentStartedAtMs = now`; schedule a new phase-end job |
-| `reset` (`expectedVersion`) | any (RT1: idle too, so the host can "apply now" new settings) | `idle`, same phase, new duration from settings. In focus (Phase 8): close the run with reason `reset`, open a new run (D17) |
+| `reset` (`expectedVersion`) | any: idle, running or paused (RT1: idle too, so the host can "apply now" new settings) | `idle`, same phase, new duration from settings. In focus: close the current run with reason `reset` and open a new run in the same atomic write (D17); from idle no session is created, and only sessions of people who opted in during idle are abandoned (`reset`, 0 focused s). A phase already at its true end completes instead (D17a) |
 | `setPhase` (`phase`, `expectedVersion`) | any, phase must differ | `idle` in the new phase, duration from settings. Leaving focus: close the run with reason `phase_changed` (D17). Entering focus: open a new run |
 
-- `pause` and `resume` repeated are successful no-ops that return the current state: nothing is written and the version does not change (RT7). `start` while running or paused and `resume` while idle are `INVALID_TRANSITION`. Both rejections, and `VERSION_CONFLICT`, carry the current timer in `error.details` (RT6).
+- A `pause` at or after the phase end is rejected as `INVALID_TRANSITION` (it would leave the pending phase-end job a no-op on a timer paused at zero). `pause` and `resume` repeated are successful no-ops that return the current state: nothing is written and the version does not change (RT7). `start` while running or paused and `resume` while idle are `INVALID_TRANSITION`. Both rejections, and `VERSION_CONFLICT`, carry the current timer in `error.details` (RT6).
 - Writes retry up to 3 times, re-reading and re-evaluating each time (RT7). The caller must be the room's host (`NOT_HOST`, PostgreSQL) with the socket in the room (`NOT_JOINED`), at most 20 commands per 10 s (RT5). `reset` and `setPhase` require `expectedVersion`; a mismatch returns `VERSION_CONFLICT` with the current state, so duplicates cannot apply twice.
 - Cancelling an outdated phase-end job is best-effort; the version check makes a leftover job harmless.
 - **Host disconnects:** nothing happens (D10). A running timer keeps running; a paused timer stays paused. Timer commands are unavailable until the host returns.
-- The next phase is never started automatically (open D32).
+- The next phase is never started automatically (D32, a deferred item).
 
 ### Reaching zero
 
@@ -147,7 +147,7 @@ A focus run is one instance of a focus phase. Its Redis ledger holds the run's s
 
 `POST /rooms/:roomId/focus-participation` (REST, because it creates a durable row).
 
-1. Check: the user is a member, is present in the room, has no in-progress session, the phase is `focus` (open D31), and the optional task is theirs and not deleted.
+1. Check: the user is a member, is present in the room, has no in-progress session, the phase is `focus` (D31, a deferred item), and the optional task is theirs and not deleted.
 2. Generate `sessionId`. Insert the focus session in PostgreSQL: `in_progress`, `room_id`, `focus_run_id`, `planned_seconds = round((durationMs − elapsed) / 1000)`.
 3. Small atomic Redis operation: add the participant to the run **only if** the room's current run is still that `focusRunId` and the phase is still focus.
 4. If that operation fails because the run changed, delete the just-inserted row and return `409 RUN_CHANGED`.
@@ -162,6 +162,8 @@ Opting in while the timer is idle or paused is allowed; the elapsed time at that
 - When a participant's last socket in the room drops, an atomic write records `disconnectedAtMs` and `elapsedAtDisconnectMs` (computed from the timer state and Redis `TIME`), and a grace job is scheduled for 60 seconds later. This applies whether the room timer is running or paused.
 - Reconnecting (`room:join`) within the grace period clears the disconnect fields; the grace job then does nothing because `disconnectedAtMs` no longer matches.
 - If the grace job fires and the participant is still disconnected with the same `disconnectedAtMs`, the session is abandoned with `grace_expired`.
+- The grace is 60 s plus a 1 s early tolerance (`GRACE_EARLY_TOLERANCE_MS`) for clock differences between BullMQ and Redis TIME: at most 61 s (RF7).
+- A disconnect recorded at or after the true end of the phase counts as present at the end (D17a, G3): the session completes at the true end, also when the delayed grace job runs before the delayed phase-end job (`wasPresentThroughEnd`, `pendingEndAtMs`).
 
 ### Leaving, opting out, removal
 
@@ -179,7 +181,7 @@ When a run closes (`reset`, `phase_changed`, or `completed`), its ID is added to
 
 | Close reason | Participant state | Outcome |
 |---|---|---|
-| `reset` / `phase_changed` | any | `abandoned` with that reason (D17) |
+| `reset` / `phase_changed` | any | `abandoned` with that reason (D17), unless the phase had already reached its true end (D17a: closed `completed` with `closedAtMs = min(now, endsAt)`) |
 | `completed` | connected | `completed` |
 | `completed` | disconnected, grace not yet expired | Waits. Reconnect within grace → `completed`. Grace expires → `abandoned(grace_expired)` (D14/15/35) |
 
@@ -194,9 +196,23 @@ After settlement, notifications (`focus:session:updated`) go to each affected us
 | `reset` / `phase_changed`, disconnected | `(elapsedAtDisconnectMs − elapsedAtOptInMs) / 1000` | Run close time |
 | `opted_out` / `left_room` / `removed` | `(elapsedNow − elapsedAtOptInMs) / 1000` | Now |
 | `grace_expired` | `(elapsedAtDisconnectMs − elapsedAtOptInMs) / 1000` | Disconnect time |
-| `timer_lost` | 0 (open D37) | Recovery time |
+| `timer_lost` | 0 (D37, a deferred item) | Recovery time |
+| `expired` (RF17) | Opt-in to the timer's elapsed (or frozen at close), never past a recorded disconnect; 0 without a ledger entry | Now (PostgreSQL clock) |
 
 Values are rounded to whole seconds and never negative.
+
+**Participant list version (G2).** The run hash carries a server-owned `participantsVersion`, starting at 0 with the run and incremented inside the ledger scripts on every change to the list or to a shown field. The join snapshot's `focus` and `room:focus:participants` carry it; a client applies an event only for the same `focusRunId` and a higher version, and a join snapshot is authoritative.
+
+### Stale room sessions (RF17)
+
+A room session still `in_progress` **12 hours** after `started_at` (`ROOM_STALE_AFTER_MS`) is abandoned with reason `expired` by reconciler step 6b, so an idle or paused room run can never hold the user's single session slot for ever. There is no schema change; the constants `ROOM_STALE_AFTER_MS` (12 h) and `ROOM_STALE_HARD_MAX_MS` (16 h) live in `apps/api/src/modules/room-focus/types.ts` and the code in `room-focus/stale.ts`.
+
+- **Exemptions, up to an absolute maximum of 16 hours:** a session whose own run is still open with the timer running is left to finish its phase; a session whose run is closed and still waiting for its settlement is left to that settlement. After 16 hours the session is expired anyway (a closed run with the run's frozen `elapsedAtCloseMs`). Paused and idle runs expire at 12 hours.
+- **Focused time:** from opt-in to the timer's elapsed (or the elapsed frozen at the run's close), floored and clamped to the plan, never past a recorded disconnect. No ledger entry means 0 s.
+- **Redis first:** the ledger and timer are read before anything is decided. If Redis cannot answer, nothing is decided and the next sweep tries again; focused time is never silently discarded.
+- **PostgreSQL decides** under `FOR UPDATE SKIP LOCKED`, re-checking the age with the PostgreSQL clock, and changes only the `in_progress` row of that run (idempotent).
+- **After the commit:** compare-and-delete the ledger entry (by sessionId) and `finishRun`, then announce `room:focus:participants` and `focus:session:updated`. A ledger cleanup that fails is kept in the process backlog and retried by every full reconcile run (a closed-run settlement also removes leftovers).
+- **Solo isolation:** solo sessions are never selected (`room_id IS NOT NULL`), and the solo stale cleanup (step 6) ignores room rows.
 
 ## Solo sessions
 
@@ -327,7 +343,7 @@ Scheduling a `focus-session` job **ensures** it (E20): BullMQ keeps finished job
 
 ## Reconciler
 
-Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 30 seconds, R6), so normally one worker takes each scheduled run. Every step is safe to repeat, and runs may overlap across instances (startup runs, a long run, direct runs): the session steps lock each row `FOR UPDATE SKIP LOCKED`, so overlapping runs never wait for each other or decide a session twice. Within one process runs are single-flight. Phase 3 implemented step 1 and Phase 4B steps 5–6; the others arrive with the phases that own their state.
+Runs at startup, after Redis recovery and on a repeating BullMQ schedule (every 30 seconds, R6), so normally one worker takes each scheduled run. Every step is safe to repeat, and runs may overlap across instances (startup runs, a long run, direct runs): the session steps lock each row `FOR UPDATE SKIP LOCKED`, so overlapping runs never wait for each other or decide a session twice. Within one process runs are single-flight. Phase 3 implemented step 1, Phase 4B steps 5–6, Phase 7 step 2 and Phase 8 steps 3, 4, 6b and 7.
 
 **Process-owned trigger (E23).** The schedule is stored in Redis, so a FLUSHALL deletes it and nothing in Redis can restore it. Every worker-running process (`ROLE` `all` or `worker`) therefore keeps a timer of its own, every `RECONCILER_INTERVAL_MS`, that never overlaps itself: with Redis reachable it re-registers the schedule if it is missing, and if the liveness record `ff:reconcile:last-finished` (Redis TIME, written by every finished run however it started) is missing or at least **3 × `RECONCILER_INTERVAL_MS`** old (90 s by default) it runs the reconciler directly in-process (skipped if a run is already in flight there); with Redis unreachable it runs only step 6, which needs only PostgreSQL (E22). This adds at most one direct run per process per interval, and only while scheduled runs are not happening. The epoch's local recovery still re-registers the schedule and its global recovery still enqueues a recovery run.
 
@@ -335,10 +351,11 @@ A session step works in keyset batches of in-progress sessions (100, ordered by 
 
 1. Remove presence entries of dead API instances; treat their users and room participants as disconnected at the instance's last heartbeat, and schedule grace. Users are reported before the entries are removed, so an interrupted run is repeated (H2).
 2. Room timers that are running past `endsAtMs`: run the phase end. Running timers without a pending job: schedule it (RT12; implemented in Phase 7, batches of at most 100, one room's failure never stops the run).
-3. Closed runs in the unsettled set: settle them (Phase 8).
-4. Room participants past their grace, still offline when re-checked: apply `grace_expired` (Phase 8).
+3. Closed runs in the unsettled set: settle them (implemented in Phase 8; a run with participants still in grace stays until their grace job or the sweep settles them).
+4. Room participants past their grace, still offline when re-checked: apply `grace_expired`; a participant who looks connected but whose user is absent from the room gets late grace (implemented in Phase 8; one PostgreSQL-driven sweep with step 7).
 5. Every running solo session: run the decision for a running session (above), as a caller that never applies E16. Terminal outcomes — `completed`, `abandoned(grace_expired)`, `abandoned(expired)` (E9) — are **settled directly** in that transaction, not left to a job that may itself be lost. Otherwise its jobs are **ensured** (E20): the grace job of a recorded disconnect (also when the user is online again: only that job may apply E16), the end job of a session still before `T_end`; or late grace starts (H3). When presence, the epoch or the marker cannot be trusted (E17, E18) the session is deferred to the next run, unless qualifying E8 evidence decides it.
 6. Every solo session still in progress 12 hours after `started_at` (by the PostgreSQL clock, re-checked under the lock), running or paused: `abandoned(expired)`, keeping the time before any current stretch (E2). **This runs after step 5 and does not depend on it (E19):** a session step 5 settled keeps its result (it is no longer in progress), qualifying E8 evidence still completes it first, but a session step 5 had to defer — presence unknown or recovering, the epoch unknown, Redis unavailable — is expired anyway once it reaches the threshold; the 12 hours are never extended. Paused sessions are untouched before then (D14/15/35).
+6b. Room sessions still `in_progress` 12 h after `started_at` (16 h at most while their own run is open and running, or closed and waiting for settlement): `abandoned(expired)` (RF17, "Stale room sessions"). Runs after steps 3, 4, 7 and solo step 6; Redis is read first and nothing is decided while it is unavailable; failed ledger cleanups are retried by every full run.
 7. Room sessions `in_progress` whose `(room_id, focus_run_id)` has no ledger entry and that are older than 2 minutes: `abandoned(timer_lost)`.
 
 ## Redis state loss

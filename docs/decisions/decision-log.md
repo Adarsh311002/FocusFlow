@@ -78,12 +78,16 @@ These were approved as part of the v2 project context (see `CLAUDE.md`).
 - **Accepted consequence:** On mobile, locking the screen usually drops the socket; an actively running session is then abandoned after 60 seconds.
 
 ### D16 — Room phase durations are persisted per room
-- **Decision:** Focus, short-break and long-break durations are stored per room in PostgreSQL, with defaults. The host may change them. A change takes effect from the next phase, never retroactively. Redis holds the live copy while the timer runs.
+- **Decision:** Focus, short-break and long-break durations are stored per room in PostgreSQL, with defaults. The host may change them. A change takes effect from the next phase, never retroactively. PostgreSQL owns the saved settings; Redis stores the active timer state including the active phase's duration, fixed when the phase is created. There is no separate Redis copy of the settings (RT8, accepted by the owner 2026-11-11).
 - **Why:** Under D8 a room is a lasting space, and its rhythm is part of what the room is. Durations are configuration, not live timer state.
 - **Consequences:** A phase's duration is fixed when the phase is created. To apply new durations immediately, the host resets (which abandons opted-in sessions under D17).
 
 ### D17 — Reset or phase change during focus
 - **Decision:** If the host resets the timer, or changes away from a focus phase, while users are opted into the current focus run, those in-progress room FocusSessions are marked `abandoned` with reason `reset` or `phase_changed`. The participant set is cleared and a new `focusRunId` is issued.
+
+### D17a — A phase that already reached its end is completed, even by a late command
+- **Decision (owner-approved 2026-11-11; called "Rev J3" in code comments):** If a `reset` or `setPhase` command reaches a focus phase that has already reached its true end (its phase-end job has not run yet), the run closes `completed` with `closedAtMs = min(now, endsAt)`, not `reset`/`phase_changed`. People present at the end complete (D35); a disconnect recorded at or after the true end counts as present at the end, also when the delayed grace job runs before the delayed phase-end job (completed at the true end). A reset or phase change at least 1 ms before the end abandons as in D17.
+- **Why:** the host's late command must not turn a finished focus period into an interruption, and a late job must not punish people who were present.
 
 ### D19 — Disconnect grace in rooms
 - **Decision:** An unexpected disconnect does not immediately abandon a room FocusSession. The participant gets a 60-second reconnect grace. Reconnect within grace preserves participation; otherwise the session is `abandoned(grace_expired)`. An intentional room leave is an immediate abandonment.
@@ -160,7 +164,7 @@ Approved with the implementation plan. Full details: `implementation/plan.md`.
 ### P1 — Plain foreign keys for task references
 - **Decision:** `users.current_task_id` and `focus_sessions.task_id` are plain foreign keys with no `ON DELETE` action. Nothing relies on `ON DELETE SET NULL`.
 - **Why:** tasks are soft-deleted (D38), so normal task deletion never removes a task row.
-- **Consequences:** when full account deletion is implemented (D2), the account-deletion transaction clears `users.current_task_id` before deleting the user's data.
+- **Consequences:** when full account deletion is implemented (D2, a deferred item), the account-deletion transaction clears `users.current_task_id` before deleting the user's data.
 
 ### P2 — Split health checks
 - **Decision:** `GET /healthz` reports that the process is alive; `GET /readyz` reports that required infrastructure (PostgreSQL, Redis) is reachable.
@@ -352,7 +356,7 @@ Approved in the Milestone 4 (reconciler and recovery) plan review, 2026-10-12, a
 
 ## Review decisions (Phase 5)
 
-Technical defaults chosen while implementing Phase 5 (history and summary), 2026-10-16, where the docs left the details open (`api/rest.md` named only the parameters and the response shapes). They implement the D18 and D34 defaults and **await the owner's review**, like D18 and D34 themselves (`open-decisions.md`).
+Technical defaults chosen while implementing Phase 5 (history and summary), 2026-10-16, where the docs left the details open (`api/rest.md` named only the parameters and the response shapes). They implement the D18 and D34 (deferred item) defaults and **await the owner's review**, like D18 and D34 themselves (`open-decisions.md`).
 
 ### V1 — History range parameters
 - **Decision:** `GET /focus-sessions` takes optional `from` and `to` as **instants** (ISO-8601 with an explicit offset, at most millisecond precision) and returns sessions whose `started_at` lies in `[from, to)`; `from < to` when both are given. With neither, the whole history is paged. Each instant must also fall in `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]`; outside it the request is `400 VALIDATION_FAILED`.
@@ -374,7 +378,7 @@ Technical defaults chosen while implementing Phase 5 (history and summary), 2026
 - **Why:** checked during implementation: Node accepts `+05:30` while PostgreSQL reads it with the opposite sign; PostgreSQL treats `PST`/`EST` as fixed abbreviations and the postgres:18 image rejects aliases that browsers report (`Asia/Calcutta`). One engine for validation and computation removes every such mismatch, and the server's own time zone (or the database session's) is never used.
 
 ### V6 — What the summary counts
-- **Decision:** only **ended** sessions. `completedCount` and `completedFocusedSeconds` count completed sessions; `totalFocusedSeconds` adds the recorded time of abandoned sessions of every reason (D34). In-progress sessions, running or paused, are excluded.
+- **Decision:** only **ended** sessions. `completedCount` and `completedFocusedSeconds` count completed sessions; `totalFocusedSeconds` adds the recorded time of abandoned sessions of every reason (D34, a deferred item). In-progress sessions, running or paused, are excluded.
 - **Why:** an in-progress session's `focused_seconds` excludes the current running stretch and is not final; counting it would make totals move and then be corrected.
 
 ### V7 — Daily buckets
@@ -412,19 +416,19 @@ Technical defaults chosen during implementation, awaiting the owner's review. No
 - **Decision:** the API publishes the event from a listener of its own on the after-commit change bus, separate from the job follow-ups, to `user:{userId}` derived from the session owner. It is typed in `packages/contracts` (`ServerToClientEvents`) and covers requests, jobs and the reconciler alike, since all publish through the same bus.
 - **Why:** persist, then emit; a failing emit must not block scheduling, nor the reverse. The Redis emitter publishes without awaiting, so a failure cannot be caught, but its connection queues commands while Redis is away and clients heal on reconnect.
 
-## Rooms decisions (Phase 6: M1–M13, technical defaults awaiting review)
+## Rooms decisions (Phase 6: M1–M13, accepted by the owner 2026-11-11 as the MVP baseline)
 
-Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, D20, D36, F5–F7); none changes an approved decision. Open owner questions stay in `open-decisions.md`.
+Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, D20, D36, F5–F7); none changes an approved decision. Accepted by the owner on 2026-11-11 (tested implementation), subject to the changes recorded in the later sections. D20 and D36 (and D12, D24 below) are deferred, non-blocking items cited as defaults. Open owner questions stay in `open-decisions.md`.
 
 ### M1 — Scope and what waits for later phases
-- **Decision:** Phase 6 adds rooms, memberships, knocks, room presence and temporary chat. It changes nothing in `focus_sessions`: the room columns (`room_id`, `focus_run_id`), the room-only abandon reasons (E4, E5), `NOT_SOLO_SESSION` and the abandonment of a participant on leave or removal arrive with Phase 8 (focus runs), which edits the same leave/remove transactions. There is no room timer, no timer events and no `timer`/`participants` in the join snapshot until Phases 7 and 8; both additions are additive.
+- **Decision:** Phase 6 adds rooms, memberships, knocks, room presence and temporary chat. (Time-bound: superseded by migration `0004` and RF1 in Phase 8.) It changed nothing in `focus_sessions`: the room columns (`room_id`, `focus_run_id`), the room-only abandon reasons (E4, E5), `NOT_SOLO_SESSION` and the abandonment of a participant on leave or removal arrive with Phase 8 (focus runs), which edits the same leave/remove transactions. There is no room timer, no timer events and no `timer`/`participants` in the join snapshot until Phases 7 and 8; both additions are additive.
 - **Why:** a leave or removal can abandon nothing while no room participation exists; adding the columns without their writers would be a speculative schema.
 
 ### M2 — Room codes
 - **Decision:** six characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no I, L, O, 0, 1), uppercase, generated with `crypto.randomInt`, unique (`uq_rooms_code`, `ck_rooms_code`). A collision is retried (at most 5 times) on the unique violation. Lookups forgive case and spaces. Codes do not expire and are not secret: a private room is protected by the knock, not by its code.
 
 ### M3 — Phase durations
-- **Decision:** whole seconds: focus 60–14,400 (default 1,500), short break 60–3,600 (default 300), long break 60–7,200 (default 900), as `CHECK`s on `rooms`. `PATCH /rooms/:roomId/timer-settings` (host only) saves to PostgreSQL and emits `room:settings:updated` with `effectiveFrom: "next_phase"`; the Redis live copy belongs to Phase 7, which loads from PostgreSQL.
+- **Decision:** whole seconds: focus 60–14,400 (default 1,500), short break 60–3,600 (default 300), long break 60–7,200 (default 900), as `CHECK`s on `rooms`. `PATCH /rooms/:roomId/timer-settings` (host only) saves to PostgreSQL and emits `room:settings:updated` with `effectiveFrom: "next_phase"`. There is no Redis copy of the settings (RT8): phase creation reads them from PostgreSQL.
 
 ### M4 — Who may see what
 - **Decision:** a room that does not exist, and a room the caller may not see, answer the same on member-only routes (`404 ROOM_NOT_FOUND`); a non-member never learns more than the preview `{ id, code, name, isPrivate }` that `GET /rooms/by-code/:code` gives anyone holding the code (`presentCount` is `null` for a private room's non-member). A member who is not the host gets `403 NOT_HOST` on host actions; a non-member gets `404`. Leaving a room one is not in answers `204` whether or not the room exists. On sockets a non-member's `room:join` answers `NOT_A_MEMBER`, also for a room that does not exist.
@@ -435,14 +439,14 @@ Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, 
 - **Why:** these are the approved keys; reusing the heartbeat and reverse-index pattern avoids a second liveness mechanism.
 
 ### M6 — `room:join`
-- **Decision:** requires a membership row (D9) and is idempotent per socket. It answers a snapshot: the room, who is present, `pendingKnocks` for the host only, and `serverNowMs` (Redis TIME). Clients send `room:join` again after every socket (re)connect and after `room:resync`, for each room they are in. Navigating inside the app does not leave a room; only an explicit `room:leave`, a closed socket, removal or leaving the membership does. A new person is refused with `ROOM_FULL` when `ROOM_MAX_PRESENT` (default 50, the D12 safety limit) people are present.
+- **Decision:** requires a membership row (D9) and is idempotent per socket. It answers a snapshot: the room, who is present, `pendingKnocks` for the host only, and `serverNowMs` (Redis TIME). Clients send `room:join` again after every socket (re)connect and after `room:resync`, for each room they are in. Navigating inside the app does not leave a room; only an explicit `room:leave`, a closed socket, removal or leaving the membership does. A new person is refused with `ROOM_FULL` when `ROOM_MAX_PRESENT` (default 50, the D12 safety limit; D12 is a deferred item) people are present.
 
 ### M7 — Knocks
-- **Decision:** `room:knock` (private room, caller not a member, the host online — user-level presence, D20) stores the userId in the sorted set `room:{roomId}:knocks` scored by `expiresAtMs` (TTL `KNOCK_TTL_MS`, default 120 s) and sends `room:knock:received` to `user:{hostId}`; a repeated knock refreshes the entry. Knocks are limited to 5 per user per minute (`RATE_LIMITED`). `room:knock:cancel` removes the entry (`room:knock:removed` reason `cancelled`). Approve and reject are REST and host only: approve checks the knock is pending (`410 KNOCK_EXPIRED`; a user who is already a member → `200`), upserts the membership, then removes the knock and sends `room:knock:resolved` to the requester and `room:knock:removed` to the host; reject removes the knock and sends the same two events (`204`, repeatable). The host's pending list is delivered in the join snapshot and by live events; expiry is not announced.
+- **Decision:** `room:knock` (private room, caller not a member, the host online — user-level presence, D20, a deferred item) stores the userId in the sorted set `room:{roomId}:knocks` scored by `expiresAtMs` (TTL `KNOCK_TTL_MS`, default 120 s) and sends `room:knock:received` to `user:{hostId}`; a repeated knock refreshes the entry. Knocks are limited to 5 per user per minute (`RATE_LIMITED`). `room:knock:cancel` removes the entry (`room:knock:removed` reason `cancelled`). Approve and reject are REST and host only: approve checks the knock is pending (`410 KNOCK_EXPIRED`; a user who is already a member → `200`), upserts the membership, then removes the knock and sends `room:knock:resolved` to the requester and `room:knock:removed` to the host; reject removes the knock and sends the same two events (`204`, repeatable). The host's pending list is delivered in the join snapshot and by live events; expiry is not announced.
 - **Why:** PostgreSQL first, then Redis, then events (F5); if the last steps fail the requester re-checks access and finds the membership (failure-recovery.md).
 
 ### M8 — Chat
-- **Decision:** `room:chat:send` needs a socket that is in the room. The body is trimmed, 1–1,000 characters. A `SET NX` key `chat:dedupe:{userId}:{clientMessageId}` (60 s) holds the first `messageId:sentAtMs`; a repeat is answered with the same ids and not delivered again. Chat is limited to 10 messages per user per 10 s (`RATE_LIMITED`). `sentAtMs` is Redis TIME; `messageId` is a UUIDv7. Nothing is stored (D7); a late joiner sees no backlog (D24).
+- **Decision:** `room:chat:send` needs a socket that is in the room. The body is trimmed, 1–1,000 characters. A `SET NX` key `ff:chat:dedupe:{userId}:{roomId}:{clientMessageId}` (60 s) holds the first `messageId:sentAtMs`; a repeat is answered with the same ids and not delivered again. Chat is limited to 10 messages per user per 10 s (`RATE_LIMITED`). `sentAtMs` is Redis TIME; `messageId` is a UUIDv7. Nothing is stored (D7); a late joiner sees no backlog (D24, a deferred item).
 
 ### M13 — Review hardening (found by the Phase 6 reviews)
 - **Decision:** (1) `room:chat:send` re-checks the membership row (a primary-key lookup) and the heartbeat room sync batch-checks the memberships of its local sockets, taking any non-member's socket out of the room, so a lost eviction message cannot leave a removed member with access; a PostgreSQL failure evicts nobody and answers `INTERNAL` to chat. (2) The `ROOM_MAX_PRESENT` check runs inside the atomic join script. (3) The join snapshot reads presence last, after the slow host-only queries; the web client buffers presence events between sending `room:join` and its answer and replays them over the snapshot. (4) Chat de-duplication is per user and room, and the web client matches its own echo on `clientMessageId` and sender. (5) `room:join` (30 per 10 s) and `room:knock:cancel` (10 per minute) are rate limited. (6) Approve decides against reject through the Redis removal: `RoomLive.resolveKnock` reports whether this call removed the knock, and an approve that lost the race deletes the membership it created and answers `410 KNOCK_EXPIRED`.
@@ -450,7 +454,7 @@ Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, 
 - **Accepted, not fixed:** REST routes (create room, membership, code lookup) are not rate limited yet (production hardening); `room:knock` answers `ROOM_NOT_FOUND`/`NOT_PRIVATE`/`ALREADY_MEMBER` for anyone holding a room UUID, which reveals only what the by-code preview already shows.
 
 ### M9 — Leaving and removal
-- **Decision:** `room:leave` ends presence only; membership stays ("My Rooms"). `DELETE .../membership` (a member, never the host) and `DELETE .../members/:userId` (the host removing someone else, never themselves: `409 CANNOT_REMOVE_HOST`) delete the row, then remove that user's room presence, take their sockets out of the room through the emitter (`socketsLeave`) and send `room:member:removed` (reasons `left` / `removed`) to the room and to `user:{userId}`. Both are repeatable. A removed user of a public room may rejoin at once (D36); of a private room, only through a new knock.
+- **Decision:** `room:leave` ends presence only; membership stays ("My Rooms"). `DELETE .../membership` (a member, never the host) and `DELETE .../members/:userId` (the host removing someone else, never themselves: `409 CANNOT_REMOVE_HOST`) delete the row, then remove that user's room presence, take their sockets out of the room through the emitter (`socketsLeave`) and send `room:member:removed` (reasons `left` / `removed`) to the room and to `user:{userId}`. Both are repeatable. A removed user of a public room may rejoin at once (D36, a deferred item; revisited in Phase 9); of a private room, only through a new knock.
 
 ### M10 — Membership notifications
 - **Decision:** a new member (public join, approved knock) is announced to the room with `room:member:joined`; it is a hint, the member list is re-readable with `GET /rooms/:roomId/members`.
@@ -461,17 +465,17 @@ Chosen during implementation inside the approved design (D8, D9, D10, D16, D19, 
 ### M12 — End-to-end tests
 - **Decision:** Playwright (`e2e/`, `pnpm test:e2e`) against the real API, PostgreSQL and Redis with the Vite dev server, using the machine's installed Chrome (no browser download), several browser contexts for several people.
 
-## Room timer decisions (Phase 7: RT1–RT13, technical defaults awaiting review)
-Chosen during implementation on top of D10, D16, D32 and I8; the owner has not reviewed them.
+## Room timer decisions (Phase 7: RT1–RT13, accepted by the owner 2026-11-11 as the MVP baseline)
+Chosen during implementation on top of D10, D16, D32 (a deferred item) and I8; accepted by the owner on 2026-11-11 (tested implementation), with RT1 and RT8 confirmed as written below.
 
 ### RT1 — Materialised at first access
-- **Decision:** The timer hash `ff:room:{roomId}:timer` is created at the first access (join snapshot or first command) as an idle `focus` phase whose `durationMs` comes from the room's saved settings (PostgreSQL), by a version-checked write that requires the key to be absent. A phase's duration is therefore always fixed when the phase is created (D16). `reset` is allowed from any status, including `idle`, so the host can "apply now" a settings change to a phase that has not started (the protocol table listed running and paused only).
+- **Decision:** The timer hash `ff:room:{roomId}:timer` is created at the first access (join snapshot or first command) as an idle `focus` phase whose `durationMs` comes from the room's saved settings (PostgreSQL), by a version-checked write that requires the key to be absent. A phase's duration is therefore always fixed when the phase is created (D16). `reset` is allowed from any status, including `idle`, so the host can "apply now" a settings change to a phase that has not started. A reset in a focus phase closes the current run with reason `reset` and opens a new run in the same atomic write (D17); a reset from idle creates no session and abandons (reason `reset`, 0 focused s) only the sessions of people who opted in during idle.
 
 ### RT2 — Version base
 - **Decision:** A new timer's `version` starts at the Redis TIME in milliseconds instead of 0; every accepted change adds 1. After a Redis loss or rollback the recreated timer's version is above any version a client or a leftover job holds, so an old phase-end job id (`phase-end_{roomId}_{version}`) cannot collide and clients do not ignore the new state. A join snapshot is authoritative: the client replaces its timer with it whatever its version; `room:timer:state` events apply only when their version is greater.
 
-### RT3 — State without runs
-- **Decision:** The timer state has `phase, status, durationMs, elapsedBeforeMs, segmentStartedAtMs, version` only. `focusRunId`, the run ledger and participants arrive with Phase 8 (additive hash fields).
+### RT3 — State without runs (superseded by RF2)
+- **Decision:** The Phase 7 timer state had `phase, status, durationMs, elapsedBeforeMs, segmentStartedAtMs, version` only. **Superseded by RF2:** the state now also carries `focusRunId`, and the run ledger and participants arrived with Phase 8 (additive hash fields).
 
 ### RT4 — Phase-end jobs
 - **Decision:** Queue `room-timer`, job `phase-end`, id `phase-end_{roomId}_{version}`, delayed to `endsAtMs − Redis now`, payload `{ schemaVersion, roomId, version }`. Scheduling uses the E20 "ensure" semantics (retained completed or failed jobs are re-run). A job never trusts its payload: it calls the service, which re-reads the timer; an outdated version or a non-running timer is a no-op, an early job asks to run again after the remaining time, and a duplicate delivery advances nothing twice (the write is version-checked).
@@ -486,10 +490,10 @@ Chosen during implementation on top of D10, D16, D32 and I8; the owner has not r
 - **Decision:** Writes retry up to 3 times, re-reading and re-evaluating the pure function each time. `start`, `pause` and `resume` are judged against the fresh state; `reset` and `setPhase` carry `expectedVersion`, and a mismatch against the fresh state is `VERSION_CONFLICT`. A repeated `pause` while paused or `resume` while running is a successful no-op: no write, no version change. `start` while running or paused and `resume` while idle are `INVALID_TRANSITION`.
 
 ### RT8 — Settings source
-- **Decision:** Phase durations are read from PostgreSQL whenever a phase is created. There is no Redis copy of the settings (the `ff:room:{roomId}:settings` key in the first Redis design is not implemented): phase creation is rare and a primary-key read is cheap, and it removes a second copy that could disagree. `PATCH timer-settings` still only saves and announces (`room:settings:updated`); it never touches the running timer.
+- **Decision (accepted by the owner 2026-11-11):** PostgreSQL owns the saved settings; Redis stores the active timer state including the active phase's duration, fixed when the phase is created. Phase durations are read from PostgreSQL whenever a phase is created. There is no separate Redis copy of the settings (the `ff:room:{roomId}:settings` key in the first Redis design is not implemented): phase creation is rare and a primary-key read is cheap, and it removes a second copy that could disagree. `PATCH timer-settings` still only saves and announces (`room:settings:updated`); it never touches the running timer.
 
 ### RT9 — Next phase
-- **Decision:** The next phase is never started automatically (D32): `focus → short_break`, any break `→ focus`, always `idle`. `long_break` is reachable only through `setPhase`.
+- **Decision:** The next phase is never started automatically (D32, a deferred item): `focus → short_break`, any break `→ focus`, always `idle`. `long_break` is reachable only through `setPhase`.
 
 ### RT10 — Host and presence
 - **Decision:** A phase end happens whoever is present; a host disconnect changes nothing (D10). Commands cannot arrive without the host's socket.
@@ -508,6 +512,82 @@ Chosen during implementation on top of D10, D16, D32 and I8; the owner has not r
 - **PostgreSQL outage:** a phase end reads the room settings from PostgreSQL (RT8), so during a PostgreSQL outage a timer past its end cannot advance; the job retries (5 attempts, backoff), the reconciler retries every interval, and clients show "Finishing…" until PostgreSQL returns.
 - **`start` has no `expectedVersion`:** a stale host tab can start a phase another tab just switched to (RT7, by design); two simultaneous `start` commands answer the second `INVALID_TRANSITION`.
 - **Lost job latency:** if a phase-end job is lost, the phase ends at the next reconciler run: up to one `RECONCILER_INTERVAL_MS` (30 s), or about 90 s if the repeating reconciler job itself stalls (E23).
+
+## Room focus run decisions (Phase 8: RF1–RF17, accepted by the owner 2026-11-11 as the MVP baseline)
+
+Chosen during implementation inside the approved design (D11, D14/15/35, D17, D19, D37 default (a deferred item), I8); accepted by the owner on 2026-11-11 (tested implementation); migration `0004` (RF1) is approved, with the coordinated deployment requirement below. None changes an approved decision. Details: `architecture/focus-timing-protocol.md` "Focus runs".
+
+### RF1 — Schema
+- **Decision:** `focus_sessions` gains `room_id` (FK `rooms`, no `ON DELETE` action as in P1: rooms are never deleted in the MVP) and `focus_run_id` (uuid, no FK: the run lives in Redis); `CHECK (room_id IS NULL) = (focus_run_id IS NULL)`; `running_since` stays solo-only (`CHECK room_id IS NULL OR running_since IS NULL`); `abandon_reason` also allows `opted_out, left_room, removed, reset, phase_changed, timer_lost`. Indexes: `(room_id, focus_run_id)` partial on `status = 'in_progress'`. Existing rows keep NULL in both columns.
+- **Deployment (owner-approved 2026-11-11):** migrate first, then deploy all roles together; stop old workers before the new migration goes live. Old code running on the new schema would not exclude room rows from solo sweeps, so old workers or API instances must not process new room-focus sessions.
+- **Why:** the design asks for exactly these columns (M1); the one-in-progress-per-user index is untouched, so a solo and a room session can never run together.
+
+### RF2 — A run for every focus phase
+- **Decision:** `TimerState.focusRunId` is set while `phase = focus` (idle, running or paused) and `null` in a break. A fresh UUID run is created whenever a focus phase is created (materialisation, `reset` in focus, `setPhase` to focus, a break ending) and the old run is closed by the same change. The id is chosen by the service through the pure `planRun`, never by the machine.
+- **Why:** opting in is allowed while the phase is idle or paused (protocol), so the run must exist before `start`.
+
+### RF3 — Atomic timer and run write
+- **Decision:** the timer's Lua write also (a) closes the old run (`status=closed, closeReason, closedAtMs, elapsedAtCloseMs`), (b) adds it to `ff:rooms:runs:unsettled` (score `closedAtMs`), (c) creates the new run record (`status=open, openedAtMs`). The script holds no rules: all values are computed in TypeScript. Keys: `ff:room:{roomId}:run:{runId}` (hash), `ff:room:{roomId}:run:{runId}:participants` (hash, userId → JSON), `ff:rooms:runs:unsettled` (sorted set `{roomId}:{runId}`). A settled run is deleted (`finishRun`), so Redis keeps only live state.
+- **Why:** the timer change and the run closure can never disagree (D17), and a crash leaves the closed run in the unsettled set.
+
+### RF4 — Opt-in
+- **Decision:** `POST /rooms/:roomId/focus-participation` in the order of the protocol (check, insert session, atomic ledger add, announce). `planned_seconds = round((durationMs − elapsedMs)/1000)` from the authoritative timer at opt-in; if it is below 60 (the CHECK bound) the answer is `409 RUN_ENDING` and nothing is written. Presence is the user's live room presence in Redis (`NOT_PRESENT`); a break → `NOT_FOCUS_PHASE`; an existing in-progress session (solo or another room) → `409 SESSION_IN_PROGRESS` with the session in `details`, except the user's own half-completed opt-in in this same run, which is repaired and returned (`200`). `RUN_CHANGED` deletes the just-created row in the same request.
+- **Why:** an opt-in that cannot satisfy the plan bounds must not leave a row; repairing a retry avoids duplicates.
+
+### RF5 — Focused time and `ended_at`
+- **Decision:** pure functions of ledger values (protocol table). Seconds are rounded **down** and clamped to `[0, planned_seconds]`. `completed` → `planned_seconds`. `ended_at` is the Redis instant of the event clamped into `[started_at, PostgreSQL clock_timestamp()]` (stored timestamps stay ordered, E9 style). `timer_lost` → `focused_seconds = 0`, `ended_at` = recovery time (D37 default; D37 is a deferred item).
+- **Why:** never invent time that cannot be proven.
+
+### RF6 — Settlement is idempotent
+- **Decision:** every transition locks the session row (`FOR UPDATE`) and only touches rows still `in_progress`; duplicates, concurrent workers and a crash between PostgreSQL and Redis are safe because the durable write comes first and the ledger cleanup is repeatable. Announcements run after the commit, separate from each other.
+
+### RF7 — Grace
+- **Decision:** the disconnect is recorded with a version-checked ledger write (`elapsedAtDisconnectMs` from the timer and Redis TIME), then a deterministic job `room-grace_{roomId}_{runId}_{userId}_{disconnectedAtMs}` (queue `focus-session`, ensure semantics, delay `60 s − age`). The grace is 60 s plus a 1 s early tolerance (`GRACE_EARLY_TOLERANCE_MS`) for clock differences between BullMQ and Redis TIME, so at most 61 s. The job settles only if the ledger still holds this participant disconnected at exactly that instant AND the user is still absent from the room (re-checked); a reconnect clears the marker, so a stale job is a no-op. Several sockets: only the user's **last** room socket leaving counts. A reconnect after a normal phase completion completes the session only if it happened within 60 s of the disconnect (Redis TIME); a reset/phase change has already abandoned it.
+
+### RF8 — Departure
+- **Decision:** opt-out (`opted_out`), `room:leave` and `DELETE …/membership` (`left_room`) and host removal (`removed`, in the same transaction as the membership delete) abandon the session in PostgreSQL first, then clear the ledger, then announce. Leaving presence is **not** leaving membership (M9); a plain disconnect is a grace case (RF7), not a departure.
+
+### RF9 — Reconciler
+- **Decision:** step 3 settles runs in the unsettled set; steps 4 and 7 are one PostgreSQL-driven sweep of in-progress room sessions (keyset batches, `FOR UPDATE SKIP LOCKED`, per-session transactions): participants past grace → `grace_expired`; a connected-looking participant whose user is absent from the room → late grace; closed-run participants → settlement; a session with no ledger entry older than 2 minutes → `timer_lost`. Solo steps skip room sessions.
+
+### RF10 — Redis data loss
+- **Decision:** global recovery (the existing epoch mechanism) abandons every in-progress **room** session as `timer_lost` (focused 0), once, notifying each user; solo sessions are untouched. Local recovery already sends `room:resync`; the recreated timer is idle with a new run (RT11). A plain Redis reconnection is not data loss.
+
+### RF11 — Solo isolation
+- **Decision:** pause/resume/stop on a room session → `409 NOT_SOLO_SESSION`; solo sweeps, hints and grace never touch room sessions; `GET /focus-sessions/current` returns the room session with `context.kind = "room"`; history shows both with their `context`.
+
+### RF12 — Events
+- **Decision:** `room:focus:participants { roomId, focusRunId, participants }` to the room after every committed ledger change and after a run changes; `focus:session:updated` to the user after every committed session transition. Both after commit, independent, never able to fail the request. The join snapshot carries `focus: { focusRunId, participants, me }`.
+
+### RF13 — Frontend
+- **Decision:** the room page gets a "Focus together" panel under the timer: participants (with connected/reconnecting state), an optional task picker, Join/Leave controls with pending, error and offline states, and a plain-language outcome for each end. Nothing in the browser decides an outcome; the client countdown is display only.
+
+### RF14 — Ledger entries and privacy
+- **Decision:** participants are visible only to room members (the room channel); the ledger stores ids and timestamps, never task titles. `GET …/focus-participation` is member-only (404 otherwise, M4) and returns only the caller's own session.
+
+### RF15 — Orphans
+- **Decision:** a room session whose `(room_id, focus_run_id)` has no ledger entry is repaired on retry (RF4) or abandoned `timer_lost` by the reconciler after `ORPHAN_RECOVERY_MS` (2 min, by PostgreSQL `started_at`).
+
+### RF16 — Review
+- **Decision:** history and summary count room sessions exactly like solo ones (same statuses and `focused_seconds`); each history item shows its `context`.
+
+### Accepted limits of room focus runs (Phase 8 reviews)
+- **~~No stale cap for room sessions (RF-L7)~~ — resolved by RF17.** The 12 h expiry (E2) was solo-only, so a participant of a run whose timer was never resumed could block a solo start; RF17 now expires such room sessions.
+- **Phase 7 timers in a live Redis:** a focus-phase timer hash written before Phase 8 has no run; opt-in answers `RUN_CHANGED` until the host resets or changes phase (development environments only; a Redis loss recreates the timer with a run).
+- **Repaired opt-in time:** a retry that repairs a lost ledger entry rebuilds `elapsedAtOptInMs` from the planned seconds (within 0.5 s).
+- **Grace tolerance:** the grace boundary uses a 1 s tolerance between BullMQ's delay clock and Redis TIME; an overdue reconnect (more than 61 s) is `grace_expired`.
+- **Participant list from the ledger alone:** if the ledger cleanup after a PostgreSQL abandon fails, the ended participant stays listed until the run closes or their next opt-in.
+- **Abandon reasons are not tied to the session type by a constraint** (application code never mixes them).
+
+### RF17 — Stale room sessions (implemented 2026-11-11, replaces RF-L7)
+- **Decision:** Room focus sessions still `in_progress` 12 h after `started_at` are expired (`abandoned`, reason `expired`, no schema change) by reconciler step 6b (after steps 3/4/7 and solo step 6), with a 16-hour absolute maximum (`ROOM_STALE_AFTER_MS` and `ROOM_STALE_HARD_MAX_MS` in `apps/api/src/modules/room-focus/types.ts`; code `room-focus/stale.ts`; tests `stale.int.test.ts`, `model.test.ts`). A session whose own run is open with the timer running is exempt until 16 h; a closed-unsettled run is left to its settlement until 16 h (then expired with the run's frozen `elapsedAtCloseMs`); paused and idle runs expire at 12 h. Focused time is from opt-in to the timer's elapsed (or frozen at close), floored and clamped, never past a recorded disconnect; no ledger entry means 0 s. Redis is read first: if it cannot answer, nothing is decided (deferred to the next sweep) and focused time is never silently discarded. PostgreSQL decides under `FOR UPDATE SKIP LOCKED` with the age re-checked using the PostgreSQL clock, and only the `in_progress` row of that run changes (idempotent). After commit: compare-and-delete the ledger entry (by sessionId) and `finishRun`, then announce `room:focus:participants` and `focus:session:updated`; failed ledger cleanups are kept in the process backlog and retried by every full reconcile run (a closed-run settlement also removes leftovers). Solo sessions are never selected (`room_id IS NOT NULL`) and solo stale cleanup ignores room rows.
+- **Why:** an idle or paused room run must never hold the user's single session slot for ever (E2's intent for solo sessions, D14/15/35).
+
+### Implemented technical details of Phase 8 (accepted 2026-11-11)
+- **participantsVersion (G2):** a per-run, server-owned monotonic version in the run hash, incremented inside the ledger Lua scripts; carried by the join snapshot's `focus` and by `room:focus:participants`. A client applies an event only for the same `focusRunId` and a higher version; a join snapshot is authoritative (it may carry a lower number after a Redis loss).
+- **True end (G3, with D17a):** `closedAtMs = min(now, endsAt)` for a completed run; `wasPresentThroughEnd` treats a disconnect at or after the true end as present at the end; `pendingEndAtMs` settles a still-open run at its true end when the delayed phase-end job has not run.
+- **Knock compensation (G4):** when an approve loses against a reject or an expiry, the compensation abandons the room session with reason `removed` and announces the member removal; the web clears a stale `removed` flag on `room:knock:resolved` (approved) or `room:member:joined` for the user.
+- **Defaults:** `ROOM_FOCUS_RATE` 10 per 10 s; `RECOVERY_SETTLE_MS` 10 s; reconciler room sweep batches of 100, concurrency 4, with a cursor; a timer pause is rejected at or after the phase end; opt-in retries up to 4 attempts; `SCHEDULE_TIMEOUT_MS` 2 s (a follow-up waits at most that long for the job schedule before the event is sent); grace configurable as `FOCUS_GRACE_MS`.
 
 ## Accepted architecture direction
 
