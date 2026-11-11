@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { focusSessionIdSchema, userIdSchema } from '../ids';
+import { focusRunIdSchema, focusSessionIdSchema, roomIdSchema, userIdSchema } from '../ids';
 
 // The `focus-session` queue (docs/architecture/focus-timing-protocol.md, "Scheduled jobs";
 // Phase 4B). Payloads carry IDs and the instant the job is about, never session state: a
@@ -13,6 +13,9 @@ export const SOLO_END_JOB = 'solo-end';
 
 /** Settle a running solo session's reconnect grace. */
 export const SOLO_GRACE_JOB = 'solo-grace';
+
+/** Settle a room participant's reconnect grace (Phase 8, D19). */
+export const ROOM_GRACE_JOB = 'room-grace';
 
 const instantMs = z.number().int().nonnegative();
 
@@ -35,3 +38,21 @@ export const soloGraceJobSchema = z.strictObject({
   disconnectedAtMs: instantMs,
 });
 export type SoloGraceJob = z.infer<typeof soloGraceJobSchema>;
+
+/**
+ * Keyed by the participant and the disconnect: it settles only while the ledger still holds
+ * this participant disconnected at exactly `disconnectedAtMs` (Redis TIME, ms). `focusRunId`
+ * is part of the identity, so a job of an earlier run can never touch a later one.
+ */
+export const roomGraceJobSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  roomId: roomIdSchema,
+  focusRunId: focusRunIdSchema,
+  userId: userIdSchema,
+  disconnectedAtMs: instantMs,
+});
+export type RoomGraceJob = z.infer<typeof roomGraceJobSchema>;
+
+/** BullMQ ids may not contain `:`; every part is a UUID or an integer. */
+export const roomGraceJobId = (job: RoomGraceJob): string =>
+  `room-grace_${job.roomId}_${job.focusRunId}_${job.userId}_${String(job.disconnectedAtMs)}`;

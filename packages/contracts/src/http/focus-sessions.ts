@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { calendarDateSchema, calendarDaysBetween, timeZoneSchema } from '../dates';
-import { focusSessionIdSchema, taskIdSchema } from '../ids';
+import { focusRunIdSchema, focusSessionIdSchema, roomIdSchema, taskIdSchema } from '../ids';
 import { TASK_TITLE_MAX_LENGTH } from './tasks';
 
 // Solo focus sessions (Phase 4B; docs/architecture/contracts.md "Key contract shapes",
@@ -21,12 +21,29 @@ export const plannedSecondsSchema = z
 export const focusSessionStatusSchema = z.enum(['in_progress', 'completed', 'abandoned']);
 export type FocusSessionStatus = z.infer<typeof focusSessionStatusSchema>;
 
-/** Phase 4B allows only the solo reasons (E5); Phase 8 adds the room-only ones. */
-export const abandonReasonSchema = z.enum(['stopped', 'grace_expired', 'expired']);
+/**
+ * The solo reasons (E5; `grace_expired` is shared) and the room-only ones added in Phase 8
+ * (RF1): the person opted out, left the room or was removed, the host reset or changed the
+ * phase, or the room's live state was lost (`timer_lost`).
+ */
+export const abandonReasonSchema = z.enum([
+  'stopped',
+  'grace_expired',
+  'expired',
+  'opted_out',
+  'left_room',
+  'removed',
+  'reset',
+  'phase_changed',
+  'timer_lost',
+]);
 export type AbandonReason = z.infer<typeof abandonReasonSchema>;
 
-/** Where a session runs. Solo only in Phase 4B (E4). */
-export const focusSessionContextSchema = z.object({ kind: z.literal('solo') });
+/** Where a session runs: on its own, or in a room's focus run (Phase 8). */
+export const focusSessionContextSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('solo') }),
+  z.object({ kind: z.literal('room'), roomId: roomIdSchema, focusRunId: focusRunIdSchema }),
+]);
 export type FocusSessionContext = z.infer<typeof focusSessionContextSchema>;
 
 /**

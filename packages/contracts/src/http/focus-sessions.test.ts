@@ -85,18 +85,19 @@ describe('statuses and abandon reasons', () => {
     expect(focusSessionStatusSchema.options).toEqual(['in_progress', 'completed', 'abandoned']);
   });
 
-  it('has only the Phase 4B solo abandon reasons (E5)', () => {
-    expect(abandonReasonSchema.options).toEqual(['stopped', 'grace_expired', 'expired']);
-    for (const roomReason of [
+  it('has the solo reasons (E5) and the room reasons added in Phase 8 (RF1)', () => {
+    expect(abandonReasonSchema.options).toEqual([
+      'stopped',
+      'grace_expired',
+      'expired',
       'opted_out',
       'left_room',
       'removed',
       'reset',
       'phase_changed',
       'timer_lost',
-    ]) {
-      expect(abandonReasonSchema.safeParse(roomReason).success).toBe(false);
-    }
+    ]);
+    expect(abandonReasonSchema.safeParse('crashed').success).toBe(false);
   });
 });
 
@@ -143,21 +144,23 @@ describe('focusSessionViewSchema', () => {
     expect(focusSessionViewSchema.safeParse({ ...base, status: 'completed' }).success).toBe(false);
   });
 
-  it('rejects room contexts and room-only reasons in Phase 4B', () => {
+  it('accepts a room context with a run id and room-only reasons (Phase 8)', () => {
+    const RUN_ID = '0198a8f2-0000-7000-8000-000000000009';
+    expect(
+      focusSessionViewSchema.safeParse({
+        ...base,
+        context: { kind: 'room', roomId: SESSION_ID, focusRunId: RUN_ID },
+        status: 'abandoned',
+        endedAt: LATER,
+        abandonReason: 'timer_lost',
+      }).success,
+    ).toBe(true);
     expect(
       focusSessionViewSchema.safeParse({
         ...base,
         context: { kind: 'room', roomId: SESSION_ID },
         status: 'in_progress',
-        runningSince: AT,
-      }).success,
-    ).toBe(false);
-    expect(
-      focusSessionViewSchema.safeParse({
-        ...base,
-        status: 'abandoned',
-        endedAt: LATER,
-        abandonReason: 'timer_lost',
+        runningSince: null,
       }).success,
     ).toBe(false);
   });

@@ -20,5 +20,9 @@ export const focusSessionIdSchema = z.uuid().brand<'FocusSessionId'>();
 export type FocusSessionId = z.infer<typeof focusSessionIdSchema>;
 
 /** A room (Phase 6): a persistent shared focus space (D8). */
+/** One instance of a room's focus phase (Phase 8). Lives in Redis; never a database key of its own. */
+export const focusRunIdSchema = z.uuid().brand<'FocusRunId'>();
+export type FocusRunId = z.infer<typeof focusRunIdSchema>;
+
 export const roomIdSchema = z.uuid().brand<'RoomId'>();
 export type RoomId = z.infer<typeof roomIdSchema>;

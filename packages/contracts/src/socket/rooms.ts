@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { roomMemberViewSchema, roomTimerSettingsSchema, roomViewSchema } from '../http/rooms';
 import { roomIdSchema, userIdSchema } from '../ids';
+import { roomFocusSnapshotSchema } from './room-focus';
 import { timerViewSchema } from './room-timer';
 
 // Room events (Phase 6; docs/api/socket-events.md). Identity never travels in a payload:
@@ -54,6 +55,8 @@ export const roomSnapshotSchema = z.object({
   pendingKnocks: z.array(knockViewSchema).optional(),
   /** The shared room timer (Phase 7). */
   timer: timerViewSchema,
+  /** The current focus run: who opted in, and the caller's own participation (Phase 8). */
+  focus: roomFocusSnapshotSchema,
   serverNowMs: z.number().int().nonnegative(),
 });
 export type RoomSnapshot = z.infer<typeof roomSnapshotSchema>;

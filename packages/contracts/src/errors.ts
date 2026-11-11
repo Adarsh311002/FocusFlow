@@ -38,6 +38,12 @@ export const errorCodes = [
   // Room timer (Phase 7, docs/api/socket-events.md)
   'VERSION_CONFLICT',
   'INVALID_TRANSITION',
+  // Room focus runs (Phase 8, docs/api/rest.md)
+  'RUN_CHANGED',
+  'RUN_ENDING',
+  'NOT_PRESENT',
+  'NOT_FOCUS_PHASE',
+  'NOT_SOLO_SESSION',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);

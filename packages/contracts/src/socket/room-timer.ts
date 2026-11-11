@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { roomIdSchema } from '../ids';
+import { focusRunIdSchema, roomIdSchema } from '../ids';
 
 // The shared room timer (Phase 7; docs/architecture/focus-timing-protocol.md, "Room timer";
 // docs/api/socket-events.md). The server owns the state; every instant is Redis TIME in
@@ -32,6 +32,8 @@ export const timerViewSchema = z.object({
   /** Running only: when the phase reaches zero. */
   endsAtMs: nonNegativeInt.nullable(),
   version: nonNegativeInt,
+  /** The current focus run (focus phase only; `null` in a break). Phase 8, RF2. */
+  focusRunId: focusRunIdSchema.nullable(),
 });
 export type TimerView = z.infer<typeof timerViewSchema>;
 

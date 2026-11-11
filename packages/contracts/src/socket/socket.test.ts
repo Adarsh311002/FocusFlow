@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { authSessionIdSchema } from '../ids';
 import { timeSyncAckSchema, timeSyncRequestSchema } from './events';
 import { connectErrorDataSchema, handshakeAuthSchema } from './handshake';
+import { roomFocusParticipantsEventSchema, roomFocusSnapshotSchema } from './room-focus';
 
 const UUID = '01a0ed0d-55de-7d1b-8495-82fb5050d815';
 
@@ -74,5 +75,34 @@ describe('authSessionIdSchema', () => {
   it('accepts a UUID and rejects anything else', () => {
     expect(authSessionIdSchema.parse(UUID)).toBe(UUID);
     expect(authSessionIdSchema.safeParse('sid').success).toBe(false);
+  });
+});
+
+describe('room focus participant ordering (G2)', () => {
+  const RUN = '01a0ed0d-55de-7d1b-8495-82fb5050d818';
+  const base = { roomId: UUID, focusRunId: RUN, participants: [] };
+
+  it('requires a non-negative integer participantsVersion on the event', () => {
+    expect(
+      roomFocusParticipantsEventSchema.parse({ ...base, participantsVersion: 0 }),
+    ).toMatchObject({
+      participantsVersion: 0,
+    });
+    for (const participantsVersion of [undefined, -1, 1.5, '3']) {
+      expect(
+        roomFocusParticipantsEventSchema.safeParse({ ...base, participantsVersion }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('requires it on the snapshot too, also outside a focus phase', () => {
+    const snapshot = { focusRunId: null, participants: [], me: { participation: null } };
+    expect(roomFocusSnapshotSchema.safeParse(snapshot).success).toBe(false);
+    expect(roomFocusSnapshotSchema.safeParse({ ...snapshot, participantsVersion: 0 }).success).toBe(
+      true,
+    );
+    expect(
+      roomFocusSnapshotSchema.safeParse({ ...snapshot, participantsVersion: -2 }).success,
+    ).toBe(false);
   });
 });
