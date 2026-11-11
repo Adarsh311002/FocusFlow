@@ -3,12 +3,21 @@ import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { startTestHarness, stopTestHarness, type TestHarness } from '../../test/harness.js';
-import { authIdentities, authSessions, focusSessions, tasks, users } from './schema.js';
+import {
+  authIdentities,
+  authSessions,
+  focusSessions,
+  roomMembers,
+  rooms,
+  tasks,
+  users,
+} from './schema.js';
 
-// Database-level guarantees of the Phase 4B schema (migration 0002_create_focus_sessions),
-// checked against the real PostgreSQL 18 with the committed migrations applied. Rules
-// that need the clock, presence or task state (open / not deleted at start, E3) belong to
-// the focus-session service and are tested there.
+// Database-level guarantees of the Phase 4B schema (migration 0002_create_focus_sessions)
+// and the Phase 8 room columns (0004_add_room_focus_sessions, RF1), checked against the
+// real PostgreSQL 18 with the committed migrations applied. Rules that need the clock,
+// presence or task state (open / not deleted at start, E3) belong to the focus-session
+// service and are tested there.
 
 const CHECK_VIOLATION = '23514';
 const FOREIGN_KEY_VIOLATION = '23503';
@@ -68,6 +77,16 @@ const insertTask = async (userId: string): Promise<string> => {
   return id;
 };
 
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+let roomSeq = 0;
+const insertRoom = async (hostId: string): Promise<string> => {
+  const id = uuidv7();
+  const code = `TEST${CODE_ALPHABET[Math.floor(roomSeq / 31) % 31] ?? 'A'}${CODE_ALPHABET[roomSeq % 31] ?? 'A'}`;
+  roomSeq += 1;
+  await db().insert(rooms).values({ id, code, name: 'Room', hostId, isPrivate: false });
+  return id;
+};
+
 const STARTED = new Date('2026-10-07T10:00:00.000Z');
 const LATER = new Date('2026-10-07T10:25:00.000Z');
 const EARLIER = new Date('2026-10-07T09:00:00.000Z');
@@ -118,6 +137,10 @@ afterAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
+  // Rooms restrict deleting their host (and sessions their room), so clear them first.
+  await db().delete(focusSessions);
+  await db().delete(roomMembers);
+  await db().delete(rooms);
   await db().delete(authIdentities);
   await db().delete(authSessions);
   await db().delete(users);
@@ -148,7 +171,7 @@ describe('focus_sessions: valid rows', () => {
     expect(row?.updatedAt).toBeInstanceOf(Date);
   });
 
-  it('has exactly the approved columns: no room fields in Phase 4B (E4)', async () => {
+  it('has exactly the approved columns, the room fields added by Phase 8 (RF1)', async () => {
     const result = await db().execute<{ column_name: string }>(
       sql`SELECT column_name FROM information_schema.columns
           WHERE table_name = 'focus_sessions' ORDER BY ordinal_position`,
@@ -166,6 +189,8 @@ describe('focus_sessions: valid rows', () => {
       'ended_at',
       'created_at',
       'updated_at',
+      'room_id',
+      'focus_run_id',
     ]);
   });
 });
@@ -179,8 +204,8 @@ describe('focus_sessions: CHECK constraints', () => {
       'ck_focus_sessions_status',
     ],
     [
-      'a room-only abandon reason (E5)',
-      (u) => abandoned(u, { abandonReason: 'timer_lost' }),
+      'an unknown abandon reason',
+      (u) => abandoned(u, { abandonReason: 'gave_up' }),
       'ck_focus_sessions_abandon_reason',
     ],
     [
@@ -351,11 +376,15 @@ describe('focus_sessions: indexes', () => {
           WHERE tablename = 'focus_sessions' ORDER BY indexname`,
     );
     expect(result.rows.map((row) => row.indexname)).toEqual([
+      'ix_focus_sessions_room_run_in_progress',
       'ix_focus_sessions_user_id_started_at',
       'pk_focus_sessions',
       'uq_focus_sessions_user_id_in_progress',
     ]);
     const byName = new Map(result.rows.map((row) => [row.indexname, row.indexdef]));
+    expect(byName.get('ix_focus_sessions_room_run_in_progress')).toMatch(
+      /\(room_id, focus_run_id\) WHERE \(status = 'in_progress'::text\)/,
+    );
     expect(byName.get('uq_focus_sessions_user_id_in_progress')).toMatch(
       /UNIQUE INDEX .* \(user_id\) WHERE \(status = 'in_progress'::text\)/,
     );
@@ -363,5 +392,112 @@ describe('focus_sessions: indexes', () => {
     expect(byName.get('ix_focus_sessions_user_id_started_at')).toMatch(
       /\(user_id, started_at DESC( NULLS LAST)?\)/,
     );
+  });
+});
+
+describe('focus_sessions: room sessions (RF1)', () => {
+  /** A valid in-progress room session: the room timer owns the clock, so no running_since. */
+  const inRoom = (
+    userId: string,
+    roomId: string,
+    overrides: Partial<SessionInsert> = {},
+  ): SessionInsert =>
+    running(userId, { runningSince: null, roomId, focusRunId: uuidv7(), ...overrides });
+
+  it('accepts a room session in every state and each room abandon reason', async () => {
+    const userId = await insertUser();
+    const roomId = await insertRoom(userId);
+    await insert(inRoom(userId, roomId));
+    await insert(completed(userId, { roomId, focusRunId: uuidv7() }));
+    const reasons = [
+      'opted_out',
+      'left_room',
+      'removed',
+      'reset',
+      'phase_changed',
+      'grace_expired',
+      'timer_lost',
+    ];
+    for (const reason of reasons) {
+      await insert(abandoned(userId, { roomId, focusRunId: uuidv7(), abandonReason: reason }));
+    }
+    const rows = await db().select().from(focusSessions).where(eq(focusSessions.roomId, roomId));
+    expect(rows).toHaveLength(2 + reasons.length);
+  });
+
+  it('still accepts a solo row inserted exactly as before, with both room columns NULL', async () => {
+    const userId = await insertUser();
+    const session = running(userId);
+    await insert(session);
+    const [row] = await db().select().from(focusSessions).where(eq(focusSessions.id, session.id));
+    expect(row?.roomId).toBeNull();
+    expect(row?.focusRunId).toBeNull();
+  });
+
+  const cases: [string, (userId: string, roomId: string) => SessionInsert, string][] = [
+    [
+      'a room without a run',
+      (u, r) => inRoom(u, r, { focusRunId: null }),
+      'ck_focus_sessions_room_run',
+    ],
+    [
+      'a run without a room',
+      (u) => running(u, { runningSince: null, focusRunId: uuidv7() }),
+      'ck_focus_sessions_room_run',
+    ],
+    [
+      'running_since on a room session',
+      (u, r) => inRoom(u, r, { runningSince: STARTED }),
+      'ck_focus_sessions_running_since_solo',
+    ],
+  ];
+
+  it.each(cases)('rejects %s', async (_label, build, constraint) => {
+    const userId = await insertUser();
+    const roomId = await insertRoom(userId);
+    expect(await pgError(insert(build(userId, roomId)))).toEqual({
+      code: CHECK_VIOLATION,
+      constraint,
+    });
+  });
+
+  it('rejects a missing room, and a referenced room cannot be deleted (no ON DELETE action)', async () => {
+    const userId = await insertUser();
+    expect(await pgError(insert(inRoom(userId, uuidv7())))).toEqual({
+      code: FOREIGN_KEY_VIOLATION,
+      constraint: 'fk_focus_sessions_room_id',
+    });
+    const roomId = await insertRoom(userId);
+    await insert(completed(userId, { roomId, focusRunId: uuidv7() }));
+    expect(await pgError(db().delete(rooms).where(eq(rooms.id, roomId)))).toEqual({
+      code: FOREIGN_KEY_VIOLATION,
+      constraint: 'fk_focus_sessions_room_id',
+    });
+  });
+
+  it('keeps one in-progress session per user across solo and room sessions', async () => {
+    const userId = await insertUser();
+    const roomId = await insertRoom(userId);
+    await insert(running(userId));
+    expect(await pgError(insert(inRoom(userId, roomId)))).toEqual({
+      code: UNIQUE_VIOLATION,
+      constraint: 'uq_focus_sessions_user_id_in_progress',
+    });
+
+    const other = await insertUser();
+    await insert(inRoom(other, roomId));
+    expect(await pgError(insert(running(other)))).toEqual({
+      code: UNIQUE_VIOLATION,
+      constraint: 'uq_focus_sessions_user_id_in_progress',
+    });
+  });
+
+  it('lets many users share a room and a run', async () => {
+    const host = await insertUser();
+    const roomId = await insertRoom(host);
+    const focusRunId = uuidv7();
+    await insert(inRoom(host, roomId, { focusRunId }));
+    await insert(inRoom(await insertUser(), roomId, { focusRunId }));
+    await insert(inRoom(await insertUser(), roomId, { focusRunId }));
   });
 });

@@ -29,6 +29,13 @@
       "when": 1793451932235,
       "tag": "0003_create_rooms",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793865658182,
+      "tag": "0004_add_room_focus_sessions",
+      "breakpoints": true
     }
   ]
 }

@@ -151,8 +151,8 @@ export const authSessions = pgTable(
 );
 
 // Phase 4B: solo focus sessions (docs/domain/model.md, decisions D6, D14/15/35, E1–E16).
-// Solo only: room sessions add `room_id`, `focus_run_id` and the room-only abandon reasons
-// in Phase 8 (E4, E5, M1). The lifecycle rules that need the clock or presence (completion,
+// Solo sessions have `room_id`/`focus_run_id` NULL; Phase 8 room sessions (RF1) set both
+// and add the room-only abandon reasons. The lifecycle rules that need the clock or presence (completion,
 // grace, expiry) live in modules/focus-sessions; the table guarantees the invariants that
 // must hold whatever code writes it.
 export const focusSessions = pgTable(
@@ -165,6 +165,10 @@ export const focusSessions = pgTable(
     taskId: uuid(),
     status: text().notNull(),
     abandonReason: text(),
+    // RF1: set together for a room focus session, NULL for a solo one. The run itself lives
+    // in Redis, so `focus_run_id` has no foreign key.
+    roomId: uuid(),
+    focusRunId: uuid(),
     plannedSeconds: integer().notNull(),
     // D6: time accumulated before the current running stretch, whole seconds (E14).
     focusedSeconds: integer().notNull().default(0),
@@ -185,6 +189,12 @@ export const focusSessions = pgTable(
       columns: [table.userId],
       foreignColumns: [users.id],
     }).onDelete('cascade'),
+    // RF1: no ON DELETE action (P1); rooms are never deleted in the MVP.
+    foreignKey({
+      name: 'fk_focus_sessions_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }),
     // Composite FK: the task must be one of this user's own tasks. No ON DELETE action
     // (P1): tasks are soft-deleted, so a task row only disappears together with its user,
     // whose sessions cascade away in the same statement.
@@ -197,10 +207,20 @@ export const focusSessions = pgTable(
       'ck_focus_sessions_status',
       sql`${table.status} IN ('in_progress', 'completed', 'abandoned')`,
     ),
-    // E5: solo reasons only until Phase 8.
+    // E5 (solo) plus the room reasons of RF1.
     check(
       'ck_focus_sessions_abandon_reason',
-      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired')`,
+      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost')`,
+    ),
+    // RF1: a room session has both the room and the run, a solo one has neither.
+    check(
+      'ck_focus_sessions_room_run',
+      sql`(${table.roomId} IS NULL) = (${table.focusRunId} IS NULL)`,
+    ),
+    // RF1: the room timer owns the clock of a room session, so `running_since` is solo-only.
+    check(
+      'ck_focus_sessions_running_since_solo',
+      sql`${table.roomId} IS NULL OR ${table.runningSince} IS NULL`,
     ),
     // E1.
     check('ck_focus_sessions_planned_seconds', sql`${table.plannedSeconds} BETWEEN 60 AND 14400`),
@@ -240,6 +260,10 @@ export const focusSessions = pgTable(
       .where(sql`${table.status} = 'in_progress'`),
     // History, newest first (Phase 5), and the ON DELETE CASCADE from users.
     index('ix_focus_sessions_user_id_started_at').on(table.userId, table.startedAt.desc()),
+    // RF1: the participants of a run, and the sweep of in-progress room sessions.
+    index('ix_focus_sessions_room_run_in_progress')
+      .on(table.roomId, table.focusRunId)
+      .where(sql`${table.status} = 'in_progress'`),
   ],
 );
 
