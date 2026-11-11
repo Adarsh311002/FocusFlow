@@ -4,6 +4,8 @@ import type {
   RoomTimerSettings,
 } from '@focus-flow/contracts';
 
+import type { Tx } from '../../db/client.js';
+
 /**
  * The live side of rooms (Redis presence and knocks, Socket.IO events) as the REST module
  * sees it. The REST module (`modules/rooms`) owns PostgreSQL and permissions; the realtime
@@ -60,4 +62,25 @@ export type RoomLive = {
     roomId: string,
     timerSettings: RoomTimerSettings,
   ) => Promise<void>;
+};
+
+/**
+ * A room focus participant's departure, planned before the membership is deleted (Phase 8,
+ * RF8). `commit` abandons the person's session INSIDE the membership-deleting transaction;
+ * `afterCommit` (ledger removal and announcements, never throws) runs after it and BEFORE
+ * the presence eviction.
+ */
+export type PlannedDeparture = {
+  readonly commit: (tx: Tx) => Promise<void>;
+  readonly afterCommit: () => Promise<void>;
+};
+
+/** The room focus side of leaving a room (implemented by modules/room-focus). */
+export type RoomFocusDepartures = {
+  /** `undefined`: the person has no in-progress focus session in the room. */
+  readonly beginDeparture: (
+    userId: string,
+    roomId: string,
+    reason: 'left_room' | 'removed',
+  ) => Promise<PlannedDeparture | undefined>;
 };

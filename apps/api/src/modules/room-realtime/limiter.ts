@@ -24,6 +24,9 @@ export const JOIN_RATE: RateRule = { action: 'join', limit: 30, windowMs: 10_000
 export const KNOCK_CANCEL_RATE: RateRule = { action: 'knock-cancel', limit: 10, windowMs: 60_000 };
 
 /** Timer commands: 20 per 10 seconds per user (RT5). */
+/** Opt-in and opt-out over REST (Phase 8): each toggle fans out to the whole room. */
+export const ROOM_FOCUS_RATE: RateRule = { action: 'room-focus', limit: 10, windowMs: 10_000 };
+
 export const TIMER_RATE: RateRule = { action: 'timer', limit: 20, windowMs: 10_000 };
 
 export type RateLimiter = {

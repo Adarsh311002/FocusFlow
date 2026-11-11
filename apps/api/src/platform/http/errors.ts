@@ -52,6 +52,11 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
   RATE_LIMITED: 429,
   VERSION_CONFLICT: 409,
   INVALID_TRANSITION: 409,
+  RUN_CHANGED: 409,
+  RUN_ENDING: 409,
+  NOT_PRESENT: 409,
+  NOT_FOCUS_PHASE: 409,
+  NOT_SOLO_SESSION: 409,
 };
 
 /** An AppError with the default status of its code. */

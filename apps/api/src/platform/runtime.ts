@@ -47,6 +47,15 @@ import {
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
+import { createRoomGraceProcessor, createRoomGraceScheduler } from '../modules/room-focus/jobs.js';
+import { createRunLedger } from '../modules/room-focus/ledger.js';
+import { recoverRoomFocusAfterRedisLoss } from '../modules/room-focus/recovery.js';
+import { createRoomFocusService } from '../modules/room-focus/service.js';
+import {
+  attachFocusAnnouncers,
+  createFocusChangeAnnouncer,
+} from '../modules/room-realtime/focus-announcers.js';
+import { createRoomPresenceCheck } from '../modules/room-realtime/focus-hooks.js';
 import { createRoomRealtime, type RoomRealtime } from '../modules/room-realtime/module.js';
 import { attachTimerFollowUps } from '../modules/room-realtime/timer-follow-ups.js';
 import {
@@ -291,7 +300,28 @@ export const createRuntime = async (
   const roomTimerQueue = createRoomTimerQueue(queueConnection, config);
   const roomTimerScheduler = createRoomTimerScheduler(roomTimerQueue);
   // Schedule first, then emit (RT13); both only log their failures.
+  // Room focus runs (Phase 8): the run ledger, the grace jobs (on the focus-session queue)
+  // and the service every other part uses. Created before the realtime module needs it.
+  const focusSessionQueue = createFocusSessionQueue(queueConnection, config);
+  const roomFocusLedger = createRunLedger(redis);
+  const roomGraceScheduler = createRoomGraceScheduler(focusSessionQueue);
+  const isRoomPresent = createRoomPresenceCheck({
+    redis,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+  });
+  const roomFocus = createRoomFocusService({
+    db,
+    timer: roomTimerService,
+    ledger: roomFocusLedger,
+    grace: roomGraceScheduler,
+    isPresent: isRoomPresent,
+    logger,
+  });
+  const announceFocusChange = createFocusChangeAnnouncer(roomFocus, socketEmitter, logger);
+  attachFocusAnnouncers(roomFocus, socketEmitter, logger);
   attachTimerFollowUps(roomTimerService, {
+    focus: roomFocus,
     scheduler: roomTimerScheduler,
     emitter: socketEmitter,
     logger,
@@ -309,6 +339,7 @@ export const createRuntime = async (
     knockTtlMs: config.KNOCK_TTL_MS,
     maxPresent: config.ROOM_MAX_PRESENT,
     timer: roomTimerService,
+    focus: roomFocus,
     checkUser: presenceStore.checkUser,
   });
 
@@ -328,7 +359,8 @@ export const createRuntime = async (
       graceMs: config.FOCUS_GRACE_MS,
       markers: focusSessionMarkers,
     },
-    rooms: { live: roomRealtime.live, logger },
+    rooms: { live: roomRealtime.live, logger, focus: roomFocus },
+    roomFocus,
   });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
@@ -374,7 +406,6 @@ export const createRuntime = async (
 
   // Solo Focus lifecycle (Phase 4B): the focus-session queue (every role enqueues; workers
   // process), the after-commit follow-ups, and the presence hints.
-  const focusSessionQueue = createFocusSessionQueue(queueConnection, config);
   const focusSessionScheduler = createFocusSessionScheduler({
     queue: focusSessionQueue,
     graceMs: config.FOCUS_GRACE_MS,
@@ -417,6 +448,7 @@ export const createRuntime = async (
           processors: {
             end: (job) => runSoloEndJob(lifecycleDeps, job),
             grace: (job) => runSoloGraceJob(lifecycleDeps, job),
+            roomGrace: createRoomGraceProcessor(roomFocus),
           },
         });
 
@@ -441,6 +473,25 @@ export const createRuntime = async (
     logger,
     focusSessions: { deps: lifecycleDeps },
     roomTimers: { store: roomTimerStore, service: roomTimerService, scheduler: roomTimerScheduler },
+    roomFocus: {
+      db,
+      ledger: roomFocusLedger,
+      service: roomFocus,
+      scheduler: roomGraceScheduler,
+      isPresent: isRoomPresent,
+      timer: roomTimerService,
+      notify: announceFocusChange,
+    },
+  });
+  // Redis lost its data: in-progress room sessions without a ledger entry become timer_lost
+  // (RF10). Only the SET NX winner runs this; the reconciler's step 7 backs it up.
+  epoch.onGlobalRecovery(async () => {
+    await recoverRoomFocusAfterRedisLoss({
+      db,
+      ledger: roomFocusLedger,
+      notify: announceFocusChange,
+      logger,
+    });
   });
   const maintenanceWorker =
     workerConnection === undefined

@@ -11,7 +11,7 @@ import {
   roomResponseSchema,
   type RoomView,
 } from '@focus-flow/contracts';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -24,12 +24,54 @@ import {
   startRoomsApp,
 } from '../../../test/rooms.js';
 import { signUpTestUser, type TestUser } from '../../../test/users.js';
-import { roomMembers, rooms } from '../../db/schema.js';
+import { focusSessions, roomMembers, rooms } from '../../db/schema.js';
 import { generateRoomCode } from './code.js';
+import type { RoomFocusDepartures } from './ports.js';
 
 let harness: TestHarness | undefined;
 let app: RoomsTestApp | undefined;
 let codeSource: (() => string) | undefined;
+
+/** Departures planned by the stand-in room focus module (see `focusDepartures` below). */
+const departureLog: string[] = [];
+
+/**
+ * A stand-in for the room focus module with the same shape as the real one: it finds the
+ * person's in-progress session in the room, abandons it INSIDE the transaction `commit`
+ * receives, and reports the follow-up after the commit.
+ */
+const focusDepartures: RoomFocusDepartures = {
+  beginDeparture: async (userId, roomId, reason) => {
+    if (harness === undefined) {
+      throw new Error('the API harness failed to start');
+    }
+    const [row] = await harness.db
+      .select()
+      .from(focusSessions)
+      .where(
+        and(
+          eq(focusSessions.userId, userId),
+          eq(focusSessions.roomId, roomId),
+          eq(focusSessions.status, 'in_progress'),
+        ),
+      );
+    if (row === undefined) {
+      return undefined;
+    }
+    return {
+      commit: async (tx) => {
+        await tx
+          .update(focusSessions)
+          .set({ status: 'abandoned', abandonReason: reason, endedAt: new Date() })
+          .where(eq(focusSessions.id, row.id));
+      },
+      afterCommit: () => {
+        departureLog.push(`${userId}:${reason}`);
+        return Promise.resolve();
+      },
+    };
+  },
+};
 
 let alice: TestUser;
 let bob: TestUser;
@@ -97,6 +139,8 @@ const resetLive = (): void => {
   live.failResolveKnock = false;
   live.afterIsKnockPending = undefined;
   live.onAnnounceMemberJoined = undefined;
+  live.beforeResolveKnock = undefined;
+  departureLog.length = 0;
   live.counts.clear();
   const { spies } = requireApp();
   spies.error.mockClear();
@@ -109,6 +153,7 @@ beforeAll(async () => {
   harness = await startTestHarness();
   app = await startRoomsApp(harness, {
     generateCode: () => (codeSource ?? generateRoomCode)(),
+    focus: focusDepartures,
   });
   alice = await signUpTestUser(harness, 'alice');
   bob = await signUpTestUser(harness, 'bob');
@@ -1103,6 +1148,119 @@ describe('POST /rooms/:roomId/knocks/:userId/approve', () => {
     expect(approve.status).toBe(410);
     expect(await memberRows(room.id)).toHaveLength(1);
     expect(live.names()).not.toContain('announceMemberJoined');
+  });
+
+  describe('when the approve loses the knock to a reject after the membership was created', () => {
+    // One in-progress session per user: start each test without the previous one's.
+    beforeEach(async () => {
+      await requireHarness().db.delete(focusSessions);
+    });
+
+    const openFocusSession = async (roomId: string, user: TestUser): Promise<string> => {
+      const id = uuidv7();
+      await requireHarness().db.insert(focusSessions).values({
+        id,
+        userId: user.userId,
+        status: 'in_progress',
+        roomId,
+        focusRunId: uuidv7(),
+        plannedSeconds: 1500,
+        focusedSeconds: 0,
+        startedAt: new Date(),
+      });
+      return id;
+    };
+
+    const sessionOf = async (id: string) =>
+      (await requireHarness().db.select().from(focusSessions).where(eq(focusSessions.id, id)))[0];
+
+    it('takes the same departure path as a removal: membership gone, focus session abandoned, sockets evicted', async () => {
+      const room = await createRoom(alice, { isPrivate: true });
+      const live = requireApp().live;
+      knock(room.id, bob.userId);
+      let sessionId = '';
+      live.beforeResolveKnock = async () => {
+        live.beforeResolveKnock = undefined;
+        // The requester became a member a moment ago and has already opted into the run;
+        // meanwhile a reject removes the knock first.
+        sessionId = await openFocusSession(room.id, bob);
+        live.pendingKnocks.delete(`${room.id}:${bob.userId}`);
+      };
+
+      const approve = await api(alice, 'POST', url(roomPaths.approveKnock, room.id, bob.userId));
+      expect(approve.status).toBe(410);
+      expect(errorCodeOf(approve)).toBe('KNOCK_EXPIRED');
+
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(false);
+      expect(await sessionOf(sessionId)).toMatchObject({
+        status: 'abandoned',
+        abandonReason: 'removed',
+      });
+      expect(departureLog).toEqual([`${bob.userId}:removed`]);
+      expect(live.calls.filter((call) => call.name === 'announceMemberRemoved')).toEqual([
+        { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed'] },
+      ]);
+      expect(live.names()).not.toContain('announceMemberJoined');
+    });
+
+    it('still answers the rejection when announcing the removal fails', async () => {
+      const room = await createRoom(alice, { isPrivate: true });
+      const live = requireApp().live;
+      knock(room.id, bob.userId);
+      live.beforeResolveKnock = () => {
+        live.beforeResolveKnock = undefined;
+        live.pendingKnocks.delete(`${room.id}:${bob.userId}`);
+        live.failAnnouncements = true;
+        return Promise.resolve();
+      };
+      const approve = await api(alice, 'POST', url(roomPaths.approveKnock, room.id, bob.userId));
+      expect(approve.status).toBe(410);
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(false);
+      expect(requireApp().spies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ what: 'announceMemberRemoved', roomId: room.id }),
+        'Room live follow-up failed after commit',
+      );
+    });
+
+    it('keeps a membership this call did not create, and leaves its focus session alone', async () => {
+      const room = await createRoom(alice, { isPrivate: true });
+      const live = requireApp().live;
+      knock(room.id, bob.userId);
+      let sessionId = '';
+      live.afterIsKnockPending = async () => {
+        live.afterIsKnockPending = undefined;
+        // A concurrent approve (another process) created the membership and resolved the knock.
+        await requireHarness().db.insert(roomMembers).values({
+          roomId: room.id,
+          userId: bob.userId,
+        });
+        sessionId = await openFocusSession(room.id, bob);
+        live.pendingKnocks.delete(`${room.id}:${bob.userId}`);
+      };
+      const approve = await api(alice, 'POST', url(roomPaths.approveKnock, room.id, bob.userId));
+      expect(approve.status).toBe(200);
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(true);
+      expect((await sessionOf(sessionId))?.status).toBe('in_progress');
+      expect(live.names()).not.toContain('announceMemberRemoved');
+      expect(departureLog).toEqual([]);
+    });
+
+    it('does not touch the requester when the approve wins', async () => {
+      const room = await createRoom(alice, { isPrivate: true });
+      const live = requireApp().live;
+      knock(room.id, bob.userId);
+      let sessionId = '';
+      live.beforeResolveKnock = async () => {
+        live.beforeResolveKnock = undefined;
+        sessionId = await openFocusSession(room.id, bob);
+      };
+      const approve = await api(alice, 'POST', url(roomPaths.approveKnock, room.id, bob.userId));
+      expect(approve.status).toBe(201);
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(true);
+      expect((await sessionOf(sessionId))?.status).toBe('in_progress');
+      expect(live.names()).not.toContain('announceMemberRemoved');
+      expect(departureLog).toEqual([]);
+    });
   });
 
   it('still answers success, logs and announces when resolving the knock fails after the commit', async () => {

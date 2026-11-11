@@ -19,6 +19,7 @@ import { type AppSocket, roomRoom, userRoom } from '../realtime/types.js';
 import { timerMachine } from '../room-timer/machine.js';
 import type { RoomTimerService } from '../room-timer/types.js';
 import type { ChatDedupe } from './chat.js';
+import type { RoomFocusPort } from './focus-hooks.js';
 import type { KnockStore } from './knocks.js';
 import {
   CHAT_RATE,
@@ -63,6 +64,8 @@ export type RoomHandlerDeps = {
   readonly chat: ChatDedupe;
   /** The shared room timer (Phase 7). */
   readonly timer: RoomTimerService;
+  /** Room focus runs (Phase 8): the snapshot, reconnects and leaving on purpose. */
+  readonly focus: RoomFocusPort;
   /** User-level presence (the host must be online to be knocked on, D20). */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
   readonly maxPresent: number;
@@ -118,7 +121,7 @@ export const respondTo = async (
 };
 
 export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): void => {
-  const { db, redis, emitter, logger, presence, knocks, limiter, chat, timer } = deps;
+  const { db, redis, emitter, logger, presence, knocks, limiter, chat, timer, focus } = deps;
   const { userId } = socket.data;
   // Rooms in which this socket recorded presence; its disconnect removes exactly these.
   const recorded = new Set<string>();
@@ -155,6 +158,7 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
       // never missed.
       await socket.join(roomRoom(roomId));
     }
+    let becamePresent: boolean;
     try {
       // The cap is enforced again, atomically with the write (F5): the read above only
       // spares most refused joins from entering the Socket.IO room at all.
@@ -169,6 +173,7 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
       if (joined.full) {
         throw new SocketAckError('ROOM_FULL', 'This room is full.');
       }
+      becamePresent = joined.first;
     } catch (error) {
       if (!wasInRoom) {
         await socket.leave(roomRoom(roomId));
@@ -192,6 +197,18 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
       throw new SocketAckError('NOT_A_MEMBER', 'You are not a member of this room.');
     }
 
+    // The person is present in the room again: a participant of the run who was in their
+    // disconnect grace is reconnected before the snapshot is read, so it shows them connected
+    // (RF7). Only when this socket made them present: another tab already did otherwise. A
+    // failure is logged: the join stands, and the grace job re-checks presence itself.
+    if (becamePresent) {
+      try {
+        await focus.userJoinedRoom(userId, roomId);
+      } catch (error) {
+        logger.warn({ err: error, roomId, userId }, 'Could not record a room focus reconnect');
+      }
+    }
+
     // Everything slow is read first and the presence list last (F3): the socket is already
     // in the Socket.IO room, so any change after the presence read reaches it as an event,
     // and the snapshot is never older than an event the client has applied.
@@ -210,6 +227,7 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
       if (current === undefined) {
         throw new SocketAckError('ROOM_NOT_FOUND', 'This room does not exist.');
       }
+      const focusSnapshot = await focus.snapshot(userId, roomId);
       const [presentByRoom, serverNowMs] = await Promise.all([
         presence.present([roomId]),
         redisTimeMs(redis),
@@ -222,6 +240,7 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
           knocks: pending,
           knockers,
           timer: timerMachine.toView(roomId, current.state),
+          focus: focusSnapshot,
           serverNowMs,
         }),
       };
@@ -238,9 +257,25 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
     if (!inRoom(roomId)) {
       throw new SocketAckError('NOT_JOINED', 'You have not joined this room.');
     }
+    // Leaving on purpose ends the person's focus participation (RF8, `left_room`), in
+    // PostgreSQL first and before the presence goes. Only when this is their last socket in
+    // the room: closing one of several tabs is not leaving. A failure answers an error and
+    // changes nothing, so the client can retry.
+    const hasOtherSocket = await presence.hasOtherSocket(ref(roomId));
+    if (!hasOtherSocket) {
+      await focus.depart(userId, roomId, 'left_room');
+    }
     await socket.leave(roomRoom(roomId));
     forget(roomId);
-    await presence.leave(ref(roomId));
+    const left = await presence.leave(ref(roomId));
+    if (left.last && hasOtherSocket) {
+      // The other tab left at the same time: neither saw the other. Depart is idempotent.
+      try {
+        await focus.depart(userId, roomId, 'left_room');
+      } catch (error) {
+        logger.warn({ err: error, roomId, userId }, 'Could not end the room focus participation');
+      }
+    }
     return {};
   };
 

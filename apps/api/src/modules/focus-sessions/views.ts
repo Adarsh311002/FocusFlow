@@ -14,7 +14,11 @@ export const toFocusSessionView = (
 ): FocusSessionView => {
   const base = {
     id: row.id,
-    context: { kind: 'solo' },
+    // RF1: both columns are set together (CHECK), so a room session always has its run.
+    context:
+      row.roomId !== null && row.focusRunId !== null
+        ? { kind: 'room', roomId: row.roomId, focusRunId: row.focusRunId }
+        : { kind: 'solo' },
     task:
       task === undefined
         ? null

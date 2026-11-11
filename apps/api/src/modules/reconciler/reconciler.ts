@@ -12,8 +12,20 @@ import {
   type SweepSummary,
 } from '../focus-sessions/sweep.js';
 import type { InstanceRemovalReason } from '../presence/presence.js';
+import {
+  type StaleCleanup,
+  type StaleRoomSweepSummary,
+  sweepStaleRoomSessions,
+} from '../room-focus/stale.js';
 import type { RoomTimerScheduler } from '../room-timer/jobs.js';
 import type { RoomTimerService, RoomTimerStore } from '../room-timer/types.js';
+import {
+  type RoomFocusSweepDeps,
+  type RoomSessionSweepSummary,
+  settleUnsettledRuns,
+  sweepRoomSessions,
+  type UnsettledRunsSummary,
+} from './room-focus.js';
 import { type RoomTimerSweepSummary, sweepRoomTimers } from './room-timers.js';
 
 // The reconciler (docs/architecture/focus-timing-protocol.md, "Reconciler"): repairs what
@@ -27,10 +39,12 @@ import { type RoomTimerSweepSummary, sweepRoomTimers } from './room-timers.js';
 // Implemented steps (the others belong to the phases that own their state):
 //   1. dead instances' presence                                (Phase 3)
 //   2. overdue room timers run their phase end; running timers' phase-end jobs ensured (Phase 7)
-//   3. closed runs in the unsettled set                         (Phase 8)
-//   4. room participants past their grace                       (Phase 8)
+//   3. closed runs in the unsettled set                         (Phase 8; room-focus.ts)
+//   4. room participants past their grace                       (Phase 8; room-focus.ts, with 7)
 //   5. every running solo session: the decision, settled or its jobs ensured  (Phase 4B)
 //   6. solo sessions still in progress 12 h after started_at: expired          (Phase 4B)
+//   6b. room sessions still in progress 12 h after started_at (16 h at most while their
+//       phase runs): expired, ledger cleaned                                    (Phase 8, RF17)
 //   7. orphaned room sessions → timer_lost                      (Phase 8)
 
 export type InstanceCleanup = {
@@ -41,10 +55,16 @@ export type ReconcileSummary = {
   readonly deadInstances: readonly string[];
   /** Step 2 (absent when the room timer is not wired, or the step itself failed). */
   readonly roomTimers?: RoomTimerSweepSummary;
+  /** Step 3 (absent when room focus is not wired, or the step itself failed). */
+  readonly unsettledRuns?: UnsettledRunsSummary;
+  /** Steps 4 and 7 (absent when room focus is not wired, or the step itself failed). */
+  readonly roomSessions?: RoomSessionSweepSummary;
   /** Step 5 (absent when the focus steps are not wired, or the step itself failed). */
   readonly runningSessions?: SweepSummary;
   /** Step 6. */
   readonly staleSessions?: SweepSummary;
+  /** Step 6b (RF17; absent when the room timer is not wired to room focus, or the step failed). */
+  readonly staleRoomSessions?: StaleRoomSweepSummary;
 };
 
 type ReconcilerDeps = {
@@ -62,10 +82,21 @@ type ReconcilerDeps = {
     readonly service: Pick<RoomTimerService, 'completePhase'>;
     readonly scheduler: RoomTimerScheduler;
   };
+  /** Room focus steps 3, 4 and 7 (Phase 8; `logger` is the reconciler's). */
+  readonly roomFocus?: Omit<RoomFocusSweepDeps, 'logger'>;
 };
 
 /** How long the liveness record is kept: far longer than any threshold reading it. */
 const LIVENESS_TTL_MS = 24 * 60 * 60 * 1_000;
+
+/** Room session outcomes that changed something (logged at warn). */
+const ROOM_ACTION_OUTCOMES: ReadonlySet<string> = new Set([
+  'timer_lost',
+  'late_grace',
+  'grace_abandoned',
+  'grace_completed',
+  'run_settled',
+]);
 
 export const createReconciler = ({
   redis,
@@ -75,8 +106,13 @@ export const createReconciler = ({
   logger,
   focusSessions,
   roomTimers,
+  roomFocus,
 }: ReconcilerDeps) => {
   let stopping = false;
+  // Where the room session sweep resumes after a run cut short by its budget.
+  const roomSessionCursor: { afterUserId: string | null } = { afterUserId: null };
+  // Ledger entries of expired room sessions whose cleanup failed; every full run retries them (RF17).
+  const staleRoomCleanups: StaleCleanup[] = [];
 
   /**
    * Step 1: instances whose heartbeat is older than the TTL (Redis TIME) are dead. Their
@@ -122,7 +158,7 @@ export const createReconciler = ({
     }
   };
 
-  /** Steps 1, 2, 5 and 6, then the liveness record. Fails (after all steps) if one failed. */
+  /** Steps 1 to 7, then the liveness record. Fails (after all steps) if one failed. */
   const fullRun = async (job: ReconcileJob): Promise<ReconcileSummary> => {
     const errors: unknown[] = [];
     // Step 1 first: its instance_dead hints record markers at the last heartbeat, so step
@@ -134,6 +170,19 @@ export const createReconciler = ({
         ? undefined
         : await runStep(errors, 'room timers', () =>
             sweepRoomTimers({ ...roomTimers, redis, logger }, budget()),
+          );
+    // Steps 3, 4 and 7: room focus runs and participants, each independent of the others.
+    const unsettledRuns =
+      roomFocus === undefined
+        ? undefined
+        : await runStep(errors, 'unsettled runs', () =>
+            settleUnsettledRuns({ ...roomFocus, logger }, budget()),
+          );
+    const roomSessions =
+      roomFocus === undefined
+        ? undefined
+        : await runStep(errors, 'room sessions', () =>
+            sweepRoomSessions({ cursor: roomSessionCursor, ...roomFocus, logger }, budget()),
           );
     const runningSessions =
       focusSessions === undefined
@@ -147,6 +196,24 @@ export const createReconciler = ({
         : await runStep(errors, 'stale sessions', () =>
             sweepStaleSessions({ ...focusSessions.deps, logger }, sweepOptions()),
           );
+    // Step 6b (RF17): room sessions past the stale window, after the normal decisions above.
+    const staleTimer = roomFocus?.timer;
+    const staleRoomSessions =
+      roomFocus === undefined || staleTimer === undefined
+        ? undefined
+        : await runStep(errors, 'stale room sessions', () =>
+            sweepStaleRoomSessions(
+              {
+                db: roomFocus.db,
+                ledger: roomFocus.ledger,
+                timer: staleTimer,
+                notify: roomFocus.notify,
+                logger,
+                cleanups: staleRoomCleanups,
+              },
+              budget(),
+            ),
+          );
     await runStep(errors, 'liveness', async () => {
       await redis.set(
         redisKeys.reconcileLastFinished,
@@ -158,15 +225,21 @@ export const createReconciler = ({
     const summary: ReconcileSummary = {
       deadInstances,
       ...(roomTimerSummary === undefined ? {} : { roomTimers: roomTimerSummary }),
+      ...(unsettledRuns === undefined ? {} : { unsettledRuns }),
+      ...(roomSessions === undefined ? {} : { roomSessions }),
       ...(runningSessions === undefined ? {} : { runningSessions }),
       ...(staleSessions === undefined ? {} : { staleSessions }),
+      ...(staleRoomSessions === undefined ? {} : { staleRoomSessions }),
     };
     const settledAny =
       deadInstances.length > 0 ||
       (roomTimerSummary?.advanced ?? 0) > 0 ||
       (roomTimerSummary?.jobsRepaired ?? 0) > 0 ||
+      (unsettledRuns?.settled ?? 0) > 0 ||
+      Object.keys(roomSessions?.outcomes ?? {}).some((label) => ROOM_ACTION_OUTCOMES.has(label)) ||
       Object.keys(runningSessions?.outcomes ?? {}).some((label) => label.startsWith('settled')) ||
-      (staleSessions?.outcomes.expired ?? 0) > 0;
+      (staleSessions?.outcomes.expired ?? 0) > 0 ||
+      (staleRoomSessions?.outcomes.expired ?? 0) > 0;
     const log =
       settledAny || errors.length > 0 ? logger.warn.bind(logger) : logger.debug.bind(logger);
     log(

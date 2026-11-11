@@ -78,6 +78,14 @@ export type FocusSessionsDeps = {
 
 const sessionNotFound = (): AppError => new AppError('NOT_FOUND', 404, 'Focus session not found.');
 
+/** Pause, resume and stop belong to solo sessions: the room timer owns a room session (RF11). */
+const notSoloSession = (): AppError =>
+  new AppError(
+    'NOT_SOLO_SESSION',
+    409,
+    'This session belongs to a room focus run. Opt out of the run to end it.',
+  );
+
 const presenceUnavailable = (): AppError =>
   new AppError('INTERNAL', 503, 'Presence is temporarily unavailable. Try again shortly.');
 
@@ -323,6 +331,9 @@ const pauseOrStop = async (
     if (row === undefined) {
       throw sessionNotFound();
     }
+    if (row.roomId !== null) {
+      throw notSoloSession();
+    }
     const session = toSoloSession(row);
     const nowMs = await databaseNowMs(tx);
     const settlement =
@@ -380,6 +391,9 @@ export const resumeFocusSession = async (
     if (current === undefined) {
       throw sessionNotFound();
     }
+    if (current.roomId !== null) {
+      throw notSoloSession();
+    }
     const connectedChecked = isPaused(toSoloSession(current));
     if (connectedChecked) {
       await requireConnected(deps, userId);
@@ -388,6 +402,9 @@ export const resumeFocusSession = async (
       const row = await lockOwnedSession(tx, userId, sessionId);
       if (row === undefined) {
         throw sessionNotFound();
+      }
+      if (row.roomId !== null) {
+        throw notSoloSession();
       }
       const session = toSoloSession(row);
       if (isPaused(session) && !connectedChecked) {

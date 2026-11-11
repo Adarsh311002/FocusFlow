@@ -282,6 +282,42 @@ describe('timer machine properties', () => {
     );
   });
 
+  it('the run id survives start, pause and resume and is cleared by every phase change', () => {
+    const RUN = '0190a7b2-0000-7000-8000-0000000000aa';
+    fc.assert(
+      fc.property(
+        settingsArb,
+        fc.array(stepArb, { maxLength: 40 }),
+        fc.integer({ min: 0, max: 1_000_000_000_000 }),
+        (settings, steps, t0) => {
+          let state: TimerState = { ...m.initial(settings, 1), focusRunId: RUN };
+          let now = t0;
+          for (const step of steps) {
+            const before = state;
+            now += step.dt;
+            const command = toCommand(step, before.version);
+            const result =
+              command === null
+                ? m.completePhase(before, now, step.newSettings)
+                : m.apply(before, command, now, step.newSettings);
+            if (!result.ok) continue;
+            state = result.state;
+            const keeps =
+              command !== null &&
+              (command.type === 'start' || command.type === 'pause' || command.type === 'resume');
+            expect(state.focusRunId).toBe(keeps ? before.focusRunId : null);
+            // Re-seed a run so the property keeps exercising the pass-through.
+            if (state.focusRunId === null && state.phase === 'focus') {
+              state = { ...state, focusRunId: RUN };
+            }
+            expect(m.toView(ROOM, state).focusRunId).toBe(state.focusRunId);
+          }
+        },
+      ),
+      runs,
+    );
+  });
+
   it('two hosts holding the same stale version can never both succeed', () => {
     const guarded = fc.constantFrom<'reset' | 'setPhase'>('reset', 'setPhase');
     fc.assert(

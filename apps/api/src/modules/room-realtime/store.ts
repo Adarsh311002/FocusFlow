@@ -84,6 +84,11 @@ export type RoomPresenceStore = {
   readonly sync: (readLocal: () => readonly LocalRoomSocket[]) => Promise<RoomSyncResult>;
   /** Removes all room entries of a dead or stopped instance; the users who left rooms. */
   readonly removeInstance: (instanceId: string) => Promise<readonly UserInRoom[]>;
+  /**
+   * Whether the user has a live socket in the room other than `ref`'s own (several tabs):
+   * one socket leaving must not count as the user leaving the room.
+   */
+  readonly hasOtherLiveSocket: (ref: RoomSocketRef) => Promise<boolean>;
 };
 
 // KEYS: instances, the user's socket set, the room's profile hash, the instance's index.
@@ -385,6 +390,30 @@ export const createRoomPresenceStore = ({
         joined,
         left: distinctUsers(left.filter((entry) => entry !== undefined)),
       };
+    },
+
+    hasOtherLiveSocket: async (ref) => {
+      const replies = await redis
+        .multi()
+        .time()
+        .zrange(redisKeys.instances, '0', '-1', 'WITHSCORES')
+        .smembers(redisKeys.roomPresenceSockets(ref.roomId, ref.userId))
+        .exec();
+      if (replies === null) {
+        throw new Error('the room presence read was aborted');
+      }
+      const values = replies.map(([error, value]) => {
+        if (error !== null) {
+          throw error;
+        }
+        return value;
+      });
+      const nowMs = redisTimeReplyToMs(values[0]);
+      const heartbeats = heartbeatsOf(values[1]);
+      const own = userSetEntry(instanceId, ref.socketId);
+      return stringList(values[2]).some(
+        (entry) => entry !== own && isLiveEntry(entry, heartbeats, nowMs, instanceTtlMs),
+      );
     },
 
     removeInstance: async (targetId) => {

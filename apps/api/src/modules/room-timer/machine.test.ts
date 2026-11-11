@@ -39,6 +39,7 @@ describe('timer machine: initial', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: null,
       version: 777,
+      focusRunId: null,
     });
   });
 
@@ -159,6 +160,7 @@ describe('timer machine: reset', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: null,
       version: s.version + 1,
+      focusRunId: null,
     });
   });
 
@@ -193,6 +195,7 @@ describe('timer machine: setPhase', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: null,
       version: s.version + 1,
+      focusRunId: null,
     });
   });
 
@@ -248,6 +251,7 @@ describe('timer machine: completePhase', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: null,
       version: r.version + 1,
+      focusRunId: null,
     });
   });
 
@@ -290,6 +294,55 @@ describe('timer machine: completePhase', () => {
     const resumed = accepted(paused(), { type: 'resume' }, 20_000); // ends 70_000
     expect(m.completePhase(resumed, 69_999, settings).ok).toBe(false);
     expect(m.completePhase(resumed, 70_000, settings).ok).toBe(true);
+  });
+});
+
+describe('timer machine: focusRunId', () => {
+  const RUN = '0190a7b2-0000-7000-8000-0000000000aa';
+  const withRun = (state: TimerState): TimerState => ({ ...state, focusRunId: RUN });
+
+  it('a new machine state has no run; the service assigns it', () => {
+    expect(idle().focusRunId).toBeNull();
+    expect(m.initial(settings, 1, 'short_break').focusRunId).toBeNull();
+  });
+
+  it('start, pause and resume keep the run unchanged', () => {
+    const started = accepted(withRun(idle()), { type: 'start' }, 1_000);
+    expect(started.focusRunId).toBe(RUN);
+    const p = accepted(started, { type: 'pause' }, 5_000);
+    expect(p.focusRunId).toBe(RUN);
+    expect(accepted(p, { type: 'resume' }, 6_000).focusRunId).toBe(RUN);
+  });
+
+  it('a no-op returns the very same state, run included', () => {
+    const p = withRun(paused());
+    const r = m.apply(p, { type: 'pause' }, 50_000, settings);
+    expect(r.ok && r.state).toBe(p);
+  });
+
+  it('reset and setPhase clear the run (the service issues a new one)', () => {
+    const s = withRun(running());
+    expect(accepted(s, { type: 'reset', expectedVersion: s.version }, 5_000).focusRunId).toBeNull();
+    for (const phase of ['short_break', 'long_break'] as const) {
+      expect(
+        accepted(s, { type: 'setPhase', phase, expectedVersion: s.version }, 5_000).focusRunId,
+      ).toBeNull();
+    }
+  });
+
+  it('a phase end clears the run, for a focus and for a break', () => {
+    const out = m.completePhase(withRun(running()), 70_000, settings);
+    expect(out.ok && out.state.focusRunId).toBeNull();
+    const brk = accepted(m.initial(settings, 9, 'short_break'), { type: 'start' }, 0);
+    const out2 = m.completePhase(brk, 1_000_000, settings);
+    expect(out2.ok && out2.state.focusRunId).toBeNull();
+  });
+
+  it('toView carries the run id and stays valid', () => {
+    const v = m.toView(ROOM, withRun(running()));
+    expect(v.focusRunId).toBe(RUN);
+    expect(timerViewSchema.safeParse(v).success).toBe(true);
+    expect(m.toView(ROOM, idle()).focusRunId).toBeNull();
   });
 });
 

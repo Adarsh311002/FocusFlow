@@ -12,6 +12,9 @@ import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
 import { createFocusSessionsRouter } from '../../modules/focus-sessions/http.js';
 import type { FocusSessionsDeps } from '../../modules/focus-sessions/service.js';
+import { createRoomFocusRouter } from '../../modules/room-focus/http.js';
+import type { RoomFocusService } from '../../modules/room-focus/types.js';
+import { createRateLimiter, ROOM_FOCUS_RATE } from '../../modules/room-realtime/limiter.js';
 import { createRoomsRouter } from '../../modules/rooms/http.js';
 import type { RoomsDeps } from '../../modules/rooms/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
@@ -30,6 +33,7 @@ type AppDeps = {
   authDeps: AuthDeps;
   focusSessions: Omit<FocusSessionsDeps, 'db'>;
   rooms: Omit<RoomsDeps, 'db'>;
+  roomFocus: RoomFocusService;
 };
 
 export const createApp = ({
@@ -40,7 +44,9 @@ export const createApp = ({
   authDeps,
   focusSessions,
   rooms,
+  roomFocus,
 }: AppDeps): Express => {
+  const roomFocusLimiter = createRateLimiter(redis);
   const app = express();
 
   app.disable('x-powered-by');
@@ -79,6 +85,15 @@ export const createApp = ({
   app.use(
     API_BASE_PATH,
     createRoomsRouter({ ...rooms, db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+
+  app.use(
+    API_BASE_PATH,
+    createRoomFocusRouter({
+      service: roomFocus,
+      authenticate: requireAuth(authDeps),
+      rateLimit: (userId) => roomFocusLimiter.consume(ROOM_FOCUS_RATE, userId),
+    }),
   );
 
   app.use(notFoundHandler);

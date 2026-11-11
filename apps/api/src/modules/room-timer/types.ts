@@ -1,5 +1,7 @@
 import type { TimerCommand, TimerPhase, TimerStatus, TimerView } from '@focus-flow/contracts';
 
+import type { RunTransition } from '../room-focus/types.js';
+
 // Shared types of the room timer (Phase 7; RT1-RT13 in docs/decisions/decision-log.md). The
 // interfaces here are the contract between the pure machine (machine.ts), the Redis store
 // (store.ts), the service (service.ts) and the scheduling/realtime layer (jobs.ts and the
@@ -17,6 +19,12 @@ export type TimerState = {
   readonly segmentStartedAtMs: number | null;
   /** Incremented by exactly 1 on every accepted change (RT2: a new timer starts at the Redis TIME base in milliseconds). */
   readonly version: number;
+  /**
+   * The current focus run: set exactly while `phase === 'focus'`, `null` in a break
+   * (Phase 8, RF2). The pure machine passes it through and clears it for a break; the
+   * service assigns a fresh id whenever a focus phase is created (`planRun`).
+   */
+  readonly focusRunId: string | null;
 };
 
 /** The room's saved phase durations, in milliseconds (the room row stores seconds). */
@@ -96,6 +104,8 @@ export type RoomTimerStore = {
     roomId: string,
     expectedVersion: number | null,
     next: TimerState,
+    /** Run effects, written in the SAME atomic operation as the timer (Phase 8, RF3). */
+    runs?: RunTransition,
   ) => Promise<'ok' | 'conflict'>;
   /**
    * Removes `roomId` from the running index when its hash is absent or not running (one small
@@ -120,6 +130,8 @@ export type TimerChange = {
   readonly state: TimerState;
   /** Redis TIME at which the change was computed. */
   readonly nowMs: number;
+  /** The run closed and/or opened by this change (Phase 8); absent when neither happened. */
+  readonly runs?: RunTransition;
 };
 
 export type CommandOutcome =

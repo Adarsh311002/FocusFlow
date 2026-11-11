@@ -1,6 +1,9 @@
 import type { TimerCommand } from '@focus-flow/contracts';
 import type { Logger } from 'pino';
+import { uuidv7 } from 'uuidv7';
 
+import { planRun } from '../room-focus/model.js';
+import type { RunTransition } from '../room-focus/types.js';
 import { timerMachine } from './machine.js';
 import type { ReadTimerSettings } from './settings.js';
 import type {
@@ -28,7 +31,13 @@ export type RoomTimerServiceDeps = {
   readonly readSettings: ReadTimerSettings;
   readonly logger: Logger;
   readonly machine?: TimerMachine;
+  /** Run ids (RF2); a fresh UUIDv7 by default, injectable for tests. */
+  readonly newRunId?: () => string;
 };
+
+/** `runs` only when the change has run effects (exactOptionalPropertyTypes). */
+const runsOf = (runs: RunTransition | undefined): { runs?: RunTransition } =>
+  runs === undefined ? {} : { runs };
 
 type Current = { readonly state: TimerState; readonly nowMs: number };
 
@@ -37,6 +46,7 @@ export const createRoomTimerService = ({
   readSettings,
   logger,
   machine = timerMachine,
+  newRunId = uuidv7,
 }: RoomTimerServiceDeps): RoomTimerService => {
   const listeners: ((change: TimerChange) => void | Promise<void>)[] = [];
 
@@ -70,9 +80,17 @@ export const createRoomTimerService = ({
       }
       // RT2: the version base is Redis TIME in milliseconds, so a recreated timer's version
       // exceeds any version a client or an old job holds.
-      const state = machine.initial(settings, read.nowMs);
-      if ((await store.write(roomId, null, state)) === 'ok') {
-        await notify({ roomId, cause: 'created', state, nowMs: read.nowMs });
+      // RF2: the new idle focus phase gets its run in the same write.
+      const { state, runs } = planRun(
+        undefined,
+        machine.initial(settings, read.nowMs),
+        'created',
+        undefined,
+        read.nowMs,
+        newRunId(),
+      );
+      if ((await store.write(roomId, null, state, runs)) === 'ok') {
+        await notify({ roomId, cause: 'created', state, nowMs: read.nowMs, ...runsOf(runs) });
         return { state, nowMs: read.nowMs };
       }
     }
@@ -117,9 +135,18 @@ export const createRoomTimerService = ({
       if (!transition.changed) {
         return { ok: true, state: current.state, nowMs: current.nowMs };
       }
-      if ((await store.write(roomId, current.state.version, transition.state)) === 'ok') {
-        await notify({ roomId, cause: 'command', state: transition.state, nowMs: current.nowMs });
-        return { ok: true, state: transition.state, nowMs: current.nowMs };
+      // RF3: the run closed/opened by this change is written with the timer, atomically.
+      const { state, runs } = planRun(
+        current.state,
+        transition.state,
+        'command',
+        timerCommand,
+        current.nowMs,
+        newRunId(),
+      );
+      if ((await store.write(roomId, current.state.version, state, runs)) === 'ok') {
+        await notify({ roomId, cause: 'command', state, nowMs: current.nowMs, ...runsOf(runs) });
+        return { ok: true, state, nowMs: current.nowMs };
       }
     }
     // Every attempt lost a race: report the latest state so the caller can decide again.
@@ -158,9 +185,23 @@ export const createRoomTimerService = ({
       if (!transition.changed) {
         return { result: 'noop' };
       }
-      if ((await store.write(roomId, state.version, transition.state)) === 'ok') {
-        await notify({ roomId, cause: 'phase_end', state: transition.state, nowMs: read.nowMs });
-        return { result: 'advanced', state: transition.state, nowMs: read.nowMs };
+      const planned = planRun(
+        state,
+        transition.state,
+        'phase_end',
+        undefined,
+        read.nowMs,
+        newRunId(),
+      );
+      if ((await store.write(roomId, state.version, planned.state, planned.runs)) === 'ok') {
+        await notify({
+          roomId,
+          cause: 'phase_end',
+          state: planned.state,
+          nowMs: read.nowMs,
+          ...runsOf(planned.runs),
+        });
+        return { result: 'advanced', state: planned.state, nowMs: read.nowMs };
       }
     }
     // Three lost races: the next retry of the job (or the reconciler) decides again.

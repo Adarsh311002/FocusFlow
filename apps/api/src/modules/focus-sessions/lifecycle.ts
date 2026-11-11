@@ -293,6 +293,9 @@ export const runSoloEndJob = async (deps: LifecycleDeps, job: SoloEndJob): Promi
     if (row === undefined) {
       return noOp('session_gone');
     }
+    if (row.roomId !== null) {
+      return noOp('not_running'); // A room session is never a solo job's (RF11).
+    }
     const session = toSoloSession(row);
     if (!isRunning(session)) {
       return noOp('not_running');
@@ -326,6 +329,9 @@ export const runSoloGraceJob = async (
     const row = await lockOwnedSession(tx, job.userId, job.sessionId);
     if (row === undefined) {
       return noOp('session_gone');
+    }
+    if (row.roomId !== null) {
+      return noOp('not_running'); // A room session is never a solo job's (RF11).
     }
     const session = toSoloSession(row);
     if (!isRunning(session)) {
@@ -391,6 +397,9 @@ export const reconcileRunningSession = async (
       const row = await lockOwnedSessionSkipLocked(tx, key.userId, key.id);
       if (row === undefined) {
         return undefined;
+      }
+      if (row.roomId !== null) {
+        return noOp('not_running'); // RF11.
       }
       const session = toSoloSession(row);
       if (!isRunning(session)) {
@@ -463,6 +472,9 @@ export const expireStaleSession = async (
       const row = await lockOwnedSessionSkipLocked(tx, key.userId, key.id);
       if (row === undefined) {
         return { kind: 'skipped_locked' };
+      }
+      if (row.roomId !== null) {
+        return { kind: 'no_op', reason: 'ended' }; // Not a solo session (RF11).
       }
       const session = toSoloSession(row);
       if (session.status !== 'in_progress') {

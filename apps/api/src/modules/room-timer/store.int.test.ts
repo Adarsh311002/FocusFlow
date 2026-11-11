@@ -38,6 +38,7 @@ const idle = (version: number, overrides: Partial<TimerState> = {}): TimerState 
   elapsedBeforeMs: 0,
   segmentStartedAtMs: null,
   version,
+  focusRunId: null,
   ...overrides,
 });
 

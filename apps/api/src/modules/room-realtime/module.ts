@@ -9,6 +9,7 @@ import { type AppServer, type AppSocket, roomRoom } from '../realtime/types.js';
 import type { RoomTimerService } from '../room-timer/types.js';
 import type { RoomLive } from '../rooms/ports.js';
 import { createChatDedupe } from './chat.js';
+import { createPresenceHooks, type RoomFocusPort } from './focus-hooks.js';
 import { dropNonMemberSockets } from './guard.js';
 import { registerRoomHandlers } from './handlers.js';
 import { createKnockStore } from './knocks.js';
@@ -28,6 +29,8 @@ export type RoomRealtimeDeps = {
   readonly maxPresent: number;
   /** The shared room timer (Phase 7). */
   readonly timer: RoomTimerService;
+  /** Room focus runs (Phase 8): snapshot, reconnects, leaving, and the presence hints. */
+  readonly focus: RoomFocusPort;
   /** User-level presence, for "the host is online" (D20). */
   readonly checkUser: (userId: string) => Promise<PresenceCheck>;
 };
@@ -57,7 +60,12 @@ export const createRoomRealtime = (deps: RoomRealtimeDeps): RoomRealtime => {
     instanceId: deps.instanceId,
     instanceTtlMs: deps.instanceTtlMs,
   });
-  const presence = createRoomPresence({ store, emitter, logger });
+  const presence = createRoomPresence({
+    store,
+    emitter,
+    logger,
+    hooks: createPresenceHooks(deps.focus, logger),
+  });
   const knocks = createKnockStore(redis, deps.knockTtlMs);
   const limiter = createRateLimiter(redis);
   const chat = createChatDedupe(redis);
@@ -99,6 +107,7 @@ export const createRoomRealtime = (deps: RoomRealtimeDeps): RoomRealtime => {
         limiter,
         chat,
         timer: deps.timer,
+        focus: deps.focus,
         checkUser: deps.checkUser,
         maxPresent: deps.maxPresent,
       });

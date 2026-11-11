@@ -26,6 +26,8 @@ export type FakeLive = RoomLive & {
   afterIsKnockPending: ((roomId: string, userId: string) => Promise<void>) | undefined;
   /** Runs at the start of `announceMemberJoined` (a race gate). */
   onAnnounceMemberJoined: (() => Promise<void>) | undefined;
+  /** Runs at the start of `resolveKnock`, after the membership is committed (a race gate). */
+  beforeResolveKnock: ((roomId: string, userId: string) => Promise<void>) | undefined;
   counts: Map<string, number>;
   /** Names of the calls made, in order. */
   names: () => string[];
@@ -42,6 +44,7 @@ export const createFakeLive = (): FakeLive => {
     failResolveKnock: false,
     afterIsKnockPending: undefined,
     onAnnounceMemberJoined: undefined,
+    beforeResolveKnock: undefined,
     counts: new Map<string, number>(),
     names: () => calls.map((call) => call.name),
     presentCounts: (roomIds) => {
@@ -60,13 +63,14 @@ export const createFakeLive = (): FakeLive => {
       await fake.afterIsKnockPending?.(roomId, userId);
       return pending;
     },
-    resolveKnock: (roomId, hostId, userId, outcome) => {
+    resolveKnock: async (roomId, hostId, userId, outcome) => {
       calls.push({ name: 'resolveKnock', args: [roomId, hostId, userId, outcome] });
+      await fake.beforeResolveKnock?.(roomId, userId);
       if (fake.failKnockState || fake.failResolveKnock) {
-        return Promise.reject(new Error('redis down'));
+        throw new Error('redis down');
       }
       // Like the real store: exactly one caller removes the knock.
-      return Promise.resolve(fake.pendingKnocks.delete(`${roomId}:${userId}`));
+      return fake.pendingKnocks.delete(`${roomId}:${userId}`);
     },
     announceMemberJoined: async (roomId, member) => {
       calls.push({ name: 'announceMemberJoined', args: [roomId, member] });
@@ -110,7 +114,7 @@ export type RoomsTestApp = {
  */
 export const startRoomsApp = async (
   harness: TestHarness,
-  options: Pick<RoomsDeps, 'generateCode'> = {},
+  options: Pick<RoomsDeps, 'generateCode' | 'focus'> = {},
 ): Promise<RoomsTestApp> => {
   const live = createFakeLive();
   const { logger, spies } = createStubLogger();

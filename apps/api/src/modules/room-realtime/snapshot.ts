@@ -1,4 +1,9 @@
-import { type RoomSnapshot, roomSnapshotSchema, type TimerView } from '@focus-flow/contracts';
+import {
+  type RoomFocusSnapshot,
+  type RoomSnapshot,
+  roomSnapshotSchema,
+  type TimerView,
+} from '@focus-flow/contracts';
 
 import type { PendingKnock } from './knocks.js';
 import type { RoomRow, UserProfileRow } from './queries.js';
@@ -29,6 +34,8 @@ export type SnapshotParts = {
   readonly knocks: readonly PendingKnock[];
   readonly knockers: readonly UserProfileRow[];
   readonly timer: TimerView;
+  /** The current focus run and who is in it (Phase 8). */
+  readonly focus: RoomFocusSnapshot;
   readonly serverNowMs: number;
 };
 
@@ -63,6 +70,7 @@ export const buildSnapshot = (parts: SnapshotParts): RoomSnapshot => {
     })),
     ...(pendingKnocks === undefined ? {} : { pendingKnocks }),
     timer: parts.timer,
+    focus: parts.focus,
     serverNowMs: parts.serverNowMs,
   });
 };

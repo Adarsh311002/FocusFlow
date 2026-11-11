@@ -1,5 +1,8 @@
 import {
   FOCUS_SESSION_QUEUE,
+  ROOM_GRACE_JOB,
+  type RoomGraceJob,
+  roomGraceJobSchema,
   SOLO_END_JOB,
   SOLO_GRACE_JOB,
   type SoloEndJob,
@@ -27,7 +30,7 @@ import type { FocusSessionScheduler, JobOutcome } from './lifecycle.js';
 // retained finished job is therefore re-run with `Job.retry` (BullMQ 6: the atomic
 // `reprocessJob` script), its attempt counters reset.
 
-export type FocusSessionJob = SoloEndJob | SoloGraceJob;
+export type FocusSessionJob = SoloEndJob | SoloGraceJob | RoomGraceJob;
 export type FocusSessionQueue = Queue<FocusSessionJob>;
 
 /** BullMQ reserves `:` in job ids; ids and instants never contain it. */
@@ -165,6 +168,8 @@ export const createFocusSessionScheduler = ({
 export type FocusSessionProcessors = {
   readonly end: (job: SoloEndJob) => Promise<JobOutcome>;
   readonly grace: (job: SoloGraceJob) => Promise<JobOutcome>;
+  /** Room participant grace (Phase 8; modules/room-focus/jobs.ts). */
+  readonly roomGrace?: (job: RoomGraceJob) => Promise<JobOutcome>;
 };
 
 /** Validates and runs one job; an unknown job or payload fails once, without retries. */
@@ -186,6 +191,16 @@ export const processFocusSessionJob = async (
       throw new UnrecoverableError('invalid solo-grace payload');
     }
     return processors.grace(parsed.data);
+  }
+  if (name === ROOM_GRACE_JOB) {
+    const parsed = roomGraceJobSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new UnrecoverableError('invalid room-grace payload');
+    }
+    if (processors.roomGrace === undefined) {
+      throw new UnrecoverableError('room-grace jobs are not wired in this process');
+    }
+    return processors.roomGrace(parsed.data);
   }
   throw new UnrecoverableError(`unknown focus-session job "${name}"`);
 };

@@ -33,6 +33,13 @@ export const redisKeys = {
   roomTimer: (roomId: string) => `room:${roomId}:timer`,
   /** Sorted set: roomId scored by `endsAtMs` of every running timer (the reconciler, RT12). */
   runningTimers: `rooms:timers:running`,
+  /** Hash: one focus run's record `status, closeReason, openedAtMs, closedAtMs, elapsedAtCloseMs` (Phase 8, RF3). */
+  roomRun: (roomId: string, runId: string) => `room:${roomId}:run:${runId}`,
+  /** Hash: userId -> JSON ledger entry of the run's participants (Phase 8, RF3). */
+  roomRunParticipants: (roomId: string, runId: string) =>
+    `room:${roomId}:run:${runId}:participants`,
+  /** Sorted set: `{roomId}:{runId}` of every closed, not yet settled run, scored by `closedAtMs` (RF3). */
+  unsettledRuns: `rooms:runs:unsettled`,
   roomKnocks: (roomId: string) => `room:${roomId}:knocks`,
   /**
    * `SET NX` marker holding `messageId:sentAtMs` for 60 s (M8), per user, room and client

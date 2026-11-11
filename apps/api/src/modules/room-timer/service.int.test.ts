@@ -399,6 +399,7 @@ describe('completePhase', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: nowMs - durationMs - offsetMs,
       version,
+      focusRunId: null,
     };
     await redis.del(redisKeys.roomTimer(roomId));
     expect(await store.write(roomId, null, state)).toBe('ok');
@@ -447,6 +448,7 @@ describe('completePhase', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: null,
       version: 901,
+      focusRunId: null,
     });
     expect(await redis.zscore(redisKeys.runningTimers, roomId)).toBeNull();
     expect(changes.map((change) => change.cause)).toEqual(['phase_end']);
@@ -548,6 +550,7 @@ describe('write conflicts', () => {
       elapsedBeforeMs: 0,
       segmentStartedAtMs: nowMs - 61_000,
       version: 40,
+      focusRunId: null,
     });
     const { service, counts, changes } = withWrapper(() => Promise.resolve('conflict'));
     await expect(service.completePhase(roomId, 40)).rejects.toThrow(/kept conflicting/);
@@ -571,5 +574,213 @@ describe('write conflicts', () => {
     expect(counts.writes).toBe(1);
     expect(counts.reads).toBe(2);
     expect(changes).toHaveLength(0);
+  });
+});
+
+describe('focus runs (Phase 8, RF2, RF3)', () => {
+  const runRecord = (roomId: string, runId: string): Promise<Record<string, string>> =>
+    redis.hgetall(redisKeys.roomRun(roomId, runId));
+  const unsettled = (): Promise<string[]> => redis.zrange(redisKeys.unsettledRuns, 0, '-1');
+
+  it('creates the first run with the timer: id on the state, open record, announced on the change', async () => {
+    const { roomId, service, changes } = await newRoom();
+    const created = must(await service.get(roomId));
+    const runId = must(created.state.focusRunId);
+    expect(runId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(await runRecord(roomId, runId)).toEqual({
+      status: 'open',
+      openedAtMs: String(created.nowMs),
+    });
+    expect(changes[0]?.runs).toEqual({ open: { runId, openedAtMs: created.nowMs } });
+    expect(await unsettled()).toEqual([]);
+  });
+
+  it('keeps the run through start, pause and resume, writing no run effects', async () => {
+    const { roomId, service, changes } = await newRoom();
+    const created = must(await service.get(roomId));
+    for (const type of ['start', 'pause', 'resume'] as const) {
+      const outcome = await okState(service, roomId, { type });
+      expect(outcome.state.focusRunId).toBe(created.state.focusRunId);
+    }
+    expect(changes.slice(1).every((change) => change.runs === undefined)).toBe(true);
+    expect(await unsettled()).toEqual([]);
+  });
+
+  it('a reset closes the run with its elapsed time and opens a new one, in one write', async () => {
+    const { roomId, service, changes } = await newRoom();
+    const created = must(await service.get(roomId));
+    const oldRun = must(created.state.focusRunId);
+    await okState(service, roomId, { type: 'start' });
+    const paused = await okState(service, roomId, { type: 'pause' });
+    const reset = await okState(service, roomId, {
+      type: 'reset',
+      expectedVersion: paused.state.version,
+    });
+    const newRun = must(reset.state.focusRunId);
+    expect(newRun).not.toBe(oldRun);
+
+    expect(await runRecord(roomId, oldRun)).toMatchObject({
+      status: 'closed',
+      closeReason: 'reset',
+      closedAtMs: String(reset.nowMs),
+      elapsedAtCloseMs: String(paused.state.elapsedBeforeMs),
+    });
+    expect(await runRecord(roomId, newRun)).toMatchObject({ status: 'open' });
+    expect(await unsettled()).toEqual([`${roomId}:${oldRun}`]);
+    expect((await store.read(roomId)).state?.focusRunId).toBe(newRun);
+    expect(changes.at(-1)?.runs).toMatchObject({
+      close: { runId: oldRun, reason: 'reset' },
+      open: { runId: newRun },
+    });
+  });
+
+  it('a reset of an idle timer still closes the run and opens a new one', async () => {
+    const { roomId, service } = await newRoom();
+    const created = must(await service.get(roomId));
+    const reset = await okState(service, roomId, {
+      type: 'reset',
+      expectedVersion: created.state.version,
+    });
+    expect(reset.state.focusRunId).not.toBe(created.state.focusRunId);
+    expect(await unsettled()).toEqual([`${roomId}:${must(created.state.focusRunId)}`]);
+  });
+
+  it('setPhase away from focus closes the run (phase_changed) and the break has none; back to focus opens one', async () => {
+    const { roomId, service } = await newRoom();
+    const created = must(await service.get(roomId));
+    const oldRun = must(created.state.focusRunId);
+    const toBreak = await okState(service, roomId, {
+      type: 'setPhase',
+      phase: 'short_break',
+      expectedVersion: created.state.version,
+    });
+    expect(toBreak.state.focusRunId).toBeNull();
+    expect(await runRecord(roomId, oldRun)).toMatchObject({
+      status: 'closed',
+      closeReason: 'phase_changed',
+    });
+    const back = await okState(service, roomId, {
+      type: 'setPhase',
+      phase: 'focus',
+      expectedVersion: toBreak.state.version,
+    });
+    const next = must(back.state.focusRunId);
+    expect(await runRecord(roomId, next)).toMatchObject({ status: 'open' });
+    expect(await unsettled()).toEqual([`${roomId}:${oldRun}`]);
+  });
+
+  it('a focus phase end closes the run as completed with the full duration, leaving no run in the break', async () => {
+    const { roomId, service, changes } = await newRoom();
+    const created = must(await service.get(roomId));
+    const runId = must(created.state.focusRunId);
+    const nowMs = await redisTimeMs(redis);
+    await redis.del(redisKeys.roomTimer(roomId));
+    await store.write(roomId, null, {
+      phase: 'focus',
+      status: 'running',
+      durationMs: 60_000,
+      elapsedBeforeMs: 0,
+      segmentStartedAtMs: nowMs - 61_000,
+      version: 800,
+      focusRunId: runId,
+    });
+    const outcome = await service.completePhase(roomId, 800);
+    expect(outcome.result).toBe('advanced');
+    expect((await store.read(roomId)).state).toMatchObject({
+      phase: 'short_break',
+      status: 'idle',
+      focusRunId: null,
+    });
+    expect(await runRecord(roomId, runId)).toMatchObject({
+      status: 'closed',
+      closeReason: 'completed',
+      elapsedAtCloseMs: '60000',
+    });
+    expect(await unsettled()).toEqual([`${roomId}:${runId}`]);
+    expect(changes.at(-1)).toMatchObject({
+      cause: 'phase_end',
+      runs: { close: { runId, reason: 'completed', elapsedAtCloseMs: 60_000 } },
+    });
+    expect(changes.at(-1)?.runs?.open).toBeUndefined();
+  });
+
+  it('a break end opens a new focus run', async () => {
+    const { roomId, service, changes } = await newRoom();
+    await service.get(roomId);
+    const nowMs = await redisTimeMs(redis);
+    await redis.del(redisKeys.roomTimer(roomId));
+    await store.write(roomId, null, {
+      phase: 'short_break',
+      status: 'running',
+      durationMs: 60_000,
+      elapsedBeforeMs: 0,
+      segmentStartedAtMs: nowMs - 61_000,
+      version: 810,
+      focusRunId: null,
+    });
+    expect((await service.completePhase(roomId, 810)).result).toBe('advanced');
+    const state = must((await store.read(roomId)).state);
+    expect(state.phase).toBe('focus');
+    const runId = must(state.focusRunId);
+    expect(await runRecord(roomId, runId)).toMatchObject({ status: 'open' });
+    expect(changes.at(-1)?.runs).toMatchObject({ open: { runId } });
+    expect(changes.at(-1)?.runs?.close).toBeUndefined();
+  });
+
+  it('closes exactly one run when identical resets race, leaving one unsettled entry', async () => {
+    const { roomId, service, changes } = await newRoom();
+    const started = await okState(service, roomId, { type: 'start' });
+    const oldRun = must(started.state.focusRunId);
+    const outcomes = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        service.command(roomId, { type: 'reset', expectedVersion: started.state.version }),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(1);
+    expect(await unsettled()).toEqual([`${roomId}:${oldRun}`]);
+    expect(changes.filter((change) => change.runs?.close !== undefined)).toHaveLength(1);
+    const raw = new Redis(redisContainer.getConnectionUrl());
+    const all = await raw.keys(`ff-test:room:${roomId}:run:*`).finally(() => {
+      raw.disconnect();
+    });
+    const keys = all.filter((key) => !key.endsWith(':participants'));
+    // The old run and exactly one successor.
+    expect(keys).toHaveLength(2);
+  });
+
+  it('a lost write leaves no run behind', async () => {
+    const { roomId, service: plain } = await newRoom();
+    const created = must(await plain.get(roomId));
+    const generated: string[] = [];
+    const { logger } = createStubLogger();
+    const service = createRoomTimerService({
+      store: { ...store, write: () => Promise.resolve('conflict') },
+      readSettings: createTimerSettingsReader(db),
+      logger,
+      newRunId: () => {
+        const id = uuidv7();
+        generated.push(id);
+        return id;
+      },
+    });
+    const outcome = await service.command(roomId, {
+      type: 'reset',
+      expectedVersion: created.state.version,
+    });
+    expect(outcome).toMatchObject({ ok: false, code: 'VERSION_CONFLICT' });
+    expect(generated.length).toBeGreaterThan(0);
+    for (const id of generated) {
+      expect(await redis.exists(redisKeys.roomRun(roomId, id))).toBe(0);
+    }
+    expect(await unsettled()).toEqual([]);
+  });
+
+  it('uses a fresh id on each creation, including the recreation after a Redis loss', async () => {
+    const { roomId, service } = await newRoom();
+    const first = must(must(await service.get(roomId)).state.focusRunId);
+    await redis.flushall();
+    const second = must(must(await service.get(roomId)).state.focusRunId);
+    expect(second).not.toBe(first);
+    expect((await redis.hgetall(redisKeys.roomRun(roomId, second))).status).toBe('open');
   });
 });

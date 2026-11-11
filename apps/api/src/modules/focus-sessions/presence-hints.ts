@@ -43,8 +43,8 @@ const checkPresence = async (
 /** The user's running solo session, if any (a paused one gets no marker and no grace). */
 const runningSessionOf = async (deps: PresenceHintDeps, userId: string) => {
   const row = await findInProgressSession(deps.db, userId);
-  if (row === undefined) {
-    return undefined;
+  if (row === undefined || row.roomId !== null) {
+    return undefined; // A room session has its own grace (RF7, RF11).
   }
   const session = toSoloSession(row);
   return isRunning(session) ? { id: row.id, session } : undefined;

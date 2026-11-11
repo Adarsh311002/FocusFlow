@@ -49,6 +49,9 @@ const idleIn = (phase: TimerPhase, settings: TimerSettings, version: number): Ti
   elapsedBeforeMs: 0,
   segmentStartedAtMs: null,
   version,
+  // The service assigns a run id for a focus phase (`planRun`, Phase 8); the pure machine
+  // never invents one.
+  focusRunId: null,
 });
 
 const elapsedMs = (state: TimerState, nowMs: number): number => {
@@ -138,6 +141,7 @@ export const createTimerMachine = (): TimerMachine => {
       segmentStartedAtMs: isRunning ? state.segmentStartedAtMs : null,
       endsAtMs: isRunning ? endsAtMs(state) : null,
       version: state.version,
+      focusRunId: state.focusRunId as TimerView['focusRunId'],
     };
   };
 

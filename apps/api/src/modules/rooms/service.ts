@@ -15,7 +15,7 @@ import type { Db } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/pg-errors.js';
 import { AppError, appError } from '../../platform/http/errors.js';
 import { generateRoomCode } from './code.js';
-import type { RoomLive } from './ports.js';
+import type { RoomFocusDepartures, RoomLive } from './ports.js';
 import {
   deleteMembership,
   findMember,
@@ -46,6 +46,11 @@ export type RoomsDeps = {
   readonly db: Db;
   readonly live: RoomLive;
   readonly logger: Logger;
+  /**
+   * Abandons a leaving or removed member's room focus session (Phase 8, RF8). Optional so a
+   * deployment or test without room focus keeps working; the runtime always provides it.
+   */
+  readonly focus?: RoomFocusDepartures;
   /** Test seam: the room code generator (defaults to `generateRoomCode`). */
   readonly generateCode?: () => string;
 };
@@ -289,6 +294,29 @@ export const joinRoom = async (
   return result;
 };
 
+/**
+ * Deletes the membership and, in the SAME transaction, abandons the person's room focus
+ * session (RF8): either both happen or neither. The session's ledger entry and the
+ * announcements follow the commit. Returns whether a membership row was deleted.
+ */
+const deleteMembershipAndAbandon = async (
+  deps: RoomsDeps,
+  roomId: string,
+  userId: string,
+  reason: 'left_room' | 'removed',
+): Promise<boolean> => {
+  const departure = await deps.focus?.beginDeparture(userId, roomId, reason);
+  const deleted = await deps.db.transaction(async (tx) => {
+    const removed = await deleteMembership(tx, roomId, userId);
+    await departure?.commit(tx);
+    return removed;
+  });
+  if (departure !== undefined) {
+    await afterCommit(deps, 'focusDeparture', roomId, () => departure.afterCommit());
+  }
+  return deleted;
+};
+
 export const leaveRoom = async (deps: RoomsDeps, userId: string, roomId: string): Promise<void> => {
   const room = await findRoomById(deps.db, roomId);
   if (room === undefined) {
@@ -297,7 +325,7 @@ export const leaveRoom = async (deps: RoomsDeps, userId: string, roomId: string)
   if (room.hostId === userId) {
     throw appError('HOST_CANNOT_LEAVE', 'The host cannot leave their own room.');
   }
-  if (await deleteMembership(deps.db, roomId, userId)) {
+  if (await deleteMembershipAndAbandon(deps, roomId, userId, 'left_room')) {
     await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
       deps.live.announceMemberRemoved(roomId, userId, 'left'),
     );
@@ -314,7 +342,7 @@ export const removeMember = async (
   if (room.hostId === targetUserId) {
     throw appError('CANNOT_REMOVE_HOST', 'The host cannot be removed from their own room.');
   }
-  if (await deleteMembership(deps.db, roomId, targetUserId)) {
+  if (await deleteMembershipAndAbandon(deps, roomId, targetUserId, 'removed')) {
     await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
       deps.live.announceMemberRemoved(roomId, targetUserId, 'removed'),
     );
@@ -403,7 +431,16 @@ const approveKnockOnce = async (
     // "rejected", so undo the membership this call created. A call that only found an
     // existing membership (a concurrent approve created it) keeps it if still there.
     if (result.created) {
-      await deleteMembership(deps.db, roomId, targetUserId);
+      // The requester may already have joined the room's sockets and opted into the focus
+      // run, so this is a removal like any other: the same departure path (RF8) abandons
+      // their room focus session ('removed': the host's rejection revokes the membership)
+      // in the deleting transaction, then evicts their sockets. Announcements follow the
+      // commit and never mask the rejection.
+      if (await deleteMembershipAndAbandon(deps, roomId, targetUserId, 'removed')) {
+        await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
+          deps.live.announceMemberRemoved(roomId, targetUserId, 'removed'),
+        );
+      }
     } else if ((await findMembershipJoinedAt(deps.db, roomId, targetUserId)) !== undefined) {
       return result;
     }

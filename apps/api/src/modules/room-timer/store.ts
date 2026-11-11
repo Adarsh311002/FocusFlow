@@ -12,10 +12,15 @@ import type { RoomTimerStore, TimerRead, TimerState } from './types.js';
 // in the one small script below, which compares the stored version and writes: it holds no
 // timer rules (those are the pure machine's).
 
-// KEYS: the timer hash, the running index. ARGV: expected version ('' = the key must not
-// exist), the roomId, the six fields (phase, status, durationMs, elapsedBeforeMs,
-// segmentStartedAtMs or '', version), endsAtMs or '' (not running).
-// Replies 1 on success and 0 on a version conflict.
+// KEYS: the timer hash, the running index, the unsettled-runs index, then (only when the
+// change closes a run) the closed run's record, then (only when it opens one) the new run's
+// record. ARGV: expected version ('' = the key must not exist), the roomId, the seven
+// fields (phase, status, durationMs, elapsedBeforeMs, segmentStartedAtMs or '', version,
+// focusRunId or ''), endsAtMs or '' (not running), then the run effects: '1' or '' (close),
+// the close reason, closedAtMs, elapsedAtCloseMs, the unsettled member `{roomId}:{runId}`,
+// '1' or '' (open), openedAtMs. Replies 1 on success and 0 on a version conflict, in which
+// case nothing at all was written (RF3): the script holds no rules, only the check, the
+// copy of precomputed values and the two indexes.
 const WRITE_SCRIPT = `
 if ARGV[1] == '' then
   if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
@@ -25,11 +30,23 @@ else
 end
 redis.call('HSET', KEYS[1],
   'phase', ARGV[3], 'status', ARGV[4], 'durationMs', ARGV[5],
-  'elapsedBeforeMs', ARGV[6], 'segmentStartedAtMs', ARGV[7], 'version', ARGV[8])
-if ARGV[9] == '' then
+  'elapsedBeforeMs', ARGV[6], 'segmentStartedAtMs', ARGV[7], 'version', ARGV[8],
+  'focusRunId', ARGV[9])
+if ARGV[10] == '' then
   redis.call('ZREM', KEYS[2], ARGV[2])
 else
-  redis.call('ZADD', KEYS[2], ARGV[9], ARGV[2])
+  redis.call('ZADD', KEYS[2], ARGV[10], ARGV[2])
+end
+local next_key = 4
+if ARGV[11] == '1' then
+  redis.call('HSET', KEYS[next_key],
+    'status', 'closed', 'closeReason', ARGV[12], 'closedAtMs', ARGV[13],
+    'elapsedAtCloseMs', ARGV[14])
+  redis.call('ZADD', KEYS[3], ARGV[13], ARGV[15])
+  next_key = next_key + 1
+end
+if ARGV[16] == '1' then
+  redis.call('HSET', KEYS[next_key], 'status', 'open', 'openedAtMs', ARGV[17])
 end
 return 1
 `;
@@ -52,6 +69,11 @@ const hashSchema = z
     // '' is how the script stores "not running" (a hash field cannot be null).
     segmentStartedAtMs: z.union([z.literal('').transform(() => null), count]),
     version: count,
+    // '' = no run (a break); a hash written before Phase 8 has no field at all.
+    focusRunId: z
+      .string()
+      .default('')
+      .transform((value) => (value === '' ? null : value)),
   })
   .refine(
     (hash) =>
@@ -114,16 +136,24 @@ export const createRoomTimerStore = (redis: Redis): RoomTimerStore => ({
     };
   },
 
-  write: async (roomId, expectedVersion, next) => {
+  write: async (roomId, expectedVersion, next, runs) => {
     const endsAtMs =
       next.status === 'running' && next.segmentStartedAtMs !== null
         ? next.segmentStartedAtMs + next.durationMs - next.elapsedBeforeMs
         : null;
+    const close = runs?.close;
+    const open = runs?.open;
+    const runKeys = [
+      ...(close === undefined ? [] : [redisKeys.roomRun(roomId, close.runId)]),
+      ...(open === undefined ? [] : [redisKeys.roomRun(roomId, open.runId)]),
+    ];
     const reply: unknown = await redis.eval(
       WRITE_SCRIPT,
-      2,
+      3 + runKeys.length,
       redisKeys.roomTimer(roomId),
       redisKeys.runningTimers,
+      redisKeys.unsettledRuns,
+      ...runKeys,
       expectedVersion === null ? '' : String(expectedVersion),
       roomId,
       next.phase,
@@ -132,7 +162,15 @@ export const createRoomTimerStore = (redis: Redis): RoomTimerStore => ({
       String(next.elapsedBeforeMs),
       next.segmentStartedAtMs === null ? '' : String(next.segmentStartedAtMs),
       String(next.version),
+      next.focusRunId ?? '',
       endsAtMs === null ? '' : String(endsAtMs),
+      close === undefined ? '' : '1',
+      close?.reason ?? '',
+      String(close?.closedAtMs ?? ''),
+      String(close?.elapsedAtCloseMs ?? ''),
+      close === undefined ? '' : `${roomId}:${close.runId}`,
+      open === undefined ? '' : '1',
+      String(open?.openedAtMs ?? ''),
     );
     if (reply !== 0 && reply !== 1) {
       throw new Error('unexpected Redis script reply');

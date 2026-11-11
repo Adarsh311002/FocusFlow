@@ -40,15 +40,29 @@ export type RoomPresence = {
   ) => Promise<{ readonly added: number; readonly removed: number }>;
   /** Removes an instance's room entries (dead, or a clean shutdown) and announces who left. */
   readonly removeInstance: (instanceId: string) => Promise<void>;
+  /** Whether the user has another live socket in the room than the given socket. */
+  readonly hasOtherSocket: (ref: RoomSocketRef) => Promise<boolean>;
+};
+
+/**
+ * Called after the presence change itself, for the focus-run integration (Phase 8). Both are
+ * hints that may fail or repeat: the implementation logs and never throws.
+ */
+export type PresenceHooks = {
+  /** The user's last live socket in the room is gone (disconnect, sync, dead instance, eviction). */
+  readonly userLeft: (users: readonly UserInRoom[]) => void;
+  /** A sync found a socket in a room whose user was not present (the user became present). */
+  readonly userJoined: (socket: LocalRoomSocket) => void;
 };
 
 type Deps = {
   readonly store: RoomPresenceStore;
   readonly emitter: SocketEmitter;
   readonly logger: Logger;
+  readonly hooks?: PresenceHooks;
 };
 
-export const createRoomPresence = ({ store, emitter, logger }: Deps): RoomPresence => {
+export const createRoomPresence = ({ store, emitter, logger, hooks }: Deps): RoomPresence => {
   const announceJoined = (socket: LocalRoomSocket): void => {
     try {
       emitter
@@ -68,6 +82,9 @@ export const createRoomPresence = ({ store, emitter, logger }: Deps): RoomPresen
   };
 
   const announceLeft = (users: readonly UserInRoom[]): void => {
+    if (users.length > 0) {
+      hooks?.userLeft(users);
+    }
     for (const { roomId, userId } of users) {
       try {
         emitter.to(roomRoom(roomId)).emit('room:presence:left', {
@@ -113,6 +130,7 @@ export const createRoomPresence = ({ store, emitter, logger }: Deps): RoomPresen
         for (const { socket, first } of result.joined) {
           if (first) {
             announceJoined(socket);
+            hooks?.userJoined(socket);
           }
         }
         announceLeft(result.left);
@@ -129,6 +147,8 @@ export const createRoomPresence = ({ store, emitter, logger }: Deps): RoomPresen
     removeInstance: async (instanceId) => {
       announceLeft(await store.removeInstance(instanceId));
     },
+
+    hasOtherSocket: (ref) => store.hasOtherLiveSocket(ref),
   };
 };
 

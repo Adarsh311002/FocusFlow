@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 
 import type { Executor, Tx } from '../../db/client.js';
 import { focusSessions, tasks } from '../../db/schema.js';
@@ -170,6 +170,8 @@ export const listInProgressSessionKeys = async (
     .where(
       and(
         eq(focusSessions.status, 'in_progress'),
+        // Solo sweeps never touch a room session (RF11): the room reconciler owns those.
+        isNull(focusSessions.roomId),
         page.afterUserId === null ? undefined : gt(focusSessions.userId, page.afterUserId),
         page.running === true ? isNotNull(focusSessions.runningSince) : undefined,
         page.startedBeforeMs === undefined
