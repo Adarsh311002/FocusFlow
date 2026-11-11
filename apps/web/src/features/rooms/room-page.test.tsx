@@ -628,6 +628,35 @@ describe('leaving and being removed', () => {
     expect(await screen.findByText(/You are not in any rooms yet/)).not.toBeNull();
   });
 
+  it('"Leave permanently" still goes back when the server\'s removal event beats the DELETE answer', async () => {
+    const { world, room } = await openRoom({ hostId: GRACE_ID, memberIds: [] });
+    await screen.findByText('You are in the room.');
+    fireEvent.click(screen.getByRole('button', { name: 'Leave permanently' }));
+    const release = world.hold(
+      (request) =>
+        request.method === 'DELETE' && request.url.endsWith(`/rooms/${room.id}/membership`),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, leave permanently' }));
+    await waitFor(() => {
+      expect(requests(world, 'DELETE', `/rooms/${room.id}/membership`)).toHaveLength(1);
+    });
+
+    // The server deleted the membership and told the socket first: the room page is replaced
+    // (its leave button unmounts) before the HTTP answer arrives.
+    act(() => {
+      world.client.push('room:member:removed', { roomId: room.id, userId: ME, reason: 'left' });
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'You are no longer in this room' }),
+    ).not.toBeNull();
+    release();
+
+    expect(await screen.findByRole('heading', { name: 'My rooms' })).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Room not available' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'You are no longer in this room' })).toBeNull();
+    expect(await screen.findByText(/You are not in any rooms yet/)).not.toBeNull();
+  });
+
   it('can cancel leaving permanently', async () => {
     const { world, room } = await openRoom({ hostId: GRACE_ID, memberIds: [] });
     await screen.findByText('You are in the room.');

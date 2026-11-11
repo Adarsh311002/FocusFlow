@@ -174,6 +174,7 @@ describe('timer commands', () => {
     segmentStartedAtMs: 1_000,
     endsAtMs: 1_501_000,
     version: 1_001,
+    focusRunId: '0192f8a0-1111-7aaa-8bbb-000000000001',
   };
 
   it('sends only the room and the command, and validates an accepted answer', async () => {
@@ -246,5 +247,58 @@ describe('timer commands', () => {
     serverSends('room:timer:state', { roomId: ROOM_ID, timer });
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ name: 'room:timer:state' });
+  });
+});
+
+describe('room focus events', () => {
+  const RUN = '0192f8a0-1111-7aaa-8bbb-000000000001';
+  const participant = {
+    userId: USER_ID,
+    displayName: 'Ada Lovelace',
+    avatarUrl: null,
+    optedInAtMs: 1_000,
+    connected: false,
+    disconnectedAtMs: 2_000,
+  };
+
+  it('delivers validated room:focus:participants events and drops malformed ones', () => {
+    const { client, serverSends } = setup();
+    const seen: RoomServerEvent[] = [];
+    client.onRoomEvent((event) => seen.push(event));
+    serverSends('room:focus:participants', {
+      roomId: ROOM_ID,
+      focusRunId: RUN,
+      participants: [participant],
+      participantsVersion: 3,
+    });
+    // A break has no run.
+    serverSends('room:focus:participants', {
+      roomId: ROOM_ID,
+      focusRunId: null,
+      participants: [],
+      participantsVersion: 0,
+    });
+    serverSends('room:focus:participants', {
+      roomId: ROOM_ID,
+      focusRunId: 'not-a-uuid',
+      participants: [],
+      participantsVersion: 1,
+    });
+    // No server version: not an event this client can order, so it is dropped (G2).
+    serverSends('room:focus:participants', {
+      roomId: ROOM_ID,
+      focusRunId: RUN,
+      participants: [],
+    });
+    serverSends('room:focus:participants', {
+      roomId: ROOM_ID,
+      focusRunId: RUN,
+      participants: [{ ...participant, connected: 'yes' }],
+      participantsVersion: 4,
+    });
+    expect(seen.map((event) => event.name)).toEqual([
+      'room:focus:participants',
+      'room:focus:participants',
+    ]);
   });
 });

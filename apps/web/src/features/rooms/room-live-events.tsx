@@ -1,3 +1,4 @@
+import type { RoomId } from '@focus-flow/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
@@ -19,6 +20,14 @@ export function RoomLiveEvents({ client, userId }: { client: RealtimeClient; use
     const invalidate = (queryKey: readonly unknown[]): void => {
       void queryClient.invalidateQueries({ queryKey });
     };
+    // A "you were removed" notice outlives the page that would show it. When the user becomes
+    // a member again before seeing it, it must not block the room they now belong to.
+    const forgetRemoval = (roomId: RoomId): void => {
+      const store = getRoomLiveStore(roomId);
+      if (store.getState().removed !== null) {
+        store.getState().reset();
+      }
+    };
     const off = client.onRoomEvent((event) => {
       switch (event.name) {
         case 'room:presence:joined':
@@ -31,10 +40,19 @@ export function RoomLiveEvents({ client, userId }: { client: RealtimeClient; use
           // Applied only if newer than the held state; the store enforces it (RT2).
           getRoomLiveStore(event.payload.roomId).getState().timerReceived(event.payload.timer);
           return;
+        case 'room:focus:participants':
+          // Applied by run id; the store drops events about a run it already replaced.
+          getRoomLiveStore(event.payload.roomId)
+            .getState()
+            .focusParticipantsReceived(event.payload);
+          return;
         case 'room:chat:message':
           getRoomLiveStore(event.payload.roomId).getState().chatReceived(event.payload);
           return;
         case 'room:member:joined':
+          if (event.payload.member.userId === userId) {
+            forgetRemoval(event.payload.roomId);
+          }
           invalidate(roomKeys.members(userId, event.payload.roomId));
           return;
         case 'room:member:removed': {
@@ -67,6 +85,9 @@ export function RoomLiveEvents({ client, userId }: { client: RealtimeClient; use
           const { roomId, outcome } = event.payload;
           useKnockStore.getState().outgoingResolved(roomId, outcome);
           if (outcome === 'approved') {
+            // A removal recorded earlier (for example the undone half of an approval that was
+            // compensated) is not true of this membership.
+            forgetRemoval(roomId);
             // They are a member now: the new room belongs in "My rooms".
             invalidate(roomKeys.list(userId));
           }

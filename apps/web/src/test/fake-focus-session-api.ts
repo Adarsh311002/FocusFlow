@@ -1,4 +1,5 @@
 import {
+  type AbandonReason,
   API_BASE_PATH,
   authPaths,
   calendarDatesFrom,
@@ -24,7 +25,7 @@ import {
 /** A session body as the API sends it (unbranded; the client's schemas brand it). */
 export type FakeSession = {
   id: string;
-  context: { kind: 'solo' };
+  context: { kind: 'solo' } | { kind: 'room'; roomId: string; focusRunId: string };
   task: { id: string; title: string; deleted: boolean } | null;
   plannedSeconds: number;
   focusedSeconds: number;
@@ -32,7 +33,7 @@ export type FakeSession = {
 } & (
   | { status: 'in_progress'; runningSince: string | null }
   | { status: 'completed'; endedAt: string }
-  | { status: 'abandoned'; endedAt: string; abandonReason: 'stopped' | 'grace_expired' | 'expired' }
+  | { status: 'abandoned'; endedAt: string; abandonReason: AbandonReason }
 );
 
 export type FakeSummaryDay = {

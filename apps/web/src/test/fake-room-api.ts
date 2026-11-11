@@ -40,6 +40,31 @@ export const NAMES: Record<string, string> = {
   [LINUS_ID]: 'Linus Torvalds',
 };
 
+/** The focus run every default fixture is in (a valid UUID, as the contract requires). */
+export const RAW_RUN_ID = '0192f8a0-1111-7aaa-8bbb-000000000001';
+export const RAW_NEXT_RUN_ID = '0192f8a0-2222-7aaa-8bbb-000000000002';
+
+/** A room focus session body as the API sends it (unbranded; the client's schemas brand it). */
+export type FakeRoomFocusSession = {
+  id: string;
+  context: { kind: 'room'; roomId: string; focusRunId: string } | { kind: 'solo' };
+  task: { id: string; title: string; deleted: boolean } | null;
+  plannedSeconds: number;
+  focusedSeconds: number;
+  startedAt: string;
+  status: 'in_progress';
+  runningSince: null;
+};
+
+export type FakeFocusParticipant = {
+  userId: string;
+  displayName: string;
+  avatarUrl: null;
+  optedInAtMs: number;
+  connected: boolean;
+  disconnectedAtMs: number | null;
+};
+
 const CODES = ['ABC234', 'DEF567', 'GHJ789', 'KMN234', 'PQR567'];
 
 /**
@@ -50,6 +75,17 @@ const CODES = ['ABC234', 'DEF567', 'GHJ789', 'KMN234', 'PQR567'];
  */
 export function createFakeRoomApi() {
   const rooms: FakeRoom[] = [];
+  const tasks: Array<{ id: string; title: string }> = [];
+  // The signed-in user's side of room focus runs (Phase 8), shared by every room of the fake.
+  const focus: {
+    runId: string | null;
+    participants: FakeFocusParticipant[];
+    /** The user's in-progress session in the room being asked about. */
+    session: FakeRoomFocusSession | null;
+    /** Another in-progress session of the user (solo, or in another room). */
+    other: FakeRoomFocusSession | null;
+    lastEnded: Record<string, unknown> | null;
+  } = { runId: RAW_RUN_ID, participants: [], session: null, other: null, lastEnded: null };
   let nextCode = 0;
   let override: ((request: RecordedRequest) => Response | undefined) | undefined;
 
@@ -113,6 +149,96 @@ export function createFakeRoomApi() {
   const isMember = (room: FakeRoom) => room.members.some((entry) => entry.userId === ME);
   const notFound = () => errorResponse(404, 'ROOM_NOT_FOUND', 'Room not found.');
 
+  const me = (overrides: Partial<FakeFocusParticipant> = {}): FakeFocusParticipant => ({
+    userId: ME,
+    displayName: NAMES[ME] ?? 'Someone',
+    avatarUrl: null,
+    optedInAtMs: Date.now(),
+    connected: true,
+    disconnectedAtMs: null,
+    ...overrides,
+  });
+
+  /** An in-progress room session of the signed-in user, as the server would record it. */
+  function roomSession(
+    room: FakeRoom,
+    options: { taskId?: string; plannedSeconds?: number; runId?: string } = {},
+  ): FakeRoomFocusSession {
+    const task = tasks.find((entry) => entry.id === options.taskId);
+    return {
+      id: crypto.randomUUID(),
+      context: {
+        kind: 'room',
+        roomId: room.id,
+        focusRunId: options.runId ?? focus.runId ?? RAW_RUN_ID,
+      },
+      task: task === undefined ? null : { ...task, deleted: false },
+      plannedSeconds: options.plannedSeconds ?? 1_500,
+      focusedSeconds: 0,
+      startedAt: new Date().toISOString(),
+      status: 'in_progress',
+      runningSince: null,
+    };
+  }
+
+  function focusState() {
+    return {
+      focusRunId: focus.runId,
+      participants: focus.participants,
+      me: {
+        participation:
+          focus.session === null || focus.runId === null
+            ? null
+            : { sessionId: focus.session.id, focusRunId: focus.runId },
+      },
+      session: focus.session,
+    };
+  }
+
+  function handleFocus(room: FakeRoom, request: RecordedRequest): Response {
+    if (request.method === 'GET') {
+      return jsonResponse(200, focusState());
+    }
+    if (request.method === 'POST') {
+      const existing = focus.session ?? focus.other;
+      if (existing !== null) {
+        return jsonResponse(409, {
+          error: {
+            code: 'SESSION_IN_PROGRESS',
+            message: 'Already in progress.',
+            details: { session: existing },
+          },
+        });
+      }
+      if (focus.runId === null) {
+        return errorResponse(409, 'NOT_FOCUS_PHASE', 'Not a focus phase.');
+      }
+      const taskId = parsedBody(request).taskId;
+      focus.session = roomSession(room, typeof taskId === 'string' ? { taskId } : {});
+      focus.participants = [...focus.participants, me()];
+      return jsonResponse(201, { session: focus.session });
+    }
+    if (request.method === 'DELETE') {
+      if (focus.session === null) {
+        return focus.lastEnded === null
+          ? errorResponse(404, 'NOT_FOUND', 'No session.')
+          : jsonResponse(200, { session: focus.lastEnded });
+      }
+      const ended = {
+        ...focus.session,
+        status: 'abandoned',
+        endedAt: new Date().toISOString(),
+        abandonReason: 'opted_out',
+      };
+      Reflect.deleteProperty(ended, 'runningSince');
+      focus.lastEnded = ended;
+      focus.session = null;
+      focus.participants = focus.participants.filter((entry) => entry.userId !== ME);
+      return jsonResponse(200, { session: ended });
+    }
+    return errorResponse(404, 'NOT_FOUND', 'Unhandled fake focus route.');
+  }
+
   function handle(request: RecordedRequest): Response {
     const overridden = override?.(request);
     if (overridden !== undefined) {
@@ -130,6 +256,16 @@ export function createFakeRoomApi() {
     }
     if (path === mePaths.self) {
       return jsonResponse(200, { user: userBody });
+    }
+    if (path === '/focus-sessions/current' && request.method === 'GET') {
+      return jsonResponse(200, { session: focus.session ?? focus.other });
+    }
+    if (segments[0] === 'tasks' && request.method === 'GET') {
+      const now = new Date().toISOString();
+      return jsonResponse(200, {
+        tasks: tasks.map((task) => ({ ...task, status: 'open', createdAt: now, updatedAt: now })),
+        nextCursor: null,
+      });
     }
     if (segments[0] !== 'rooms') {
       return errorResponse(404, 'NOT_FOUND', `Unhandled fake route ${request.method} ${path}`);
@@ -214,6 +350,9 @@ export function createFakeRoomApi() {
       room.members = room.members.filter((entry) => entry.userId !== ME);
       return noContentResponse();
     }
+    if (action === 'focus-participation') {
+      return handleFocus(room, request);
+    }
     if (action === 'timer-settings' && request.method === 'PATCH') {
       if (room.hostId !== ME) {
         return errorResponse(403, 'NOT_HOST', 'Only the host can do that.');
@@ -241,6 +380,15 @@ export function createFakeRoomApi() {
     handle,
     rooms,
     addRoom,
+    /** Open tasks of the signed-in user. */
+    addTask: (title: string) => {
+      const task = { id: crypto.randomUUID(), title };
+      tasks.push(task);
+      return task;
+    },
+    focus,
+    roomSession,
+    focusParticipant: me,
     view,
     setOverride: (next: typeof override) => {
       override = next;

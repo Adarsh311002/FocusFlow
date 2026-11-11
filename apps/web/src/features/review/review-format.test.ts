@@ -64,6 +64,30 @@ describe('sessionStatusLabel', () => {
       { status: 'abandoned', endedAt: '2026-03-09T22:00:00.000Z', abandonReason: 'expired' },
       'Expired',
     ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'opted_out' },
+      'Left the focus run',
+    ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'left_room' },
+      'Left the room',
+    ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'removed' },
+      'Removed from the room',
+    ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'reset' },
+      'Timer reset',
+    ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'phase_changed' },
+      'Phase changed',
+    ],
+    [
+      { status: 'abandoned', endedAt: '2026-03-09T10:10:00.000Z', abandonReason: 'timer_lost' },
+      'Timer lost',
+    ],
     [{ status: 'in_progress', runningSince: '2026-03-09T10:00:00.000Z' }, 'In progress'],
     [{ status: 'in_progress', runningSince: null }, 'Paused'],
   ] as const)('%o → %s', (overrides, expected) => {

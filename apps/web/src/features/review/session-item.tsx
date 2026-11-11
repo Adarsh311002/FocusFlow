@@ -1,4 +1,5 @@
 import type { FocusSessionView } from '@focus-flow/contracts';
+import { Link } from '@tanstack/react-router';
 
 import { formatDateTime, formatDuration, sessionStatusLabel } from './review-format';
 
@@ -28,6 +29,18 @@ export function SessionItem({
         </p>
         <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold">{status}</span>
       </div>
+      {session.context.kind === 'room' && (
+        <p className="text-slate-600">
+          {'Focused together in a room · '}
+          <Link
+            to="/rooms/$roomId"
+            params={{ roomId: session.context.roomId }}
+            className="underline"
+          >
+            Open the room
+          </Link>
+        </p>
+      )}
       <p>
         {`Focused ${formatDuration(session.focusedSeconds)} of ${formatDuration(session.plannedSeconds)} planned`}
         {running && (

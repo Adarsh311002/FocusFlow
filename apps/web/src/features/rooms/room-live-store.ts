@@ -1,7 +1,10 @@
 import type {
+  FocusRunId,
   KnockView,
   PresenceUser,
   RoomChatMessageEvent,
+  RoomFocusParticipantsEvent,
+  RoomFocusSnapshot,
   RoomId,
   RoomMemberRemovedEvent,
   RoomSnapshot,
@@ -18,6 +21,15 @@ import { create, createStore, type StoreApi, useStore } from 'zustand';
 
 /** Messages kept in memory per room; older ones scroll away for good (chat is temporary, D7). */
 export const MAX_CHAT_MESSAGES = 200;
+
+/**
+ * Who opted into the room's current focus run (Phase 8, RF12). Fed only by the join snapshot
+ * (authoritative, replaces everything) and by `room:focus:participants` events. Within the run
+ * shown, an event applies only when its server-owned `participantsVersion` is greater than the
+ * held one (G2); an event about a run this store already saw replaced is stale and ignored,
+ * and a new run always starts with an empty list (version 0).
+ */
+export type RoomFocusLive = RoomFocusSnapshot;
 
 export type JoinStatus = 'idle' | 'joining' | 'joined' | 'not_member' | 'failed';
 
@@ -45,6 +57,8 @@ export type RoomLiveState = {
    * and by newer-versioned `room:timer:state` events.
    */
   readonly timer: TimerView | null;
+  /** The current focus run and its participants; `null` until the first snapshot. */
+  readonly focus: RoomFocusLive | null;
   /** Set when this user's membership ended (removed by the host, or left elsewhere). */
   readonly removed: RoomMemberRemovedEvent['reason'] | null;
   readonly joining: () => void;
@@ -59,6 +73,8 @@ export type RoomLiveState = {
    * only when its version is greater than the held one. Other rooms' timers are ignored.
    */
   readonly timerReceived: (timer: TimerView) => void;
+  /** A `room:focus:participants` event, applied by run id (see `RoomFocusLive`). */
+  readonly focusParticipantsReceived: (event: RoomFocusParticipantsEvent) => void;
   readonly chatPending: (entry: ChatEntry) => void;
   readonly chatReceived: (event: RoomChatMessageEvent) => void;
   readonly chatSent: (
@@ -108,6 +124,7 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     presence: [],
     messages: [],
     timer: null,
+    focus: null,
     removed: null,
   } as const;
 
@@ -118,6 +135,30 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
   // The same for timer events (F3): the newest one seen since the request is replayed over the
   // snapshot, which wins unless the event's version is greater.
   let timerSinceRequest: TimerView | null = null;
+  // And for the focus participants (G2): per run, the event with the highest
+  // `participantsVersion` seen since the request. It is replayed over the snapshot only when it
+  // is about the run the joined state shows and is newer than the snapshot's list. Lists are
+  // full replacements, so only the newest per run matters; arrival order does not.
+  let focusSinceRequest = new Map<FocusRunId | null, RoomFocusParticipantsEvent>();
+  // Runs this store has seen replaced: an event about one of them is known to be stale (the
+  // version only orders states within one run). Cleared by every snapshot (authoritative).
+  let supersededRuns = new Set<FocusRunId>();
+
+  /** The focus state after the run changed to `runId`: an empty list and no participation. */
+  const switchedTo = (focus: RoomFocusLive | null, runId: FocusRunId | null): RoomFocusLive => {
+    if (focus !== null && focus.focusRunId === runId) {
+      return focus;
+    }
+    if (focus?.focusRunId !== null && focus?.focusRunId !== undefined) {
+      supersededRuns.add(focus.focusRunId);
+    }
+    return {
+      focusRunId: runId,
+      participants: [],
+      participantsVersion: 0,
+      me: { participation: null },
+    };
+  };
 
   return createStore<RoomLiveState>()((set) => ({
     roomId,
@@ -125,6 +166,7 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     joining: () => {
       sinceRequest = [];
       timerSinceRequest = null;
+      focusSinceRequest = new Map();
       set((state) => (state.joinStatus === 'joined' ? state : { joinStatus: 'joining' }));
     },
     joined: (snapshot) => {
@@ -132,8 +174,11 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
       // join (reconnect, resync) replaces whatever the events had built up.
       const replay = sinceRequest ?? [];
       const bufferedTimer = timerSinceRequest;
+      const bufferedFocus = focusSinceRequest;
       sinceRequest = null;
       timerSinceRequest = null;
+      focusSinceRequest = new Map();
+      supersededRuns = new Set();
       // The snapshot's timer replaces the held one whatever its version (RT2: after a Redis
       // loss a recreated timer's version is higher anyway); an event that arrived while the
       // request was out is replayed only if it is newer than the snapshot.
@@ -143,22 +188,42 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
         bufferedTimer.version > snapshot.timer.version
           ? bufferedTimer
           : snapshot.timer;
+      // A newer timer event may already be about another run than the snapshot's focus.
+      let focus: RoomFocusLive =
+        timer !== snapshot.timer ? switchedTo(snapshot.focus, timer.focusRunId) : snapshot.focus;
+      // A participants event received while the request was out is replayed over the snapshot
+      // when it is about the run now shown AND newer than the snapshot's list (the snapshot may
+      // have been read before it); an older one and one about any other run are dropped.
+      const replayFocus = bufferedFocus.get(focus.focusRunId);
+      if (
+        replayFocus !== undefined &&
+        replayFocus.participantsVersion > focus.participantsVersion
+      ) {
+        focus = {
+          ...focus,
+          participants: replayFocus.participants,
+          participantsVersion: replayFocus.participantsVersion,
+        };
+      }
       set({
         joinStatus: 'joined',
         joinError: null,
         presence: replay.reduce(applyPresenceOp, snapshot.presence),
         timer,
+        focus,
         removed: null,
       });
     },
     joinFailed: (status, message) => {
       sinceRequest = null;
       timerSinceRequest = null;
+      focusSinceRequest = new Map();
       set({ joinStatus: status, joinError: message });
     },
     disconnected: () => {
       sinceRequest = null;
       timerSinceRequest = null;
+      focusSinceRequest = new Map();
       set((state) => (state.joinStatus === 'idle' ? state : { joinStatus: 'idle' }));
     },
     presenceJoined: (user) => {
@@ -181,9 +246,59 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
       ) {
         timerSinceRequest = timer;
       }
-      set((state) =>
-        state.timer === null || timer.version > state.timer.version ? { timer } : state,
-      );
+      set((state) => {
+        if (state.timer !== null && timer.version <= state.timer.version) {
+          return state;
+        }
+        // The timer says which run is current: a different one empties the participants
+        // (its own list arrives with the next participants event or snapshot).
+        const runId = timer.focusRunId;
+        const focus =
+          state.focus === null || (runId !== null && supersededRuns.has(runId))
+            ? state.focus
+            : switchedTo(state.focus, runId);
+        return focus === state.focus ? { timer } : { timer, focus };
+      });
+    },
+    focusParticipantsReceived: (event) => {
+      if (event.roomId !== roomId) {
+        return;
+      }
+      if (sinceRequest !== null) {
+        const buffered = focusSinceRequest.get(event.focusRunId);
+        if (buffered === undefined || event.participantsVersion > buffered.participantsVersion) {
+          focusSinceRequest.set(event.focusRunId, event);
+        }
+      }
+      set((state) => {
+        const held = state.focus;
+        if (event.focusRunId !== null && supersededRuns.has(event.focusRunId)) {
+          return state;
+        }
+        // Within the run shown, only a newer list applies: a late, duplicate or reordered event
+        // never overwrites newer state (G2). Another run: handled below (a different run id
+        // always replaces, or is dropped when known to be superseded).
+        if (
+          event.focusRunId !== null &&
+          held?.focusRunId === event.focusRunId &&
+          event.participantsVersion <= held.participantsVersion
+        ) {
+          return state;
+        }
+        if (event.focusRunId === null) {
+          // A break: there is no run. Nothing to do if we already show none.
+          return held?.focusRunId === null ? state : { focus: switchedTo(held, null) };
+        }
+        const base = switchedTo(held, event.focusRunId);
+        return {
+          focus: {
+            focusRunId: event.focusRunId,
+            participants: event.participants,
+            participantsVersion: event.participantsVersion,
+            me: base.me,
+          },
+        };
+      });
     },
     chatPending: (entry) => {
       set((state) =>
@@ -268,11 +383,21 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     memberRemoved: (reason) => {
       sinceRequest = null;
       timerSinceRequest = null;
-      set({ removed: reason, joinStatus: 'idle', presence: [], messages: [], timer: null });
+      focusSinceRequest = new Map();
+      set({
+        removed: reason,
+        joinStatus: 'idle',
+        presence: [],
+        messages: [],
+        timer: null,
+        focus: null,
+      });
     },
     reset: () => {
       sinceRequest = null;
       timerSinceRequest = null;
+      focusSinceRequest = new Map();
+      supersededRuns = new Set();
       set({ ...initial });
     },
   }));

@@ -10,6 +10,7 @@ import { ChatPanel } from './chat-panel';
 import { KnockList } from './knock-list';
 import { MemberList } from './member-list';
 import { CopyCodeButton, HostBadge, PrivacyBadge } from './room-badges';
+import { RoomFocusPanel } from './room-focus-panel';
 import { getRoomLiveStore, useRoomLive } from './room-live-store';
 import { roomErrorMessage, socketErrorMessage } from './room-messages';
 import { useForgetRoom, useLeaveRoomPermanently, useRoom } from './room-queries';
@@ -112,6 +113,24 @@ function RoomActions({
     setError(socketErrorMessage(ack));
   }
 
+  /**
+   * Awaited here rather than passed to `mutate` as a per-call `onSuccess`: the server's own
+   * `room:member:removed` event can arrive before the DELETE answer and replace the room page,
+   * which unmounts this button, and TanStack Query drops per-call callbacks of an unmounted
+   * observer. A promise continuation does not depend on the component staying mounted. A
+   * failure is shown through `leavePermanently.error`.
+   */
+  async function leaveForGood(): Promise<void> {
+    try {
+      await leavePermanently.mutateAsync(room.id);
+    } catch {
+      return;
+    }
+    onLeaving();
+    await navigate({ to: '/rooms' });
+    forgetRoom(room.id);
+  }
+
   const shownError =
     error ?? (leavePermanently.error === null ? null : roomErrorMessage(leavePermanently.error));
 
@@ -151,14 +170,7 @@ function RoomActions({
               type="button"
               disabled={leavePermanently.isPending}
               onClick={() => {
-                leavePermanently.mutate(room.id, {
-                  onSuccess: () => {
-                    onLeaving();
-                    void navigate({ to: '/rooms' }).then(() => {
-                      forgetRoom(room.id);
-                    });
-                  },
-                });
+                void leaveForGood();
               }}
               className="rounded bg-red-700 px-3 py-1 text-white disabled:opacity-50"
             >
@@ -213,6 +225,8 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
       </header>
 
       <TimerPanel roomId={room.id} isHost={isHost} commands={timerCommands} rejoin={rejoin} />
+
+      <RoomFocusPanel roomId={room.id} currentUserId={user.id} refresh={refresh} />
 
       <MemberList roomId={room.id} isHost={isHost} currentUserId={user.id} />
 

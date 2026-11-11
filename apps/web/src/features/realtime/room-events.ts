@@ -3,6 +3,7 @@ import {
   errorCodeSchema,
   roomChatMessageEventSchema,
   roomChatSendResultSchema,
+  roomFocusParticipantsEventSchema,
   roomJoinResultSchema,
   roomKnockReceivedEventSchema,
   roomKnockRemovedEventSchema,
@@ -35,6 +36,7 @@ const serverEventSchemas = {
   'room:chat:message': roomChatMessageEventSchema,
   'room:resync': roomResyncEventSchema,
   'room:timer:state': roomTimerStateEventSchema,
+  'room:focus:participants': roomFocusParticipantsEventSchema,
 } as const;
 
 type ServerEventSchemas = typeof serverEventSchemas;

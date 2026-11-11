@@ -1,4 +1,13 @@
-import { type ErrorCode, type TimerView, timerViewSchema } from '@focus-flow/contracts';
+import {
+  type ErrorCode,
+  focusRunIdSchema,
+  type RoomFocusParticipant,
+  roomFocusParticipantSchema,
+  type RoomFocusSnapshot,
+  roomFocusSnapshotSchema,
+  type TimerView,
+  timerViewSchema,
+} from '@focus-flow/contracts';
 import { vi } from 'vitest';
 
 import type { RealtimeClient } from '../features/realtime/realtime-client';
@@ -16,7 +25,11 @@ import {
   type TimerAck,
 } from '../features/realtime/room-events';
 import type { FakeRoom } from './fake-room-api';
-import { NAMES } from './fake-room-api';
+import { NAMES, RAW_NEXT_RUN_ID, RAW_RUN_ID } from './fake-room-api';
+
+/** The default focus run and the one that follows it (branded, as the contract requires). */
+export const RUN_ID = focusRunIdSchema.parse(RAW_RUN_ID);
+export const NEXT_RUN_ID = focusRunIdSchema.parse(RAW_NEXT_RUN_ID);
 import { createStubRealtimeClient } from './realtime-stub';
 
 /** A failed acknowledgement, as the real client would hand it to a component. */
@@ -31,7 +44,10 @@ export const presenceUser = (userId: string) => ({
   avatarUrl: null,
 });
 
-/** A validated timer as the server would send it; an idle 25-minute focus phase by default. */
+/**
+ * A validated timer as the server would send it; an idle 25-minute focus phase (in the run
+ * `RUN_ID`) by default. A break has no run (RF2) unless the test says otherwise.
+ */
 export const timerView = (roomId: string, overrides: Partial<TimerView> = {}): TimerView =>
   timerViewSchema.parse({
     roomId,
@@ -42,6 +58,32 @@ export const timerView = (roomId: string, overrides: Partial<TimerView> = {}): T
     segmentStartedAtMs: null,
     endsAtMs: null,
     version: 1_000,
+    focusRunId: (overrides.phase ?? 'focus') === 'focus' ? RUN_ID : null,
+    ...overrides,
+  });
+
+/** A participant as the server sends it: connected, opted in a moment ago. */
+export const focusParticipant = (
+  userId: string,
+  overrides: Partial<RoomFocusParticipant> = {},
+): RoomFocusParticipant =>
+  roomFocusParticipantSchema.parse({
+    userId,
+    displayName: NAMES[userId] ?? 'Someone',
+    avatarUrl: null,
+    optedInAtMs: 1_000,
+    connected: true,
+    disconnectedAtMs: null,
+    ...overrides,
+  });
+
+/** A validated focus snapshot: the default run, nobody opted in, the caller not participating. */
+export const focusSnapshot = (overrides: Partial<RoomFocusSnapshot> = {}): RoomFocusSnapshot =>
+  roomFocusSnapshotSchema.parse({
+    focusRunId: RUN_ID,
+    participants: [],
+    participantsVersion: 0,
+    me: { participation: null },
     ...overrides,
   });
 
@@ -51,6 +93,7 @@ export function joinOk(
   presentIds: string[],
   pendingKnocks?: Array<{ userId: string; expiresAtMs: number }>,
   timer?: Partial<TimerView>,
+  focus?: Partial<RoomFocusSnapshot>,
 ): JoinAck {
   return roomAckSchemas.join.parse({
     ok: true,
@@ -74,6 +117,10 @@ export function joinOk(
             })),
           }),
       timer: timerView(room.id, timer),
+      focus: focusSnapshot(
+        focus ??
+          (timer?.phase !== undefined && timer.phase !== 'focus' ? { focusRunId: null } : {}),
+      ),
       serverNowMs: Date.now(),
     },
   });

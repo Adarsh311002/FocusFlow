@@ -431,3 +431,18 @@ export function useFocusSessionEvents(): void {
     };
   }, [client, queryClient, userId]);
 }
+
+/**
+ * Remembers an ended session for the "what just happened" notice, for answers that do not
+ * go through the solo mutations (a room opt-out). The same guards as for events apply.
+ */
+export function useRememberEndedFocusSession(): (session: FocusSessionView) => void {
+  const queryClient = useQueryClient();
+  const userId = useUserId();
+  return useCallback(
+    (session: FocusSessionView) => {
+      rememberEnded(queryClient, userId, session);
+    },
+    [queryClient, userId],
+  );
+}

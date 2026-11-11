@@ -1,8 +1,12 @@
 import {
+  type FocusRunId,
   type KnockView,
   type PresenceUser,
   type RoomChatMessageEvent,
   roomChatMessageEventSchema,
+  type RoomFocusParticipant,
+  roomFocusParticipantSchema,
+  type RoomFocusSnapshot,
   type RoomId,
   roomIdSchema,
   roomSnapshotSchema,
@@ -12,7 +16,7 @@ import {
 } from '@focus-flow/contracts';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { timerView } from '../../test/fake-room-client';
+import { focusSnapshot, NEXT_RUN_ID, RUN_ID, timerView } from '../../test/fake-room-client';
 import {
   type ChatEntry,
   createRoomLiveStore,
@@ -36,7 +40,11 @@ const person = (userId: UserId, displayName: string): PresenceUser => ({
   avatarUrl: null,
 });
 
-const snapshot = (present: PresenceUser[], timer: TimerView = TIMER) =>
+const snapshot = (
+  present: PresenceUser[],
+  timer: TimerView = TIMER,
+  focus: Partial<RoomFocusSnapshot> = {},
+) =>
   roomSnapshotSchema.parse({
     room: {
       id: ROOM,
@@ -49,6 +57,7 @@ const snapshot = (present: PresenceUser[], timer: TimerView = TIMER) =>
     },
     presence: present,
     timer,
+    focus: focusSnapshot({ focusRunId: timer.focusRunId, ...focus }),
     serverNowMs: 1,
   });
 
@@ -373,5 +382,167 @@ describe('room live store: the shared timer', () => {
     store.getState().joined(snapshot([], at(10)));
     store.getState().reset();
     expect(store.getState().timer).toBeNull();
+  });
+});
+
+describe('room live store: focus participants and their server version (G2)', () => {
+  const participant = (userId: UserId, name: string): RoomFocusParticipant =>
+    roomFocusParticipantSchema.parse({
+      userId,
+      displayName: name,
+      avatarUrl: null,
+      optedInAtMs: 1,
+      connected: true,
+      disconnectedAtMs: null,
+    });
+  const ADA_P = participant(ADA, 'Ada');
+  const GRACE_P = participant(GRACE, 'Grace');
+  const event = (
+    focusRunId: FocusRunId,
+    participantsVersion: number,
+    participants: RoomFocusParticipant[],
+  ) => ({ roomId: ROOM, focusRunId, participants, participantsVersion });
+  /** A join snapshot whose focus part is the run's list at `participantsVersion`. */
+  const snapshotAt = (participantsVersion: number, participants: RoomFocusParticipant[]) =>
+    snapshot([], TIMER, { participants, participantsVersion });
+  const names = (store: ReturnType<typeof createRoomLiveStore>) =>
+    store.getState().focus?.participants.map((entry) => entry.displayName);
+  const versionOf = (store: ReturnType<typeof createRoomLiveStore>) =>
+    store.getState().focus?.participantsVersion;
+
+  it('(a) an event older than the snapshot loses: the snapshot wins', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 1, [ADA_P]));
+    store.getState().joined(snapshotAt(2, [ADA_P, GRACE_P]));
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+    expect(versionOf(store)).toBe(2);
+  });
+
+  it('(a) an event with the snapshot version carries nothing new: the snapshot stays', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 2, [ADA_P]));
+    store.getState().joined(snapshotAt(2, [ADA_P, GRACE_P]));
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+  });
+
+  it('(b) an event newer than the snapshot wins and sets the version', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 3, [ADA_P, GRACE_P]));
+    store.getState().joined(snapshotAt(2, [ADA_P]));
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+    expect(versionOf(store)).toBe(3);
+  });
+
+  it('(c) of several buffered events the highest version wins, whatever the arrival order', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 2, [ADA_P, GRACE_P]));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 4, []));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 3, [ADA_P]));
+    store.getState().joined(snapshotAt(1, [ADA_P]));
+    expect(names(store)).toEqual([]);
+    expect(versionOf(store)).toBe(4);
+  });
+
+  it('(c) an out-of-order event does not overwrite newer state even before the answer', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 3, [ADA_P, GRACE_P]));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 2, [ADA_P]));
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+    expect(versionOf(store)).toBe(3);
+  });
+
+  it('(d) events about other runs are never applied across runs, nor mixed up when buffered', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    // A higher version of ANOTHER run must not beat or replace the shown run's list.
+    store.getState().focusParticipantsReceived(event(NEXT_RUN_ID, 9, [GRACE_P]));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 2, [ADA_P]));
+    store.getState().joined(snapshotAt(1, []));
+    expect(store.getState().focus?.focusRunId).toBe(RUN_ID);
+    expect(names(store)).toEqual(['Ada']);
+    expect(versionOf(store)).toBe(2);
+  });
+
+  it('(d) a buffered event about a different run than the snapshot shows is dropped', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(NEXT_RUN_ID, 9, [ADA_P]));
+    store.getState().joined(snapshotAt(1, [GRACE_P]));
+    expect(store.getState().focus?.focusRunId).toBe(RUN_ID);
+    expect(names(store)).toEqual(['Grace']);
+    expect(versionOf(store)).toBe(1);
+  });
+
+  it('(d) a version from the old run does not block the new run, which starts again at 0', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(5, [ADA_P]));
+    store.getState().focusParticipantsReceived(event(NEXT_RUN_ID, 1, [GRACE_P]));
+    expect(store.getState().focus?.focusRunId).toBe(NEXT_RUN_ID);
+    expect(names(store)).toEqual(['Grace']);
+    expect(versionOf(store)).toBe(1);
+    // ...and the run that was replaced stays replaced, whatever its version.
+    store.getState().focusParticipantsReceived(event(RUN_ID, 9, [ADA_P]));
+    expect(store.getState().focus?.focusRunId).toBe(NEXT_RUN_ID);
+  });
+
+  it('(e) later updates apply in increasing version order; stale and duplicate ones are ignored', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(2, [ADA_P]));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 3, [ADA_P, GRACE_P]));
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+    store.getState().focusParticipantsReceived(event(RUN_ID, 3, [ADA_P])); // duplicate version
+    store.getState().focusParticipantsReceived(event(RUN_ID, 2, [])); // stale
+    expect(names(store)).toEqual(['Ada', 'Grace']);
+    expect(versionOf(store)).toBe(3);
+    store.getState().focusParticipantsReceived(event(RUN_ID, 4, [GRACE_P]));
+    expect(names(store)).toEqual(['Grace']);
+    expect(versionOf(store)).toBe(4);
+  });
+
+  it('a snapshot after a Redis loss is authoritative even with a lower version', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(7, [ADA_P, GRACE_P]));
+    store.getState().joining();
+    store.getState().joined(snapshotAt(0, []));
+    expect(names(store)).toEqual([]);
+    expect(versionOf(store)).toBe(0);
+    store.getState().focusParticipantsReceived(event(RUN_ID, 1, [ADA_P]));
+    expect(names(store)).toEqual(['Ada']);
+  });
+
+  it('uses the snapshot as is when no event arrived', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(0, []));
+    expect(names(store)).toEqual([]);
+  });
+
+  it('drops a buffered event when the socket drops before the answer', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().focusParticipantsReceived(event(RUN_ID, 5, [ADA_P]));
+    store.getState().disconnected();
+    store.getState().joining();
+    store.getState().joined(snapshotAt(1, []));
+    expect(names(store)).toEqual([]);
+  });
+
+  it('does not carry an event into a later join', () => {
+    const store = createRoomLiveStore(ROOM);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(0, []));
+    store.getState().focusParticipantsReceived(event(RUN_ID, 1, [GRACE_P]));
+    expect(names(store)).toEqual(['Grace']);
+    store.getState().joining();
+    store.getState().joined(snapshotAt(0, []));
+    expect(names(store)).toEqual([]);
   });
 });

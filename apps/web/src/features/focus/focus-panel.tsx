@@ -1,7 +1,11 @@
+import type { FocusSessionView } from '@focus-flow/contracts';
+import { Link } from '@tanstack/react-router';
+
 import { ActiveSession } from './active-session';
 import { EndedSession } from './ended-session';
 import { focusErrorMessage } from './focus-messages';
 import { useCurrentFocusSession } from './focus-queries';
+import { wholeMinutes } from './focus-time';
 import { StartSessionForm } from './start-session-form';
 
 /**
@@ -32,7 +36,12 @@ export function FocusPanel() {
       </div>
     );
   } else if (current.data.status === 'in_progress') {
-    body = <ActiveSession session={current.data} />;
+    body =
+      current.data.context.kind === 'room' ? (
+        <RoomSessionNotice session={current.data} roomId={current.data.context.roomId} />
+      ) : (
+        <ActiveSession session={current.data} />
+      );
   } else {
     // Defensive: the endpoint only returns an in-progress session or null.
     body = <StartSessionForm />;
@@ -58,6 +67,35 @@ export function FocusPanel() {
       )}
       {body}
     </section>
+  );
+}
+
+/**
+ * A session that belongs to a room's focus run (Phase 8): the room's shared timer decides
+ * how it goes, so it has no pause or stop here (the server refuses them, NOT_SOLO_SESSION).
+ * It is managed in the room.
+ */
+function RoomSessionNotice({
+  session,
+  roomId,
+}: {
+  session: Extract<FocusSessionView, { status: 'in_progress' }>;
+  roomId: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-lg font-semibold">{session.task?.title ?? 'Focus together'}</p>
+      <p role="status" className="text-sm text-slate-700">
+        {`You are in a room's focus run (${String(wholeMinutes(session.plannedSeconds))} min planned). The room's timer controls it, so you can leave it from the room.`}
+      </p>
+      <Link
+        to="/rooms/$roomId"
+        params={{ roomId }}
+        className="inline-block rounded border border-slate-300 px-3 py-1 text-sm"
+      >
+        Open the room
+      </Link>
+    </div>
   );
 }
 

@@ -60,6 +60,18 @@ export function sessionStatusLabel(session: FocusSessionView): string {
           return 'Disconnected';
         case 'expired':
           return 'Expired';
+        case 'opted_out':
+          return 'Left the focus run';
+        case 'left_room':
+          return 'Left the room';
+        case 'removed':
+          return 'Removed from the room';
+        case 'reset':
+          return 'Timer reset';
+        case 'phase_changed':
+          return 'Phase changed';
+        case 'timer_lost':
+          return 'Timer lost';
       }
   }
 }
