@@ -16,6 +16,8 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const API_PORT = 3000;
 export const WEB_PORT = 5173;
 export const WEB_ORIGIN = `http://localhost:${String(WEB_PORT)}`;
+/** Environment variable carrying the URL of the throwaway Testcontainers Redis to the tests. */
+export const THROWAWAY_REDIS_ENV = 'E2E_THROWAWAY_REDIS_URL';
 
 const children: ChildProcess[] = [];
 let postgres: StartedPostgreSqlContainer | undefined;
@@ -82,6 +84,9 @@ export const startStack = async (): Promise<void> => {
 
   postgres = await new PostgreSqlContainer('postgres:18').start();
   redis = await new RedisContainer('redis:7.4-alpine').start();
+  // Playwright forks its workers after the global setup, so they inherit this: the one Redis a
+  // test may flush (Redis data loss scenarios). Nothing else is ever pointed at.
+  process.env[THROWAWAY_REDIS_ENV] = redis.getConnectionUrl();
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,

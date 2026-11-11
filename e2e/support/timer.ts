@@ -18,7 +18,7 @@ export type Status = 'Not started' | 'Running' | 'Paused';
 export async function createTimerRoom(
   person: Person,
   roomName: string,
-  options: { isPrivate?: boolean } = {},
+  options: { isPrivate?: boolean; focusMinutes?: number } = {},
 ): Promise<{ code: string; url: string; roomId: string }> {
   const { page } = person;
   await openRooms(person);
@@ -27,7 +27,7 @@ export async function createTimerRoom(
     await page.getByLabel(/^Private/).check();
   }
   await page.getByText('Timer lengths').click();
-  await page.getByLabel('Focus (minutes)').fill('1');
+  await page.getByLabel('Focus (minutes)').fill(String(options.focusMinutes ?? 1));
   await page.getByLabel('Short break (minutes)').fill('1');
   await page.getByRole('button', { name: 'Create room' }).click();
   await expect(page.getByRole('heading', { name: roomName })).toBeVisible();
