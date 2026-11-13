@@ -80,6 +80,7 @@ const buildConfig = (
     DATABASE_URL: postgres.getConnectionUri(),
     REDIS_URL: redis.getConnectionUrl(),
     REDIS_KEY_PREFIX: 'ff-test:',
+    HTTP_RATE_LIMIT: 'off',
     JWT_ACCESS_SECRETS: TEST_JWT_SECRET,
     ...overrides,
   });

@@ -97,6 +97,7 @@ export const startStack = async (): Promise<void> => {
     DATABASE_URL: postgres.getConnectionUri(),
     REDIS_URL: redis.getConnectionUrl(),
     REDIS_KEY_PREFIX: 'e2e:',
+    HTTP_RATE_LIMIT: 'off',
     JWT_ACCESS_SECRETS: `e2e:${randomBytes(32).toString('hex')}`,
   };
 

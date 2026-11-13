@@ -36,6 +36,7 @@ describe('loadConfig', () => {
       ROLE: 'all',
       RECONCILER_INTERVAL_MS: 30_000,
       FOCUS_GRACE_MS: 60_000,
+      HTTP_RATE_LIMIT: 'on',
       KNOCK_TTL_MS: 120_000,
       ROOM_MAX_PRESENT: 50,
     });
@@ -75,6 +76,13 @@ describe('loadConfig', () => {
       expect(() =>
         loadConfig({ ...baseEnv, APP_ENV: 'production', FOCUS_GRACE_MS: '1500' }),
       ).toThrow(/FOCUS_GRACE_MS/);
+    });
+
+    it('allows turning HTTP rate limiting off outside production only', () => {
+      expect(loadConfig({ ...baseEnv, HTTP_RATE_LIMIT: 'off' }).HTTP_RATE_LIMIT).toBe('off');
+      expect(() =>
+        loadConfig({ ...baseEnv, APP_ENV: 'production', HTTP_RATE_LIMIT: 'off' }),
+      ).toThrow(/HTTP_RATE_LIMIT/);
     });
 
     it('rejects durations below 100 ms', () => {

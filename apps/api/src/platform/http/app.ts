@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { API_BASE_PATH } from '@focus-flow/contracts';
+import { API_BASE_PATH, authPaths } from '@focus-flow/contracts';
 import express, { type ErrorRequestHandler, type Express } from 'express';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
@@ -23,6 +23,7 @@ import { createUsersRouter } from '../../modules/users/http.js';
 import type { AppConfig } from '../config.js';
 import { getRequestId } from '../request-context.js';
 import { createErrorHandler, notFoundHandler } from './errors.js';
+import { createHttpRateLimits } from './rate-limit.js';
 import { requestIdMiddleware } from './request-id.js';
 
 type AppDeps = {
@@ -47,6 +48,11 @@ export const createApp = ({
   roomFocus,
 }: AppDeps): Express => {
   const roomFocusLimiter = createRateLimiter(redis);
+  const limits = createHttpRateLimits({
+    limiter: roomFocusLimiter,
+    logger,
+    enabled: config.HTTP_RATE_LIMIT === 'on',
+  });
   const app = express();
 
   app.disable('x-powered-by');
@@ -66,6 +72,12 @@ export const createApp = ({
   );
   app.use(express.json({ limit: '16kb' }));
 
+  // Rate limits (Phase 9): the broad per-address limit first, then the credential routes.
+  app.use(API_BASE_PATH, limits.global);
+  app.post(`${API_BASE_PATH}${authPaths.login}`, limits.login);
+  app.post(`${API_BASE_PATH}${authPaths.signup}`, limits.signup);
+  app.post(`${API_BASE_PATH}${authPaths.refresh}`, limits.refresh);
+
   app.use(API_BASE_PATH, createSystemRouter({ pool, redis }));
   app.use(API_BASE_PATH, createAuthRouter(authDeps));
   app.use(API_BASE_PATH, createUsersRouter(authDeps));
@@ -84,7 +96,12 @@ export const createApp = ({
 
   app.use(
     API_BASE_PATH,
-    createRoomsRouter({ ...rooms, db: authDeps.db, authenticate: requireAuth(authDeps) }),
+    createRoomsRouter({
+      ...rooms,
+      db: authDeps.db,
+      authenticate: requireAuth(authDeps),
+      limit: limits.checkUser,
+    }),
   );
 
   app.use(

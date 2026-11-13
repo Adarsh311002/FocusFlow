@@ -101,3 +101,20 @@ Health checks are split (P2):
 |---|---|---|
 | `GET /healthz` | Public | Liveness: `200 { status: "ok" }` whenever the process is running and able to respond. Never checks dependencies. |
 | `GET /readyz` | Public | Readiness: `200 { status: "ready", checks: { postgres: "ok", redis: "ok" } }` when all required dependencies are reachable; otherwise `503 { status: "not_ready", checks: { … } }` with each failing check marked `"unavailable"`. |
+
+## Rate limits (Phase 9, implemented)
+
+Fixed-window counters in Redis (`ff:ratelimit:{action}:{subject}`); a refused request answers `429 RATE_LIMITED` with a `Retry-After` header (seconds). Behind Nginx the client address comes from `trust proxy` (production).
+
+| Scope | Subject | Limit | If Redis cannot count |
+| --- | --- | --- | --- |
+| Every request except `/healthz` and `/readyz` | client address | 600 / minute | allowed (logged) |
+| `POST /auth/login` | client address | 10 / minute | `503` |
+| `POST /auth/signup` | client address | 10 / hour | `503` |
+| `POST /auth/refresh` | client address | 60 / minute | `503` |
+| `POST /rooms` (create) | user | 10 / hour | `503` |
+| `GET /rooms/by-code/:code` (code lookup) | user | 30 / minute | `503` |
+| `POST /rooms/:roomId/membership` (join) | user | 30 / minute | `503` |
+| Room focus opt-in/out (Phase 8) | user | 10 / 10 s | `503` |
+
+`HTTP_RATE_LIMIT=off` disables the Phase 9 limits for tests and the e2e stack; production configuration refuses it. Socket limits (chat, knock, join, timer) are unchanged. Still to do in Phase 9: a per-user socket cap (R4), tuning from load tests.

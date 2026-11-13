@@ -13,6 +13,12 @@ import { z } from 'zod';
 import { parseRequestInput } from '../../platform/http/errors.js';
 import { getAuthUser } from '../auth/context.js';
 import {
+  type RateRule,
+  ROOM_CREATE_RATE,
+  ROOM_JOIN_HTTP_RATE,
+  ROOM_LOOKUP_RATE,
+} from '../room-realtime/limiter.js';
+import {
   approveKnock,
   createRoom,
   getRoom,
@@ -30,6 +36,12 @@ import {
 export type RoomsRouterDeps = RoomsDeps & {
   /** `requireAuth(authDeps)`, built once in platform/http/app.ts. */
   readonly authenticate: RequestHandler;
+  /** Per-user abuse limit (Phase 9); throws when refused. Absent -> no limit (unit tests). */
+  readonly limit?: (
+    rule: RateRule,
+    userId: string,
+    res: { setHeader: (name: string, value: string) => unknown },
+  ) => Promise<void>;
 };
 
 /** The by-code lookup takes no query: an unknown key is a 400 like everywhere else. */
@@ -48,6 +60,7 @@ export const createRoomsRouter = (deps: RoomsRouterDeps): Router => {
   router.post(roomPaths.collection, authenticate, (req, res, next) => {
     void (async () => {
       const { userId } = getAuthUser(req);
+      await deps.limit?.(ROOM_CREATE_RATE, userId, res);
       const input = parseRequestInput(createRoomRequestSchema, req.body);
       res.status(201).json({ room: await createRoom(deps, userId, input) });
     })().catch(next);
@@ -64,6 +77,7 @@ export const createRoomsRouter = (deps: RoomsRouterDeps): Router => {
   router.get(roomPaths.byCode, authenticate, (req, res, next) => {
     void (async () => {
       const { userId } = getAuthUser(req);
+      await deps.limit?.(ROOM_LOOKUP_RATE, userId, res);
       const { code } = parseRequestInput(roomCodeParamsSchema, req.params);
       parseRequestInput(noQuerySchema, req.query);
       res.status(200).json(await lookupRoomByCode(deps, userId, code));
@@ -98,6 +112,7 @@ export const createRoomsRouter = (deps: RoomsRouterDeps): Router => {
   router.post(roomPaths.membership, authenticate, (req, res, next) => {
     void (async () => {
       const { userId } = getAuthUser(req);
+      await deps.limit?.(ROOM_JOIN_HTTP_RATE, userId, res);
       const { roomId } = parseRequestInput(roomParamsSchema, req.params);
       const { membership, created } = await joinRoom(deps, userId, roomId);
       res.status(created ? 201 : 200).json({ membership });

@@ -29,24 +29,62 @@ export const ROOM_FOCUS_RATE: RateRule = { action: 'room-focus', limit: 10, wind
 
 export const TIMER_RATE: RateRule = { action: 'timer', limit: 20, windowMs: 10_000 };
 
-export type RateLimiter = {
-  /** Counts one attempt; `true` while the user is within the limit. */
-  readonly consume: (rule: RateRule, userId: string) => Promise<boolean>;
+/** Every HTTP request of one client address, outside the health checks (Phase 9). */
+export const HTTP_GLOBAL_RATE: RateRule = { action: 'http', limit: 600, windowMs: 60_000 };
+/** Login attempts per client address: 10 per minute (credential guessing). */
+export const LOGIN_RATE: RateRule = { action: 'auth-login', limit: 10, windowMs: 60_000 };
+/** Sign-ups per client address: 10 per hour (account farming). */
+export const SIGNUP_RATE: RateRule = { action: 'auth-signup', limit: 10, windowMs: 3_600_000 };
+/** Refreshes per client address: 60 per minute (a few tabs and reloads stay far inside). */
+export const REFRESH_RATE: RateRule = { action: 'auth-refresh', limit: 60, windowMs: 60_000 };
+/** Room creation per user: 10 per hour. */
+export const ROOM_CREATE_RATE: RateRule = {
+  action: 'room-create',
+  limit: 10,
+  windowMs: 3_600_000,
+};
+/** Room-code lookups per user: 30 per minute (the code space can be brute-forced). */
+export const ROOM_LOOKUP_RATE: RateRule = { action: 'room-lookup', limit: 30, windowMs: 60_000 };
+/** Joining public rooms over REST per user: 30 per minute. */
+export const ROOM_JOIN_HTTP_RATE: RateRule = {
+  action: 'room-join-http',
+  limit: 30,
+  windowMs: 60_000,
 };
 
-export const createRateLimiter = (redis: Redis): RateLimiter => ({
-  consume: async (rule, userId) => {
-    const key = redisKeys.rateLimit(rule.action, userId);
-    const replies = await redis.multi().set(key, '0', 'PX', rule.windowMs, 'NX').incr(key).exec();
+export type RateDecision = {
+  readonly allowed: boolean;
+  /** Whole seconds until the window ends (at least 1); meaningful when not allowed. */
+  readonly retryAfterSeconds: number;
+};
+
+export type RateLimiter = {
+  /** Counts one attempt; `true` while the subject is within the limit. */
+  readonly consume: (rule: RateRule, subject: string) => Promise<boolean>;
+  /** Like `consume`, and also says how long a refused caller should wait. */
+  readonly hit: (rule: RateRule, subject: string) => Promise<RateDecision>;
+};
+
+export const createRateLimiter = (redis: Redis): RateLimiter => {
+  const hit = async (rule: RateRule, subject: string): Promise<RateDecision> => {
+    const key = redisKeys.rateLimit(rule.action, subject);
+    const replies = await redis
+      .multi()
+      .set(key, '0', 'PX', rule.windowMs, 'NX')
+      .incr(key)
+      .pttl(key)
+      .exec();
     const count = replies?.[1]?.[1];
-    const failure = replies?.[0]?.[0] ?? replies?.[1]?.[0];
-    if (
-      replies === null ||
-      (failure !== null && failure !== undefined) ||
-      typeof count !== 'number'
-    ) {
+    const ttl = replies?.[2]?.[1];
+    const failed = replies?.some(([error]) => error !== null) ?? true;
+    if (replies === null || failed || typeof count !== 'number') {
       throw new Error('the rate limit transaction failed');
     }
-    return count <= rule.limit;
-  },
-});
+    const remainingMs = typeof ttl === 'number' && ttl > 0 ? ttl : rule.windowMs;
+    return {
+      allowed: count <= rule.limit,
+      retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
+    };
+  };
+  return { hit, consume: async (rule, subject) => (await hit(rule, subject)).allowed };
+};
