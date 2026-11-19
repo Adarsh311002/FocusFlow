@@ -30,7 +30,7 @@ Status: **Architecture**, implementing F5, F6, F7, D9, D10, D11, D16, D17, D19. 
 | `room:chat:send` | `{ roomId, clientMessageId (UUID), body }` (body trimmed, 1–1000 chars) | `{ messageId, sentAtMs }` | The socket is in the room (`NOT_JOINED`); at most 10 per 10 s per user (`RATE_LIMITED`) | De-duplication key (60 s) only (D7, M8) | `room:chat:message` to the room, including the sender. A repeat of a `clientMessageId` is answered with the original ids and not delivered again |
 | `time:sync` | `{ clientSentAtMs }` | `{ serverNowMs }` | Authenticated | — | — |
 
-Error codes returned through acknowledgements include `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `VERSION_CONFLICT` (with the current timer), `INVALID_TRANSITION`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `RATE_LIMITED`, `VALIDATION_FAILED`, `INTERNAL`.
+Error codes returned through acknowledgements include `ROOM_BLOCKED` (`room:join` and `room:knock` by a person the host blocked, B2), `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `VERSION_CONFLICT` (with the current timer), `INVALID_TRANSITION`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `RATE_LIMITED`, `VALIDATION_FAILED`, `INTERNAL`.
 
 A socket may act in a room only while it is in that room's Socket.IO room (`room:{roomId}`): joining puts it there; `room:leave`, a disconnect and removal from the membership take it out (M5, M9).
 
@@ -68,7 +68,7 @@ The socket joins the Socket.IO room before the presence list is read, so no even
 | `room:knock:removed` | `{ roomId, userId, reason: "approved" \| "rejected" \| "cancelled" }` | `user:{hostId}` |
 | `room:knock:resolved` | `{ roomId, outcome: "approved" \| "rejected" }` | `user:{requesterId}` only |
 | `room:chat:message` | `{ roomId, messageId, clientMessageId, sender: { userId, displayName }, body, sentAtMs }` | Room |
-| `room:member:removed` | `{ roomId, userId, reason: "removed" \| "left" }` | Room and `user:{userId}`; the server also removes that user's sockets from the room |
+| `room:member:removed` | `{ roomId, userId, reason: "removed" \| "left", blocked }` (`blocked` is `true` only when the host also forbade a rejoin, B4) | Room and `user:{userId}`; the server also removes that user's sockets from the room |
 | `room:resync` | `{ roomId }` | Room. Clients respond with `room:join` to get a fresh snapshot (used after Redis state loss) |
 | `focus:session:updated` | `{ session: FocusSessionView }` | `user:{userId}` (every tab). Sent after every committed session transition: start, pause, resume, stop, completion and abandonment, whether caused by a request, a job or the reconciler (E6). The first product event (R8). Clients apply the payload and then refetch `GET /focus-sessions/current`, so a duplicate, late or missed event heals itself; they also refetch after reconnecting |
 
