@@ -37,6 +37,8 @@ export const users = pgTable(
     // by modules/tasks/service.ts (docs/domain/model.md, "Rules the database cannot
     // enforce alone").
     currentTaskId: uuid(),
+    // A1: the user's daily focus goal in whole seconds (dashboard progress, streak views).
+    dailyGoalSeconds: integer().notNull().default(7200),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -61,6 +63,7 @@ export const users = pgTable(
     uniqueIndex('uq_users_email').on(table.email),
     check('ck_users_email_lowercase', sql`${table.email} = lower(${table.email})`),
     check('ck_users_display_name_length', sql`char_length(${table.displayName}) BETWEEN 1 AND 50`),
+    check('ck_users_daily_goal_seconds', sql`${table.dailyGoalSeconds} BETWEEN 300 AND 43200`),
   ],
 );
 
@@ -332,5 +335,36 @@ export const roomMembers = pgTable(
     }).onDelete('cascade'),
     // "My Rooms": a user's rooms, most recently joined first, and the users cascade.
     index('ix_room_members_user_id_joined_at').on(table.userId, table.joinedAt.desc()),
+  ],
+);
+
+// Room blocks (B1–B8): a durable per-room list of people the host removed AND forbade to
+// return. Separate from `room_members` (membership is deleted on removal; a block is what
+// survives it). Deleting the room or the user removes their blocks (cascade); blocks are
+// host-managed and carry no other history.
+export const roomBlocks = pgTable(
+  'room_blocks',
+  {
+    id: uuid().notNull(),
+    roomId: uuid().notNull(),
+    userId: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_blocks', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_room_blocks_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_blocks_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // One block per person per room; also the join/knock check and the host's list.
+    uniqueIndex('uq_room_blocks_room_id_user_id').on(table.roomId, table.userId),
+    // The users ON DELETE CASCADE.
+    index('ix_room_blocks_user_id').on(table.userId),
   ],
 );
