@@ -64,8 +64,8 @@ export const createRoomLive = ({ presence, knocks, emitter, logger }: RoomLiveDe
           .emit('room:member:joined', { roomId: roomIdSchema.parse(roomId), member });
       }),
 
-    announceMemberRemoved: (roomId, userId, reason) =>
-      safely('announce a removed member', { roomId, userId, reason }, async () => {
+    announceMemberRemoved: (roomId, userId, reason, blocked) =>
+      safely('announce a removed member', { roomId, userId, reason, blocked }, async () => {
         // Sockets leave the Socket.IO room first (through the emitter, so on every
         // instance), then the user's presence goes; a sync that still sees a socket in
         // the room in between re-adds it and the next one removes it again.
@@ -82,6 +82,7 @@ export const createRoomLive = ({ presence, knocks, emitter, logger }: RoomLiveDe
               roomId: roomIdSchema.parse(roomId),
               userId: userIdSchema.parse(userId),
               reason,
+              blocked,
             });
         }
       }),

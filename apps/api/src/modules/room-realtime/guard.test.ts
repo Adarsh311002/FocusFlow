@@ -43,6 +43,7 @@ describe('dropNonMemberSockets', () => {
       roomId: ROOM,
       userId: USER,
       reason: 'removed',
+      blocked: false,
     });
   });
 

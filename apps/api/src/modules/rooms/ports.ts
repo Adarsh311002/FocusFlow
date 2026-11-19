@@ -55,6 +55,8 @@ export type RoomLive = {
     roomId: string,
     userId: string,
     reason: RoomMemberRemovedEvent['reason'],
+    /** The host also forbade a rejoin (B4); sent in the event so the person is told. */
+    blocked: boolean,
   ) => Promise<void>;
 
   /** `room:settings:updated` (effective from the next phase) to the room. */

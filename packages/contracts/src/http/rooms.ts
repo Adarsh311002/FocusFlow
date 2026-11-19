@@ -95,6 +95,15 @@ export const roomMembershipViewSchema = z.object({
 });
 export type RoomMembershipView = z.infer<typeof roomMembershipViewSchema>;
 
+/** A person the host blocked from the room (B1–B8). Host-only; never sent to anyone else. */
+export const roomBlockViewSchema = z.object({
+  userId: userIdSchema,
+  displayName: z.string(),
+  avatarUrl: z.string().nullable(),
+  blockedAt: z.iso.datetime(),
+});
+export type RoomBlockView = z.infer<typeof roomBlockViewSchema>;
+
 // ---- Requests -------------------------------------------------------------------------
 
 export const createRoomRequestSchema = z.strictObject({
@@ -163,3 +172,11 @@ export type RoomMembersResponse = z.infer<typeof roomMembersResponseSchema>;
 
 export const roomMembershipResponseSchema = z.object({ membership: roomMembershipViewSchema });
 export type RoomMembershipResponse = z.infer<typeof roomMembershipResponseSchema>;
+
+/** `PUT /rooms/:roomId/blocks/:userId` (remove and block) answers with the block. */
+export const roomBlockResponseSchema = z.object({ block: roomBlockViewSchema });
+export type RoomBlockResponse = z.infer<typeof roomBlockResponseSchema>;
+
+/** `GET /rooms/:roomId/blocks`, newest block first. */
+export const roomBlocksResponseSchema = z.object({ blocks: z.array(roomBlockViewSchema) });
+export type RoomBlocksResponse = z.infer<typeof roomBlocksResponseSchema>;

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import type { Executor } from '../../db/client.js';
-import { roomMembers, rooms, users } from '../../db/schema.js';
+import { roomBlocks, roomMembers, rooms, users } from '../../db/schema.js';
 
 export type RoomRow = typeof rooms.$inferSelect;
 
@@ -160,4 +160,98 @@ export const findMember = async (
     .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.userId, userId)))
     .limit(1);
   return row;
+};
+
+// ---- Blocks (B1–B8) -------------------------------------------------------------------
+
+export type BlockRow = {
+  readonly userId: string;
+  readonly displayName: string;
+  readonly avatarUrl: string | null;
+  readonly blockedAt: Date;
+};
+
+export const isBlocked = async (db: Executor, roomId: string, userId: string): Promise<boolean> => {
+  const [row] = await db
+    .select({ one: sql<number>`1` })
+    .from(roomBlocks)
+    .where(and(eq(roomBlocks.roomId, roomId), eq(roomBlocks.userId, userId)))
+    .limit(1);
+  return row !== undefined;
+};
+
+/**
+ * Takes the room row's lock. A join (and an approved knock) holds it FOR SHARE while it
+ * checks the block list and inserts the membership; a block holds it FOR UPDATE while it
+ * writes the block and deletes the membership. The two therefore never interleave (B3).
+ */
+export const lockRoom = async (
+  db: Executor,
+  roomId: string,
+  mode: 'share' | 'update',
+): Promise<boolean> => {
+  const rows = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, roomId))
+    .for(mode)
+    .limit(1);
+  return rows.length > 0;
+};
+
+/** Records the block unless it exists (a repeat changes nothing). */
+export const insertBlockIfAbsent = async (
+  db: Executor,
+  values: { readonly id: string; readonly roomId: string; readonly userId: string },
+): Promise<void> => {
+  await db
+    .insert(roomBlocks)
+    .values(values)
+    .onConflictDoNothing({ target: [roomBlocks.roomId, roomBlocks.userId] });
+};
+
+export const findBlock = async (
+  db: Executor,
+  roomId: string,
+  userId: string,
+): Promise<BlockRow | undefined> => {
+  const [row] = await db
+    .select({
+      userId: roomBlocks.userId,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      blockedAt: roomBlocks.createdAt,
+    })
+    .from(roomBlocks)
+    .innerJoin(users, eq(users.id, roomBlocks.userId))
+    .where(and(eq(roomBlocks.roomId, roomId), eq(roomBlocks.userId, userId)))
+    .limit(1);
+  return row;
+};
+
+/** The room's blocks, newest first. */
+export const listBlocks = (db: Executor, roomId: string): Promise<BlockRow[]> =>
+  db
+    .select({
+      userId: roomBlocks.userId,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      blockedAt: roomBlocks.createdAt,
+    })
+    .from(roomBlocks)
+    .innerJoin(users, eq(users.id, roomBlocks.userId))
+    .where(eq(roomBlocks.roomId, roomId))
+    .orderBy(desc(roomBlocks.createdAt), desc(roomBlocks.id));
+
+/** True when a block was deleted. */
+export const deleteBlock = async (
+  db: Executor,
+  roomId: string,
+  userId: string,
+): Promise<boolean> => {
+  const deleted = await db
+    .delete(roomBlocks)
+    .where(and(eq(roomBlocks.roomId, roomId), eq(roomBlocks.userId, userId)))
+    .returning({ id: roomBlocks.id });
+  return deleted.length > 0;
 };

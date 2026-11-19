@@ -176,7 +176,7 @@ async function accessTokenOf(person: Person): Promise<string> {
 /** A REST call as `person`, straight at the API through the web origin's proxy. */
 export async function api(
   person: Person,
-  method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
   path: string,
   body?: unknown,
 ): Promise<ApiAnswer> {

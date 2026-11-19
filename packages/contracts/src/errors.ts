@@ -35,6 +35,8 @@ export const errorCodes = [
   'HOST_OFFLINE',
   'ROOM_FULL',
   'RATE_LIMITED',
+  // Room blocks (B1–B8): the host removed the person and forbade a rejoin
+  'ROOM_BLOCKED',
   // Room timer (Phase 7, docs/api/socket-events.md)
   'VERSION_CONFLICT',
   'INVALID_TRANSITION',

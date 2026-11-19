@@ -79,6 +79,8 @@ export const roomPaths = {
   members: '/rooms/:roomId/members',
   member: '/rooms/:roomId/members/:userId',
   membership: '/rooms/:roomId/membership',
+  blocks: '/rooms/:roomId/blocks',
+  block: '/rooms/:roomId/blocks/:userId',
   approveKnock: '/rooms/:roomId/knocks/:userId/approve',
   rejectKnock: '/rooms/:roomId/knocks/:userId/reject',
 } as const;

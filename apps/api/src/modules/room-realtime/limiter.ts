@@ -52,6 +52,9 @@ export const ROOM_JOIN_HTTP_RATE: RateRule = {
   windowMs: 60_000,
 };
 
+/** Blocking people from a room per host: 30 per minute (B7). */
+export const ROOM_BLOCK_RATE: RateRule = { action: 'room-block', limit: 30, windowMs: 60_000 };
+
 export type RateDecision = {
   readonly allowed: boolean;
   /** Whole seconds until the window ends (at least 1); meaningful when not allowed. */
