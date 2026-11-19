@@ -48,6 +48,7 @@ export const focusSessionPaths = {
   collection: '/focus-sessions',
   current: '/focus-sessions/current',
   summary: '/focus-sessions/summary',
+  insights: '/focus-sessions/insights',
   pause: '/focus-sessions/:sessionId/pause',
   resume: '/focus-sessions/:sessionId/resume',
   stop: '/focus-sessions/:sessionId/stop',

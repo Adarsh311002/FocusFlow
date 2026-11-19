@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 
 import type { Executor } from '../../db/client.js';
-import { focusSessions, tasks } from '../../db/schema.js';
+import { focusSessions, tasks, users } from '../../db/schema.js';
 import type { FocusSessionRow, SessionTaskRow } from './queries.js';
 
 // Review reads (Phase 5, V1–V8). Every query is scoped by the requesting user; another
@@ -123,4 +123,107 @@ export const sumEndedSessionsByMinute = async (
       ),
     )
     .groupBy(minute);
+};
+
+// ---- Insights (A1–A10) ----------------------------------------------------------------
+
+/** Ended sessions that started in one UTC minute, split by task and by solo/room (A9). */
+export type InsightMinute = {
+  readonly minuteStartMs: number;
+  readonly taskId: string | null;
+  readonly isRoom: boolean;
+  readonly completedCount: number;
+  readonly abandonedCount: number;
+  readonly completedFocusedSeconds: number;
+  readonly totalFocusedSeconds: number;
+};
+
+/**
+ * Like `sumEndedSessionsByMinute`, grouped additionally by task and solo/room so one
+ * query serves the days, the heatmap, the task breakdown and the solo/room split. Rows
+ * are bounded by the number of distinct (minute, task, kind) triples: at most the number
+ * of sessions in the range.
+ */
+export const sumEndedSessionsByMinuteDetailed = async (
+  db: Executor,
+  userId: string,
+  range: { readonly fromMs: number; readonly toMs: number },
+): Promise<InsightMinute[]> => {
+  const minute = sql`date_bin('1 minute', ${focusSessions.startedAt}, TIMESTAMPTZ '2000-01-01 00:00:00+00')`;
+  const isRoom = sql`(${focusSessions.roomId} IS NOT NULL)`;
+  return db
+    .select({
+      minuteStartMs: minute.mapWith((value: Date | string) => new Date(value).getTime()),
+      taskId: focusSessions.taskId,
+      isRoom: isRoom.mapWith(Boolean),
+      completedCount: sql`count(*) FILTER (WHERE ${focusSessions.status} = 'completed')`.mapWith(
+        Number,
+      ),
+      abandonedCount: sql`count(*) FILTER (WHERE ${focusSessions.status} = 'abandoned')`.mapWith(
+        Number,
+      ),
+      completedFocusedSeconds:
+        sql`coalesce(sum(${focusSessions.focusedSeconds}) FILTER (WHERE ${focusSessions.status} = 'completed'), 0)`.mapWith(
+          Number,
+        ),
+      totalFocusedSeconds: sql`coalesce(sum(${focusSessions.focusedSeconds}), 0)`.mapWith(Number),
+    })
+    .from(focusSessions)
+    .where(
+      and(
+        eq(focusSessions.userId, userId),
+        ne(focusSessions.status, 'in_progress'),
+        gte(focusSessions.startedAt, new Date(range.fromMs)),
+        lt(focusSessions.startedAt, new Date(range.toMs)),
+      ),
+    )
+    .groupBy(minute, focusSessions.taskId, isRoom);
+};
+
+/**
+ * Every UTC minute in which one of the user's COMPLETED sessions started, over all
+ * history: the streak's input (A3). One row per distinct minute, so a heavy user costs a
+ * few thousand small rows, served by `ix_focus_sessions_user_id_started_at`.
+ */
+export const listCompletedSessionMinutes = async (
+  db: Executor,
+  userId: string,
+): Promise<number[]> => {
+  const minute = sql`date_bin('1 minute', ${focusSessions.startedAt}, TIMESTAMPTZ '2000-01-01 00:00:00+00')`;
+  const rows = await db
+    .select({ minuteStartMs: minute.mapWith((value: Date | string) => new Date(value).getTime()) })
+    .from(focusSessions)
+    .where(and(eq(focusSessions.userId, userId), eq(focusSessions.status, 'completed')))
+    .groupBy(minute);
+  return rows.map((row) => row.minuteStartMs);
+};
+
+export type TaskLabel = { readonly id: string; readonly title: string; readonly deleted: boolean };
+
+/** Titles of the user's tasks by id (deleted ones included, flagged; D38). */
+export const findTaskLabels = async (
+  db: Executor,
+  userId: string,
+  taskIds: readonly string[],
+): Promise<TaskLabel[]> => {
+  if (taskIds.length === 0) {
+    return [];
+  }
+  const rows = await db
+    .select({ id: tasks.id, title: tasks.title, deletedAt: tasks.deletedAt })
+    .from(tasks)
+    .where(and(eq(tasks.userId, userId), inArray(tasks.id, [...taskIds])));
+  return rows.map((row) => ({ id: row.id, title: row.title, deleted: row.deletedAt !== null }));
+};
+
+export const findDailyGoalSeconds = async (db: Executor, userId: string): Promise<number> => {
+  const [row] = await db
+    .select({ dailyGoalSeconds: users.dailyGoalSeconds })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (row === undefined) {
+    throw new Error('findDailyGoalSeconds: the authenticated user does not exist');
+  }
+  return row.dailyGoalSeconds;
 };

@@ -1,4 +1,4 @@
-import { mePaths, setCurrentTaskRequestSchema } from '@focus-flow/contracts';
+import { mePaths, setCurrentTaskRequestSchema, updateMeRequestSchema } from '@focus-flow/contracts';
 import { Router } from 'express';
 
 import { AppError, parseRequestInput } from '../../platform/http/errors.js';
@@ -7,6 +7,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { findUserById } from '../auth/queries.js';
 import type { AuthDeps } from '../auth/service.js';
 import { setCurrentTask } from '../tasks/service.js';
+import { updateOwnSettings } from './service.js';
 import { toUserView } from './views.js';
 
 export const createUsersRouter = (deps: AuthDeps): Router => {
@@ -16,6 +17,19 @@ export const createUsersRouter = (deps: AuthDeps): Router => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const user = await findUserById(deps.db, userId);
+      if (user === undefined) {
+        throw new AppError('NOT_FOUND', 404, 'User not found.');
+      }
+      res.status(200).json({ user: await toUserView(deps.db, user) });
+    })().catch(next);
+  });
+
+  // The user's own settings (the daily goal, A2); strict body, at least one field.
+  router.patch(mePaths.self, requireAuth(deps), (req, res, next) => {
+    void (async () => {
+      const { userId } = getAuthUser(req);
+      const input = parseRequestInput(updateMeRequestSchema, req.body);
+      const user = await updateOwnSettings(deps.db, userId, input);
       if (user === undefined) {
         throw new AppError('NOT_FOUND', 404, 'User not found.');
       }

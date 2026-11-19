@@ -1,4 +1,5 @@
 import {
+  focusSessionInsightsQuerySchema,
   focusSessionParamsSchema,
   focusSessionPaths,
   focusSessionSummaryQuerySchema,
@@ -9,7 +10,7 @@ import { type RequestHandler, Router } from 'express';
 
 import { parseRequestInput } from '../../platform/http/errors.js';
 import { getAuthUser } from '../auth/context.js';
-import { listFocusSessionHistory, summarizeFocusSessions } from './review.js';
+import { getFocusInsights, listFocusSessionHistory, summarizeFocusSessions } from './review.js';
 import {
   type FocusSessionsDeps,
   getCurrentFocusSession,
@@ -28,7 +29,7 @@ export type FocusSessionsRouterDeps = FocusSessionsDeps & {
  * Thin handlers: parse, call the service, return `{ session }`. The owner is always the
  * authenticated user, never anything the client sends; strict request schemas reject a
  * body that names a user. `authenticate` is attached per route (see the task router).
- * `GET /focus-sessions/current` and `/summary` are registered before the `:sessionId`
+ * `GET /focus-sessions/current`, `/summary` and `/insights` are registered before the `:sessionId`
  * routes, so "current" and "summary" are never parsed as session ids. History and summary
  * return the contract shapes directly (`{ sessions, nextCursor }`, the summary object).
  */
@@ -64,6 +65,14 @@ export const createFocusSessionsRouter = (deps: FocusSessionsRouterDeps): Router
       const { userId } = getAuthUser(req);
       const query = parseRequestInput(focusSessionSummaryQuerySchema, req.query);
       res.status(200).json(await summarizeFocusSessions(deps, userId, query));
+    })().catch(next);
+  });
+
+  router.get(focusSessionPaths.insights, authenticate, (req, res, next) => {
+    void (async () => {
+      const { userId } = getAuthUser(req);
+      const query = parseRequestInput(focusSessionInsightsQuerySchema, req.query);
+      res.status(200).json(await getFocusInsights(deps, userId, query));
     })().catch(next);
   });
 

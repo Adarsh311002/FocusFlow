@@ -26,6 +26,7 @@ export const toUserView = async (db: Db, user: UserRow): Promise<UserView> => {
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     currentTaskId: user.currentTaskId === null ? null : taskIdSchema.parse(user.currentTaskId),
+    dailyGoalSeconds: user.dailyGoalSeconds,
     identities: identityProvidersSchema.parse(providers),
   };
 };
