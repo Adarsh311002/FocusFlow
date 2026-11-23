@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { AuthProvider } from '../features/auth/auth-context';
 import { useFocusSessionEvents } from '../features/focus/focus-queries';
 import { RealtimeProvider } from '../features/realtime/realtime-provider';
+import { ThemeProvider } from '../ui/theme';
 
 /**
  * Created once for the lifetime of the module so the cache survives re-renders.
@@ -31,13 +32,15 @@ function FocusSessionEvents() {
  */
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <RealtimeProvider>
-          <FocusSessionEvents />
-          {children}
-        </RealtimeProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RealtimeProvider>
+            <FocusSessionEvents />
+            {children}
+          </RealtimeProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
