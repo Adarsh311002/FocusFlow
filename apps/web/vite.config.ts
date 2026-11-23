@@ -25,5 +25,7 @@ export default defineConfig({
     globals: false,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Whole-page journeys chain several waits; see src/test/setup.ts.
+    testTimeout: 15_000,
   },
 });

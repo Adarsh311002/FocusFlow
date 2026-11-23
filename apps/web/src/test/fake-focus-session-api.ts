@@ -3,6 +3,7 @@ import {
   API_BASE_PATH,
   authPaths,
   calendarDatesFrom,
+  focusSessionInsightsResponseSchema,
   focusSessionListResponseSchema,
   focusSessionPaths,
   focusSessionResponseSchema,
@@ -318,6 +319,12 @@ export function createFakeFocusSessionApi(
     if (path === mePaths.self) {
       return jsonResponse(200, { user: userBody });
     }
+    if (path === focusSessionPaths.insights && request.method === 'GET') {
+      // A quiet, valid answer: the dashboard and Review draw insights, but these tests are
+      // about sessions, so nothing here depends on the numbers.
+      const query = focusSessionSummaryQuerySchema.parse(Object.fromEntries(url.searchParams));
+      return jsonResponse(200, focusSessionInsightsResponseSchema.parse(emptyInsights(query)));
+    }
     if (path === focusSessionPaths.summary && request.method === 'GET') {
       if (summary !== undefined) {
         return jsonResponse(200, summary);
@@ -402,5 +409,58 @@ export function createFakeFocusSessionApi(
     abandonCurrent: (reason: 'grace_expired' | 'expired') =>
       endCurrent({ status: 'abandoned', reason }),
     current: inProgress,
+  };
+}
+
+/** An insights response with no activity, shaped exactly like the API's (A1–A10). */
+export function emptyInsights(query: { from: string; to: string; tz: string }) {
+  const dates = calendarDatesFrom(query.from, query.to);
+  const totals = {
+    sessionCount: 0,
+    completedCount: 0,
+    abandonedCount: 0,
+    completionRate: null,
+    completedFocusedSeconds: 0,
+    totalFocusedSeconds: 0,
+  };
+  const bucket = { sessionCount: 0, completedCount: 0, totalFocusedSeconds: 0 };
+  return {
+    range: { ...query, dayCount: dates.length },
+    dailyGoalSeconds: 7200,
+    totals,
+    days: dates.map((date) => ({
+      date,
+      sessionCount: 0,
+      completedCount: 0,
+      completedFocusedSeconds: 0,
+      totalFocusedSeconds: 0,
+      goalProgress: 0,
+      goalMet: false,
+    })),
+    goalDaysMet: 0,
+    streak: { current: 0, longest: 0, today: query.to, todayCompleted: false },
+    heatmap: Array.from({ length: 168 }, (_, index) => ({
+      weekday: Math.floor(index / 24),
+      hour: index % 24,
+      sessionCount: 0,
+      totalFocusedSeconds: 0,
+    })),
+    tasks: [],
+    otherTasks: { ...bucket, taskCount: 0 },
+    noTask: bucket,
+    split: { solo: bucket, room: bucket },
+    comparison: {
+      previousFrom: query.from,
+      previousTo: query.to,
+      previous: totals,
+      delta: {
+        sessionCount: 0,
+        completedCount: 0,
+        completedFocusedSeconds: 0,
+        totalFocusedSeconds: 0,
+        totalFocusedSecondsChange: null,
+        completionRate: null,
+      },
+    },
   };
 }
