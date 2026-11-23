@@ -161,7 +161,7 @@ export function DashboardPage() {
               <TasksPanel />
             </Block>
             <Block index={4} className="lg:col-span-5">
-              <WeekOverview showStats={false} />
+              <WeekOverview />
             </Block>
           </div>
         </>
