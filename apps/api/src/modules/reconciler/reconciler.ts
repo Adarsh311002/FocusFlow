@@ -4,35 +4,116 @@ import type { Logger } from 'pino';
 
 import { redisTimeMs } from '../../platform/redis.js';
 import { redisKeys } from '../../platform/redis-keys.js';
+import type { LifecycleDeps } from '../focus-sessions/lifecycle.js';
+import {
+  type SweepOptions,
+  sweepRunningSessions,
+  sweepStaleSessions,
+  type SweepSummary,
+} from '../focus-sessions/sweep.js';
 import type { InstanceRemovalReason } from '../presence/presence.js';
+import {
+  type StaleCleanup,
+  type StaleRoomSweepSummary,
+  sweepStaleRoomSessions,
+} from '../room-focus/stale.js';
+import type { RoomTimerScheduler } from '../room-timer/jobs.js';
+import type { RoomTimerService, RoomTimerStore } from '../room-timer/types.js';
+import {
+  type RoomFocusSweepDeps,
+  type RoomSessionSweepSummary,
+  settleUnsettledRuns,
+  sweepRoomSessions,
+  type UnsettledRunsSummary,
+} from './room-focus.js';
+import { type RoomTimerSweepSummary, sweepRoomTimers } from './room-timers.js';
 
 // The reconciler (docs/architecture/focus-timing-protocol.md, "Reconciler"): repairs what
 // the event-driven path can miss. It runs at startup, after Redis recovery and every
-// RECONCILER_INTERVAL_MS through BullMQ, so exactly one worker takes each scheduled run;
-// every step is idempotent, so a concurrent or repeated run is harmless.
+// RECONCILER_INTERVAL_MS through BullMQ — and, when those runs stop happening (a lost
+// schedule, Redis down), directly from each worker process (platform/reconcile-trigger.ts,
+// E23). Several runs may overlap across instances; every step is idempotent and the
+// session steps lock rows with SKIP LOCKED, so that is harmless. Within one instance runs
+// are serialised (single-flight).
 //
-// Phase 3 implements step 1. The later steps belong to the phases that own their state:
-//   2. overdue room timers / missing phase-end jobs           (Phase 7)
-//   3. closed runs in the unsettled set                       (Phase 8)
-//   4. participants and solo users past their grace           (Phases 4, 8)
-//   5. solo sessions past T_end, missing end jobs             (Phase 4)
-//   6. solo sessions to expire                                (Phase 4)
-//   7. orphaned room sessions → timer_lost                    (Phase 8)
+// Implemented steps (the others belong to the phases that own their state):
+//   1. dead instances' presence                                (Phase 3)
+//   2. overdue room timers run their phase end; running timers' phase-end jobs ensured (Phase 7)
+//   3. closed runs in the unsettled set                         (Phase 8; room-focus.ts)
+//   4. room participants past their grace                       (Phase 8; room-focus.ts, with 7)
+//   5. every running solo session: the decision, settled or its jobs ensured  (Phase 4B)
+//   6. solo sessions still in progress 12 h after started_at: expired          (Phase 4B)
+//   6b. room sessions still in progress 12 h after started_at (16 h at most while their
+//       phase runs): expired, ledger cleaned                                    (Phase 8, RF17)
+//   7. orphaned room sessions → timer_lost                      (Phase 8)
 
 export type InstanceCleanup = {
   readonly removeInstance: (instanceId: string, reason: InstanceRemovalReason) => Promise<void>;
 };
 
-export type ReconcileSummary = { readonly deadInstances: readonly string[] };
+export type ReconcileSummary = {
+  readonly deadInstances: readonly string[];
+  /** Step 2 (absent when the room timer is not wired, or the step itself failed). */
+  readonly roomTimers?: RoomTimerSweepSummary;
+  /** Step 3 (absent when room focus is not wired, or the step itself failed). */
+  readonly unsettledRuns?: UnsettledRunsSummary;
+  /** Steps 4 and 7 (absent when room focus is not wired, or the step itself failed). */
+  readonly roomSessions?: RoomSessionSweepSummary;
+  /** Step 5 (absent when the focus steps are not wired, or the step itself failed). */
+  readonly runningSessions?: SweepSummary;
+  /** Step 6. */
+  readonly staleSessions?: SweepSummary;
+  /** Step 6b (RF17; absent when the room timer is not wired to room focus, or the step failed). */
+  readonly staleRoomSessions?: StaleRoomSweepSummary;
+};
 
 type ReconcilerDeps = {
   readonly redis: Redis;
   readonly presence: InstanceCleanup;
   readonly instanceTtlMs: number;
+  /** RECONCILER_INTERVAL_MS: also each session step's time budget. */
+  readonly intervalMs: number;
   readonly logger: Logger;
+  /** Solo Focus steps 5 and 6 (Phase 4B). */
+  readonly focusSessions?: { readonly deps: LifecycleDeps; readonly options?: SweepOptions };
+  /** Room timer step 2 (Phase 7). */
+  readonly roomTimers?: {
+    readonly store: RoomTimerStore;
+    readonly service: Pick<RoomTimerService, 'completePhase'>;
+    readonly scheduler: RoomTimerScheduler;
+  };
+  /** Room focus steps 3, 4 and 7 (Phase 8; `logger` is the reconciler's). */
+  readonly roomFocus?: Omit<RoomFocusSweepDeps, 'logger'>;
 };
 
-export const createReconciler = ({ redis, presence, instanceTtlMs, logger }: ReconcilerDeps) => {
+/** How long the liveness record is kept: far longer than any threshold reading it. */
+const LIVENESS_TTL_MS = 24 * 60 * 60 * 1_000;
+
+/** Room session outcomes that changed something (logged at warn). */
+const ROOM_ACTION_OUTCOMES: ReadonlySet<string> = new Set([
+  'timer_lost',
+  'late_grace',
+  'grace_abandoned',
+  'grace_completed',
+  'run_settled',
+]);
+
+export const createReconciler = ({
+  redis,
+  presence,
+  instanceTtlMs,
+  intervalMs,
+  logger,
+  focusSessions,
+  roomTimers,
+  roomFocus,
+}: ReconcilerDeps) => {
+  let stopping = false;
+  // Where the room session sweep resumes after a run cut short by its budget.
+  const roomSessionCursor: { afterUserId: string | null } = { afterUserId: null };
+  // Ledger entries of expired room sessions whose cleanup failed; every full run retries them (RF17).
+  const staleRoomCleanups: StaleCleanup[] = [];
+
   /**
    * Step 1: instances whose heartbeat is older than the TTL (Redis TIME) are dead. Their
    * presence entries are removed through the reverse index, and each user left without a
@@ -52,15 +133,169 @@ export const createReconciler = ({ redis, presence, instanceTtlMs, logger }: Rec
     return dead;
   };
 
-  return {
-    run: async (job: ReconcileJob): Promise<ReconcileSummary> => {
-      const deadInstances = await removeDeadInstances();
-      const log = deadInstances.length > 0 ? logger.warn.bind(logger) : logger.debug.bind(logger);
-      log(
-        { trigger: job.trigger, correlationId: job.correlationId, deadInstances },
-        'Reconcile run finished',
+  /** A time budget of one interval for a step, ended early by `stop()`. */
+  const budget = (): (() => boolean) => {
+    const endsAt = Date.now() + intervalMs;
+    return () => !stopping && Date.now() < endsAt;
+  };
+
+  const sweepOptions = (): SweepOptions => ({
+    ...focusSessions?.options,
+    shouldContinue: budget(),
+  });
+
+  const runStep = async <T>(
+    errors: unknown[],
+    name: string,
+    step: () => Promise<T>,
+  ): Promise<T | undefined> => {
+    try {
+      return await step();
+    } catch (error) {
+      errors.push(error);
+      logger.warn({ err: error, step: name }, 'Reconcile step failed; the next run repeats it');
+      return undefined;
+    }
+  };
+
+  /** Steps 1 to 7, then the liveness record. Fails (after all steps) if one failed. */
+  const fullRun = async (job: ReconcileJob): Promise<ReconcileSummary> => {
+    const errors: unknown[] = [];
+    // Step 1 first: its instance_dead hints record markers at the last heartbeat, so step
+    // 5 does not start late grace from a later detection time for those users.
+    const deadInstances = (await runStep(errors, 'dead instances', removeDeadInstances)) ?? [];
+    // Step 2: room timers are independent of the solo steps; a failing step never stops the next.
+    const roomTimerSummary =
+      roomTimers === undefined
+        ? undefined
+        : await runStep(errors, 'room timers', () =>
+            sweepRoomTimers({ ...roomTimers, redis, logger }, budget()),
+          );
+    // Steps 3, 4 and 7: room focus runs and participants, each independent of the others.
+    const unsettledRuns =
+      roomFocus === undefined
+        ? undefined
+        : await runStep(errors, 'unsettled runs', () =>
+            settleUnsettledRuns({ ...roomFocus, logger }, budget()),
+          );
+    const roomSessions =
+      roomFocus === undefined
+        ? undefined
+        : await runStep(errors, 'room sessions', () =>
+            sweepRoomSessions({ cursor: roomSessionCursor, ...roomFocus, logger }, budget()),
+          );
+    const runningSessions =
+      focusSessions === undefined
+        ? undefined
+        : await runStep(errors, 'running sessions', () =>
+            sweepRunningSessions({ ...focusSessions.deps, logger }, sweepOptions()),
+          );
+    const staleSessions =
+      focusSessions === undefined
+        ? undefined
+        : await runStep(errors, 'stale sessions', () =>
+            sweepStaleSessions({ ...focusSessions.deps, logger }, sweepOptions()),
+          );
+    // Step 6b (RF17): room sessions past the stale window, after the normal decisions above.
+    const staleTimer = roomFocus?.timer;
+    const staleRoomSessions =
+      roomFocus === undefined || staleTimer === undefined
+        ? undefined
+        : await runStep(errors, 'stale room sessions', () =>
+            sweepStaleRoomSessions(
+              {
+                db: roomFocus.db,
+                ledger: roomFocus.ledger,
+                timer: staleTimer,
+                notify: roomFocus.notify,
+                logger,
+                cleanups: staleRoomCleanups,
+              },
+              budget(),
+            ),
+          );
+    await runStep(errors, 'liveness', async () => {
+      await redis.set(
+        redisKeys.reconcileLastFinished,
+        String(await redisTimeMs(redis)),
+        'PX',
+        LIVENESS_TTL_MS,
       );
-      return { deadInstances };
+    });
+    const summary: ReconcileSummary = {
+      deadInstances,
+      ...(roomTimerSummary === undefined ? {} : { roomTimers: roomTimerSummary }),
+      ...(unsettledRuns === undefined ? {} : { unsettledRuns }),
+      ...(roomSessions === undefined ? {} : { roomSessions }),
+      ...(runningSessions === undefined ? {} : { runningSessions }),
+      ...(staleSessions === undefined ? {} : { staleSessions }),
+      ...(staleRoomSessions === undefined ? {} : { staleRoomSessions }),
+    };
+    const settledAny =
+      deadInstances.length > 0 ||
+      (roomTimerSummary?.advanced ?? 0) > 0 ||
+      (roomTimerSummary?.jobsRepaired ?? 0) > 0 ||
+      (unsettledRuns?.settled ?? 0) > 0 ||
+      Object.keys(roomSessions?.outcomes ?? {}).some((label) => ROOM_ACTION_OUTCOMES.has(label)) ||
+      Object.keys(runningSessions?.outcomes ?? {}).some((label) => label.startsWith('settled')) ||
+      (staleSessions?.outcomes.expired ?? 0) > 0 ||
+      (staleRoomSessions?.outcomes.expired ?? 0) > 0;
+    const log =
+      settledAny || errors.length > 0 ? logger.warn.bind(logger) : logger.debug.bind(logger);
+    log(
+      { trigger: job.trigger, correlationId: job.correlationId, ...summary },
+      'Reconcile run finished',
+    );
+    if (errors.length > 0) {
+      throw errors.length === 1 ? errors[0] : new AggregateError(errors, 'reconcile steps failed');
+    }
+    return summary;
+  };
+
+  // Single-flight within this instance: one run at a time. A run requested while one is in
+  // flight waits for it and then runs once more (shared by every request meanwhile), since
+  // the running one may have started before the cause of the request.
+  let inFlight: Promise<unknown> | undefined;
+  let queued: Promise<ReconcileSummary> | undefined;
+
+  const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
+    const running = work().finally(() => {
+      inFlight = undefined;
+    });
+    inFlight = running;
+    return running;
+  };
+
+  const run = (job: ReconcileJob): Promise<ReconcileSummary> => {
+    if (inFlight === undefined) {
+      return exclusive(() => fullRun(job));
+    }
+    queued ??= inFlight
+      .catch(() => undefined)
+      .then(() => {
+        queued = undefined;
+        return run(job);
+      });
+    return queued;
+  };
+
+  return {
+    run,
+    /** A direct run (the trigger's watchdog): skipped while another run is in flight here. */
+    runIfIdle: (job: ReconcileJob): Promise<ReconcileSummary | undefined> =>
+      inFlight === undefined ? run(job) : Promise.resolve(undefined),
+    /**
+     * Step 6 alone, PostgreSQL only — while Redis is unavailable (E22). Skipped while
+     * another run is in flight here.
+     */
+    runStaleCleanup: (): Promise<SweepSummary | undefined> =>
+      focusSessions === undefined || inFlight !== undefined
+        ? Promise.resolve(undefined)
+        : exclusive(() => sweepStaleSessions({ ...focusSessions.deps, logger }, sweepOptions())),
+    /** Stops starting new sessions in a running sweep and waits for the run to end. */
+    stop: async (): Promise<void> => {
+      stopping = true;
+      await inFlight?.catch(() => undefined);
     },
   };
 };

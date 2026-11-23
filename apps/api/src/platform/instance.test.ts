@@ -93,3 +93,34 @@ describe('tick handlers', () => {
     expect(runs).toBe(1);
   });
 });
+
+describe('stop', () => {
+  it('is not undone by a heartbeat that was already waiting for the Redis clock', async () => {
+    const calls: string[] = [];
+    let releaseTime: () => void = () => undefined;
+    const redis = {
+      time: () =>
+        new Promise<string[]>((resolve) => {
+          releaseTime = () => {
+            resolve(['1790000000', '0']);
+          };
+        }),
+      zadd: () => {
+        calls.push('zadd');
+        return Promise.resolve(1);
+      },
+      zrem: () => {
+        calls.push('zrem');
+        return Promise.resolve(1);
+      },
+    } as unknown as Redis;
+    const heartbeat = heartbeatOn(redis);
+
+    const inFlight = heartbeat.tick('tick');
+    await heartbeat.stop();
+    releaseTime();
+    await inFlight;
+
+    expect(calls).toEqual(['zrem']);
+  });
+});

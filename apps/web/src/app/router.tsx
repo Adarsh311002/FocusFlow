@@ -1,30 +1,27 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 
 import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { LandingPage } from '../features/landing/landing-page';
+import { ReviewPage } from '../features/review/review-page';
+import { RoomPage } from '../features/rooms/room-page';
+import { RoomsPage } from '../features/rooms/rooms-page';
 import { SystemStatus } from '../features/system/system-status';
-
-/** Minimal shell: the app name and a slot for the active route. No design work yet. */
-function RootLayout() {
-  return (
-    <div className="min-h-screen bg-white text-slate-900">
-      <header className="border-b border-slate-200 px-6 py-4">
-        <h1 className="text-lg font-semibold">Focus Flow</h1>
-      </header>
-      <main className="px-6 py-8">
-        <Outlet />
-      </main>
-    </div>
-  );
-}
+import { RootLayout } from './root-layout';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  component: LandingPage,
+});
+
+const statusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/status',
   component: SystemStatus,
 });
 
@@ -59,8 +56,61 @@ const dashboardRoute = createRoute({
   component: ProtectedDashboard,
 });
 
+/** The review step of the loop (Phase 5): history and summary, guarded like the dashboard. */
+function ProtectedReview() {
+  return (
+    <RequireAuth>
+      <ReviewPage />
+    </RequireAuth>
+  );
+}
+
+const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/review',
+  component: ProtectedReview,
+});
+
+/** Rooms (Phase 6): my rooms, create and join, then one room live. Guarded like the rest. */
+function ProtectedRooms() {
+  return (
+    <RequireAuth>
+      <RoomsPage />
+    </RequireAuth>
+  );
+}
+
+function ProtectedRoom() {
+  return (
+    <RequireAuth>
+      <RoomPage />
+    </RequireAuth>
+  );
+}
+
+const roomsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rooms',
+  component: ProtectedRooms,
+});
+
+const roomRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rooms/$roomId',
+  component: ProtectedRoom,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
-const routeTree = rootRoute.addChildren([indexRoute, loginRoute, signupRoute, dashboardRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  statusRoute,
+  loginRoute,
+  signupRoute,
+  dashboardRoute,
+  reviewRoute,
+  roomsRoute,
+  roomRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

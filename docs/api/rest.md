@@ -54,33 +54,44 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 
 | Method & route | Request | Response | Rules and retry behaviour |
 |---|---|---|---|
-| `POST /focus-sessions` | `{ plannedSeconds, taskId? }` | `201 { session }` | Solo start. User must be connected (`409 NOT_CONNECTED`). `409 SESSION_IN_PROGRESS` includes the existing session, so a retried start can recover. Task must be own and not deleted. |
-| `GET /focus-sessions/current` | — | `{ session \| null }` | Solo or room; used to restore after refresh |
-| `POST /focus-sessions/:id/pause` | — | `{ session }` | Solo only (`409 NOT_SOLO_SESSION` for room sessions). Already paused → `200`. |
-| `POST /focus-sessions/:id/resume` | — | `{ session }` | Solo only; user must be connected. Already running → `200`. |
-| `POST /focus-sessions/:id/stop` | — | `{ session }` | Solo only → `abandoned(stopped)` keeping actual time. Already ended → `200`. |
-| `GET /focus-sessions` | `?from&to&cursor&limit` | `{ sessions, nextCursor }` | Own history. Each session includes its task reference `{ id, title, deleted }` if any. |
-| `GET /focus-sessions/summary` | `?from&to&tz` | `{ completedCount, completedFocusedSeconds, totalFocusedSeconds, days: [{ date, completedFocusedSeconds, totalFocusedSeconds }] }` | `tz` is an IANA timezone (D18 default). Both totals are returned (D34 default). |
+| `POST /focus-sessions` | `{ plannedSeconds, taskId? }` | `201 { session }` | Solo start. `plannedSeconds` is an integer 60–14,400 (E1). User must be connected (`409 NOT_CONNECTED`); while presence cannot be trusted — the check failed, the Redis epoch is unknown, or within `INSTANCE_TTL_MS` after a Redis data loss — `503` and nothing changes (E21). `409 SESSION_IN_PROGRESS` includes the existing session in `details.session`, so a retried start can recover. `taskId` is optional; when given it must be the user's own and not deleted (`404 TASK_NOT_FOUND`) and open (`409 TASK_NOT_OPEN`) (E3). The server never fills in the current task. |
+| `GET /focus-sessions/current` | — | `{ session \| null }` | The in-progress session, if any; used to restore after a reload |
+| `POST /focus-sessions/:id/pause` | — | `{ session }` | Already paused or ended → `200` unchanged (E11). At or after the planned end the decision for a running session runs first (E7): it may complete the session, abandon it as `grace_expired` (offline, the recorded disconnect's grace over), or expire it after a definite Redis loss; `503` when it cannot decide, including within `INSTANCE_TTL_MS` after a Redis data loss (E18). Room sessions (Phase 8) → `409 NOT_SOLO_SESSION`. |
+| `POST /focus-sessions/:id/resume` | — | `{ session }` | User must be connected (`409 NOT_CONNECTED`; `503` while presence cannot be trusted, E21). Already running or ended → `200` unchanged (E11). |
+| `POST /focus-sessions/:id/stop` | — | `{ session }` | → `abandoned(stopped)` keeping the actual time, rounded down (E14). At or after the planned end the decision for a running session runs first (E7): it may complete the session, abandon it as `grace_expired` (offline, the recorded disconnect's grace over), or expire it after a definite Redis loss; `503` when it cannot decide, including within `INSTANCE_TTL_MS` after a Redis data loss (E18). Already ended → `200` unchanged. |
+| `GET /focus-sessions` | `?from&to&cursor&limit` | `{ sessions, nextCursor }` | Own history, every status (the in-progress session included), newest-started first (`started_at DESC, id DESC`). `from`/`to` are optional ISO-8601 instants with an offset (at most millisecond precision) selecting `startedAt` in `[from, to)`; `from < to`, and each instant must fall in `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` (V1). `limit` defaults to 50, maximum 100. `cursor` is the opaque `nextCursor` of the previous page; a cursor that does not name one of the user's sessions → `400 VALIDATION_FAILED` (V2). Each session includes its task reference `{ id, title, deleted }` if any, soft-deleted tasks included (D38). |
+| `GET /focus-sessions/summary` | `?from&to&tz` | `{ completedCount, completedFocusedSeconds, totalFocusedSeconds, days: [{ date, completedFocusedSeconds, totalFocusedSeconds }] }` | All three parameters required. `from`/`to` are calendar dates `YYYY-MM-DD`, both included, `from ≤ to`, at most 366 days, not before 1970 (V3, V4). `tz` is `UTC` or an IANA `Area/Location` name (D18 default; offsets, abbreviations and POSIX rules → `400`, V5). Only ended sessions count, each on the date in `tz` on which it started; `completed…` covers completed sessions, `total…` adds abandoned sessions' recorded time (D34 default, V6). `days` lists every date of the range oldest first, zeros included; each total is the sum of its days (V7). |
 
 There is no "complete" endpoint: completion is decided by the server (see `architecture/focus-timing-protocol.md`) and announced with the `focus:session:updated` socket event.
 
-## Rooms (D8, D9, D16)
+- Every focus-session route requires a bearer token and is scoped to the authenticated user; another user's or an unknown session → `404 NOT_FOUND`. Each change runs in one transaction that locks the session row, and then emits `focus:session:updated` (E6).
+- The review parameters travel in the query string, where a raw `+` means a space, so an offset must be percent-encoded: `?from=2026-10-05T05:30:00+05:30` arrives as `2026-10-05T05:30:00 05:30` and answers `400 VALIDATION_FAILED`. Send `%2B` (`?from=2026-10-05T05:30:00%2B05:30`, `?tz=Etc/GMT%2B5`) — `URLSearchParams` and `encodeURIComponent` do it — or use `Z` for UTC.
+- Both review routes validate their query strictly: an unknown key, an instant the schema refuses (without an offset, finer than millisecond precision, or outside `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` — year 0, or year 10000 reached through an offset), `from` not earlier than `to` (history), `from` later than `to`, a range over 366 days or a date before 1970 (summary), a `limit` that is not an integer in 1–100, a cursor that does not decode or does not name one of the user's sessions, and a `tz` that is not an accepted time zone name all answer `400 VALIDATION_FAILED`.
+- **Phase 4B** implements start, current, pause, resume and stop (solo only). **Phase 5** implements history and summary (read-only, PostgreSQL only; V1–V8). `NOT_SOLO_SESSION` (Phase 8): pause, resume and stop on a room session answer `409 NOT_SOLO_SESSION`; `GET /focus-sessions/current` and the history return room sessions with `context.kind = "room"` (RF11).
+
+## Rooms (D8, D9, D16) — implemented in Phase 6
+
+Decisions D8, D9, D10, D16, D20, D36 and M1–M13. Rooms, memberships and room settings are PostgreSQL; presence, knocks and chat are Redis and Socket.IO (`api/socket-events.md`). Every route requires a bearer token and is scoped to the authenticated user. A room that does not exist and a room the caller may not see answer the same (`404 ROOM_NOT_FOUND`, M4); the one deliberate exception is the preview that `by-code` gives anyone holding a code. `403 NOT_HOST` is only ever answered to a member.
 
 | Method & route | Request | Response | Rules and retry behaviour |
 |---|---|---|---|
-| `POST /rooms` | `{ name, isPrivate, timerSettings? }` | `201 { room }` | Creates the room and the host's membership in one transaction. Settings default to 25/5/15 min. |
-| `GET /rooms` | `?scope=mine` | `{ rooms: [{ …room, presentCount }] }` | Rooms the user is a member of. `scope=public` only if D12 approves discovery. |
-| `GET /rooms/by-code/:code` | — | `{ room, access, presentCount }` | `access`: `host` \| `member` \| `can_join` (public, not yet a member) \| `must_knock` (private, not a member). Non-members of private rooms receive a preview: `{ id, code, name, isPrivate }`. |
-| `GET /rooms/:roomId` | — | `{ room }` | Members only. `RoomView` includes `timerSettings`. |
-| `PATCH /rooms/:roomId/timer-settings` | `{ focusSeconds?, shortBreakSeconds?, longBreakSeconds? }` | `{ room }` | Host only. Saved to PostgreSQL, then the Redis copy; emits `room:settings:updated` with `effectiveFrom: "next_phase"` (D16). |
-| `GET /rooms/:roomId/members` | — | `{ members }` | Members only |
-| `POST /rooms/:roomId/membership` | — | `201` or `200 { membership }` | Public rooms only (`403 KNOCK_REQUIRED` for private). Idempotent upsert (D9). |
-| `DELETE /rooms/:roomId/membership` | — | `204` | Members; the host gets `409 HOST_CANNOT_LEAVE` (D10). Abandons any room participation (`left_room`) and removes presence. Repeatable. |
-| `DELETE /rooms/:roomId/members/:userId` | — | `204` | Host only. Deletes the membership and abandons participation (`removed`) in one transaction, then evicts sockets and emits `room:member:removed`. |
-| `POST /rooms/:roomId/knocks/:userId/approve` | — | `{ membership }` | Host only. The knock must still be pending (`410 KNOCK_EXPIRED`). Upserts membership, deletes the knock, emits `room:knock:resolved` to the requester and `room:knock:removed` to the host. Already a member → `200`. |
-| `POST /rooms/:roomId/knocks/:userId/reject` | — | `204` | Host only. Deletes the knock, emits the same events. Repeatable. |
-| `POST /rooms/:roomId/focus-participation` | `{ taskId? }` | `201 { session }` | Opt in (D11). Member, present in the room, phase is focus (D31 default), no in-progress session. `409 RUN_CHANGED` if the run changed meanwhile; `409 SESSION_IN_PROGRESS` returns the existing session (and repairs a half-completed opt-in). |
-| `DELETE /rooms/:roomId/focus-participation` | — | `{ session }` | Opt out → `abandoned(opted_out)`. Does not require presence. Repeatable. |
+| `POST /rooms` | `{ name, isPrivate, timerSettings? }` | `201 { room }` | Name trimmed, 1–60 characters. Creates the room and the host's membership in one transaction, with a generated join code (M2). `timerSettings` may give any of the three durations; the rest default to 25/5/15 min (M3). A retried create makes a second room (low harm; `Idempotency-Key` later). |
+| `GET /rooms` | `?scope=mine` | `{ rooms: [{ …room, presentCount }] }` | Rooms the user is a member of, most recently joined first. `presentCount` is the number of people with a live socket in the room; if Redis cannot answer it is `0` and the list still succeeds. `scope=public` only if D12 approves discovery. |
+| `GET /rooms/by-code/:code` | — | `{ access, room, presentCount }` | `access`: `host` | `member` (full `RoomView`) | `can_join` (public, not a member) | `must_knock` (private, not a member). The last two receive only the preview `{ id, code, name, isPrivate }`, and `presentCount` is `null` for a private room's non-member. Case and spaces in the code are forgiven; an unknown code → `404 ROOM_NOT_FOUND`, a malformed one → `400 VALIDATION_FAILED`. |
+| `GET /rooms/:roomId` | — | `{ room }` | Members only (`404` for everyone else). `RoomView` includes `hostId` and `timerSettings`. |
+| `PATCH /rooms/:roomId/timer-settings` | `{ focusSeconds?, shortBreakSeconds?, longBreakSeconds? }` | `{ room }` | Host only (`403 NOT_HOST` for another member). At least one duration, within the bounds of M3. Saved to PostgreSQL, then `room:settings:updated` with `effectiveFrom: "next_phase"` (D16). |
+| `GET /rooms/:roomId/members` | — | `{ members }` | Members only; oldest membership first; `{ userId, displayName, avatarUrl, joinedAt, isHost }` (never an email). |
+| `POST /rooms/:roomId/membership` | — | `201 { membership }` or `200 { membership }` | Public rooms: idempotent upsert (D9), `201` only for the call that created it; announces `room:member:joined`. A private room → `403 KNOCK_REQUIRED` unless the caller is already a member (`200`). |
+| `DELETE /rooms/:roomId/membership` | — | `204` | Members; the host gets `409 HOST_CANNOT_LEAVE` (D10). Removes the caller's presence and sockets from the room and sends `room:member:removed` (reason `left`). A non-member, or a room that does not exist, also answers `204` and reveals nothing. Repeatable. The caller's room focus session is abandoned (`left_room`) in the same transaction as the membership delete (Phase 8, RF8). |
+| `DELETE /rooms/:roomId/members/:userId` | — | `204` | Host only. Deletes the membership, then evicts the user's sockets and emits `room:member:removed` (reason `removed`). `409 CANNOT_REMOVE_HOST` for the host themselves. Removing someone who is not a member answers `204`. A removed user of a public room may rejoin at once (D36). |
+| `POST /rooms/:roomId/knocks/:userId/approve` | — | `201 { membership }` or `200 { membership }` | Host only, private rooms only (`409 NOT_PRIVATE`). The knock must still be pending (`410 KNOCK_EXPIRED`); a user who is already a member → `200`. Upserts the membership, then removes the knock (if a concurrent reject or an expiry won that removal, the membership this call created is deleted again and the answer is `410 KNOCK_EXPIRED`), emits `room:knock:resolved` to the requester and `room:knock:removed` to the host, and `room:member:joined` to the room. `503` if Redis cannot say whether the knock is pending. |
+| `POST /rooms/:roomId/knocks/:userId/reject` | — | `204` | Host only. Removes the knock and emits the same two events with `rejected`. Repeatable. `503` if Redis is unreachable. |
+| `POST /rooms/:roomId/focus-participation` | `{ taskId? }` | `201 { session }` (`200` for a repaired retry) | **Implemented in Phase 8 (RF4).** Opt in (D11). Members only (`404 ROOM_NOT_FOUND` otherwise, M4). In order: the timer must be in a focus phase (`409 NOT_FOCUS_PHASE`), the caller present in the room (`409 NOT_PRESENT`), no other in-progress session (`409 SESSION_IN_PROGRESS` with the existing session in `details`; the caller's own half-completed opt-in in this run is repaired instead), at least 60 s of the phase left (`409 RUN_ENDING`), an optional own, open, not-deleted `taskId` (`404 TASK_NOT_FOUND`, `409 TASK_NOT_OPEN`). `planned_seconds` = the remaining phase time. `409 RUN_CHANGED` when the run closed meanwhile (the just-created row is deleted). `429 RATE_LIMITED` (10 per 10 s). `503` when Redis cannot answer. The session's `context` is `{ kind: "room", roomId, focusRunId }`. |
+| `DELETE /rooms/:roomId/focus-participation` | — | `200 { session }` | **Implemented in Phase 8.** Opt out → `abandoned(opted_out)` keeping the time focused so far. Does not require presence. Repeatable (returns the user's latest room session); `404 NOT_FOUND` if the user never took part. Same rate limit. |
+| `GET /rooms/:roomId/focus-participation` | — | `{ focusRunId, participants, me, session }` | **Phase 8.** Members only. The current run, its participants (`userId, displayName, avatarUrl, optedInAtMs, connected, disconnectedAtMs`; never task titles or emails, RF14), the caller's own participation and their own in-progress session, for restoring a page. The run part is the join snapshot's `focus` shape and also carries `participantsVersion` (G2). |
+
+- Strict validation: unknown keys (for example a `hostId` or `userId` in a body), malformed UUIDs and codes, and out-of-range durations → `400 VALIDATION_FAILED`. Identity and the host always come from the token and PostgreSQL, never from the client.
+- Persist, then emit: every announcement above happens after the PostgreSQL commit and is never able to change the response; a failed announcement is logged and the next read heals it (`failure-recovery.md`).
 
 ## Health
 
@@ -90,3 +101,20 @@ Health checks are split (P2):
 |---|---|---|
 | `GET /healthz` | Public | Liveness: `200 { status: "ok" }` whenever the process is running and able to respond. Never checks dependencies. |
 | `GET /readyz` | Public | Readiness: `200 { status: "ready", checks: { postgres: "ok", redis: "ok" } }` when all required dependencies are reachable; otherwise `503 { status: "not_ready", checks: { … } }` with each failing check marked `"unavailable"`. |
+
+## Rate limits (Phase 9, implemented)
+
+Fixed-window counters in Redis (`ff:ratelimit:{action}:{subject}`); a refused request answers `429 RATE_LIMITED` with a `Retry-After` header (seconds). Behind Nginx the client address comes from `trust proxy` (production).
+
+| Scope | Subject | Limit | If Redis cannot count |
+| --- | --- | --- | --- |
+| Every request except `/healthz` and `/readyz` | client address | 600 / minute | allowed (logged) |
+| `POST /auth/login` | client address | 10 / minute | `503` |
+| `POST /auth/signup` | client address | 10 / hour | `503` |
+| `POST /auth/refresh` | client address | 60 / minute | `503` |
+| `POST /rooms` (create) | user | 10 / hour | `503` |
+| `GET /rooms/by-code/:code` (code lookup) | user | 30 / minute | `503` |
+| `POST /rooms/:roomId/membership` (join) | user | 30 / minute | `503` |
+| Room focus opt-in/out (Phase 8) | user | 10 / 10 s | `503` |
+
+`HTTP_RATE_LIMIT=off` disables the Phase 9 limits for tests and the e2e stack; production configuration refuses it. Socket limits (chat, knock, join, timer) are unchanged. Still to do in Phase 9: a per-user socket cap (R4), tuning from load tests.

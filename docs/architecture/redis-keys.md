@@ -20,19 +20,21 @@ All application keys start with the configured prefix (P3): `REDIS_KEY_PREFIX`, 
 | `ff:instances` | Sorted set | `instanceId` scored by its last heartbeat (Redis TIME, ms) (R1) | Refreshed every heartbeat; dead ones removed by the reconciler (the score survives the instance) |
 | `ff:instance:{instanceId}:sockets` | Set | `{userId}:{socketId}`: reverse presence index (R1) | Emptied as sockets disconnect; kept equal to the instance's live sockets by its sync on every heartbeat (H1); emptied by clean shutdown or the reconciler |
 | `ff:user:{userId}:sockets` | Set | `{instanceId}:{socketId}` | Emptied as sockets disconnect; stale entries of a live instance removed by its sync (H1); entries of dead instances ignored at read time and removed by the reconciler. Always changed together with the reverse index in one transaction |
-| `ff:user:{userId}:disconnected` | String | `disconnectedAtMs` while a running solo session is in grace | Deleted on reconnect or settlement; safety TTL |
+| `ff:user:{userId}:disconnected` | String | `{sessionId}:{latestDisconnectedAtMs}:{evidence}` (Redis TIME; `evidence` is `observed` for a direct socket disconnect, `detected` for `missed_disconnect`, `instance_dead`, `instance_shutdown` and late grace) while a running solo session is in grace (E10) | Changed only with `WATCH`/`MULTI` and bounded retry: a newer disconnect for the same session replaces it, an older one is ignored, an equal one can only upgrade `detected` to `observed` (never the reverse), events from before the current running stretch are ignored, another session's marker is replaced. Cleared only while it still belongs to the session concerned: on a confirmed reconnect (up to the confirmation time), and on pause, resume, stop or settlement. Safety TTL longer than the 12-hour stale window. A decision reads it in the same `MULTI` as presence and the epoch (E17), on its own only when that read fails. See `focus-timing-protocol.md`, "Disconnect marker" |
+| `ff:reconcile:last-finished` | String | When a reconcile run last finished (Redis TIME, ms), written by every run, scheduled or direct (E23) | TTL 24 h. Missing or at least 3 × `RECONCILER_INTERVAL_MS` old: each worker process reconciles directly |
 | `ff:room:{roomId}:presence` | Hash | `userId → { displayName, avatarUrl, firstJoinedAtMs }` | Entry removed when the user's last room socket leaves |
 | `ff:room:{roomId}:presence:{userId}` | Set | `{instanceId}:{socketId}` | Emptied atomically on join/leave |
-| `ff:room:{roomId}:settings` | Hash | `focusSeconds, shortBreakSeconds, longBreakSeconds` (live copy of D16) | Reloaded from PostgreSQL when missing |
-| `ff:room:{roomId}:timer` | Hash | `phase, status, durationMs, segmentStartedAtMs, elapsedBeforeMs, version, focusRunId, updatedAtMs` | Absent = idle focus with saved durations |
-| `ff:rooms:timers:running` | Sorted set | `roomId` scored by `endsAtMs` | Used by the reconciler to find overdue timers |
-| `ff:room:{roomId}:run:{runId}` | Hash | `status (open\|closed), closeReason, closedAtMs, elapsedAtCloseMs, durationMs` | Deleted after settlement |
+| `ff:instance:{instanceId}:rooms` | Set | `{roomId}:{userId}:{socketId}`: reverse index of room presence (M5) | Kept equal to the instance's sockets in Socket.IO rooms by its sync on every heartbeat; emptied by clean shutdown or the reconciler. Always changed together with the presence sets |
+| ~~`ff:room:{roomId}:settings`~~ | — | **Not implemented (RT8):** phase durations are read from PostgreSQL whenever a phase is created | — |
+| `ff:room:{roomId}:timer` | Hash | `phase, status, durationMs, segmentStartedAtMs, elapsedBeforeMs, version, focusRunId` (`focusRunId` is set while the phase is focus, `''` in a break; a Phase 7 timer without the field reads as no run until the host changes the timer) | Materialised at first access as idle focus with the saved durations, `version` starting at the Redis TIME in milliseconds (RT1, RT2); never expires; recreated after a Redis loss |
+| `ff:rooms:timers:running` | Sorted set | `roomId` scored by `endsAtMs` | Written in the same atomic operation as the timer hash (member present exactly while the timer is running); used by the reconciler to find overdue timers and running timers without a job (RT12) |
+| `ff:room:{roomId}:run:{runId}` | Hash | `status (open\|closed), closeReason, openedAtMs, closedAtMs, elapsedAtCloseMs, participantsVersion` (server-owned monotonic counter of the participant list, incremented in the ledger scripts, G2; `closedAtMs` of a completed run is the true end, D17a) | Created and closed by the same atomic write as the timer (RF3); deleted by `finishRun` after settlement |
 | `ff:room:{roomId}:run:{runId}:participants` | Hash | `userId → { sessionId, optedInAtMs, elapsedAtOptInMs, disconnectedAtMs?, elapsedAtDisconnectMs? }` | Entries removed as participants settle |
-| `ff:runs:unsettled` | Set | `{roomId}/{runId}` | Removed when every participant is settled |
-| `ff:room:{roomId}:knocks` | Sorted set | `userId` scored by `expiresAtMs` | Expired entries pruned on read |
+| `ff:rooms:runs:unsettled` | Sorted set | `{roomId}:{runId}` scored by `closedAtMs` | Added by the atomic close; removed by `finishRun` once the run is closed and has no participant left |
+| `ff:room:{roomId}:knocks` | Sorted set | `userId` scored by `expiresAtMs` (`KNOCK_TTL_MS`, default 120 s) | Expired entries pruned on read; a repeated knock refreshes its score; removed on approve, reject and cancel |
 | `ff:auth:revoked:{sid}` | String | `1` | TTL = access-token lifetime |
-| `ff:ratelimit:{action}:{userId}` | String | Counter | TTL = rate window |
-| `ff:chat:dedupe:{userId}:{clientMessageId}` | String | `SET NX` marker | TTL 60 s |
+| `ff:ratelimit:{action}:{userId}` | String | Counter | TTL = rate window. Phase 6: `chat` (10 per 10 s), `knock` (5 per minute), `join` (30 per 10 s) and `knock-cancel` (10 per minute); one `MULTI` of `SET key 0 PX window NX` and `INCR`, so it works on Redis 6 and later |
+| `ff:chat:dedupe:{userId}:{roomId}:{clientMessageId}` | String | `SET NX` marker holding `{messageId}:{sentAtMs}`, so a repeat can be answered with the original ids (M8) | TTL 60 s |
 
 Multi-key changes that must be consistent (timer + run close + unsettled set; presence sets + presence hash; participant add guarded by run ID) are written with small atomic Redis operations (Lua). For the timer (I8), the new state is computed in TypeScript from the current state and Redis `TIME`, and the Lua operation only checks that `version` is unchanged before writing all related keys; conflicts are retried a bounded number of times. Lua never contains business rules.
 
@@ -65,7 +67,7 @@ The Socket.IO Redis adapter and emitter use pub/sub channels, not keys; the chan
 | Room timers, runs, participants | Global: every in-progress **room** focus session → `abandoned(timer_lost)`. Rooms restart as idle focus with saved durations. |
 | Presence | Local: rebuilt from each instance's connected sockets |
 | Clients' view | Local: `room:resync` to every served room; clients rejoin for a fresh snapshot; affected users receive `focus:session:updated` |
-| Solo sessions | Unaffected (PostgreSQL). The reconciler recreates their jobs. Running sessions of users who are not connected → `abandoned(expired)` |
+| Solo sessions | Unaffected (PostgreSQL). The reconciler recreates their jobs. A running session whose user is not connected → `abandoned(expired)` only if the new epoch was created more than 2 s after its `running_since` (definite loss, E9); otherwise late grace (H3) |
 | Knocks | Expire client-side; the requester can knock again |
 | Queued jobs | Recreated by the reconciler from PostgreSQL (solo) or not needed (room timers restarted) |
 | Rate limits, chat de-duplication | Harmless to lose |

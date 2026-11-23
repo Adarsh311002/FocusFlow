@@ -10,7 +10,12 @@ import { errorCodeSchema } from '../errors';
  */
 export const ackErrorSchema = z.object({
   ok: z.literal(false),
-  error: z.object({ code: errorCodeSchema, message: z.string() }),
+  error: z.object({
+    code: errorCodeSchema,
+    message: z.string(),
+    /** Optional structured context, e.g. the current timer on a version conflict (RT6). */
+    details: z.unknown().optional(),
+  }),
 });
 export type AckError = z.infer<typeof ackErrorSchema>;
 

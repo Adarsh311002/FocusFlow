@@ -11,7 +11,11 @@ Guiding principle: the MVP is the first coherent milestone of a long-term produc
 - Phase 2 (tasks): **merged** into `main` (checkpoint: tag `phase-2-tasks`).
 - Phase 3 (real-time foundation): **merged** into `main` (checkpoint: tag `phase-3-realtime`); see "Phase 3" below.
 - Phase 4A (presence hardening): **merged** into `main` (checkpoint: tag `phase-4a-presence-hardening`); see "Phase 4A" below.
-- Phase 1b, Phase 4B (Solo Focus) and later phases: **not started**. Each phase begins only when explicitly instructed.
+- Phase 4B (Solo Focus): **implemented and committed** on `v2/phase-4b-solo-focus` (not merged into `main`) — E1–E23 approved; Milestones 1–4 (API, lifecycle jobs, presence integration, reconciler and recovery) implemented; Milestone 5 (web Solo Focus and the `focus:session:updated` event, W1–W6 awaiting review) committed on `v2/phase-5-review` (commits `410f948`, `89eaf01` and later). See "Phase 4B" below.
+- Phase 5 (review): **committed and pushed** on `v2/phase-5-review` (branched from the Phase 4B branch; not merged into `main`) — history and summary endpoints and the `/review` page implemented with technical defaults V1–V8 awaiting review; legacy deletion **waits** for the owner's answer on deployment and MongoDB data (`decisions/open-decisions.md`). See "Phase 5" below.
+- Phase 6 (rooms and presence): **committed and pushed** on `v2/phase-6-rooms`; Phase 7 (room timer): **committed and pushed** on `v2/phase-7-room-timer`; Phase 8 (room focus runs): **implemented** on `v2/phase-8-room-focus-runs` (being committed). None is merged into `main`.
+- **Owner decision, 2026-11-11:** M1–M13, RT1–RT13 and RF1–RF17 are accepted as the MVP baseline (tested implementation), subject to the changes recorded in `decisions/decision-log.md` (RT1, RT8/D16, D17a, RF7, RF17). Migration `0004` (RF1) is approved; it must be deployed in a coordinated way (migrate first, then deploy all roles together; stop old workers before the new migration is live, because old code on the new schema would not exclude room rows from solo sweeps). The non-blocking open items D2, D12, D20, D24, D31, D32, D34, D36, D37 are deferred.
+- Phase 1b (Google sign-in) is **not started**. **Phase 9 (production readiness)** is the **next milestone, not started**: REST and socket rate limiting, room lookup/creation abuse protection, membership removal/rejoin policy, production Docker images and Nginx, database migrations and backups, CI/E2E integration, security review, load testing, runbooks and final deployment verification. Each phase begins only when explicitly instructed.
 - Remaining open items are listed in `decisions/open-decisions.md` with the phase that needs them.
 
 ## Repository structure (I1, I2)
@@ -197,11 +201,11 @@ Naming: UPPER_SNAKE_CASE, units in the name (`_SECONDS`, `_MS`), `_URL` for conn
 | 2 Tasks | Tasks, current task, soft delete (D3, D38, D43) | 1 | Ownership, soft-delete and current-task rules tested | — |
 | 3 Real-time foundation | Authenticated sockets, Redis adapter and emitter, per-user presence, BullMQ, `ROLE`, reconciler skeleton, epoch check, clock sync | 1 | Presence, revocation and dead-instance cleanup tested | — |
 | 4 Solo focus | Solo sessions with pause, server-driven completion, grace, stale cleanup | 2, 3 | Every solo transition and race tested | — |
-| 5 Review | History and summary | 4 | Timezone aggregation tested | **Solo core loop**; legacy deleted |
+| 5 Review | History and summary | 4 | Timezone aggregation tested | **Solo core loop**; legacy deleted (still waiting on the owner's answer, see "Phase 5") |
 | 6 Rooms and presence | Rooms, membership, knocks, room presence, temporary chat; Playwright added | 3 | Permission, knock and multi-client tests | — |
-| 7 Room timer | Pure timer logic, version-checked writes, host commands, phase-end jobs, D16 settings | 6 | Property and race tests pass | — |
-| 8 Room focus runs | Opt-in, run ledger, settlement, grace, full reconciler, Redis-loss recovery | 4, 7 | Grace, settlement and Redis-failure scenarios pass | **MVP feature-complete** |
-| 9 Launch readiness | Production images, Nginx single origin, migration job, backups, security review, E2E required, D39, D2, D33 | 8 | Launch checklist complete | **Launchable MVP** |
+| 7 Room timer | Pure timer logic, version-checked writes, host commands, phase-end jobs, D16 settings | 6 | Property and race tests pass | Committed and pushed on `v2/phase-7-room-timer` (RT1–RT13 accepted 2026-11-11) |
+| 8 Room focus runs | Opt-in, run ledger, settlement, grace, full reconciler, Redis-loss recovery | 4, 7 | Grace, settlement and Redis-failure scenarios pass | **MVP feature-complete.** Implemented on `v2/phase-8-room-focus-runs` (RF1–RF17 accepted 2026-11-11) |
+| 9 Launch readiness (production readiness) | REST and socket rate limiting, room lookup/creation abuse protection, membership removal/rejoin policy, production images, Nginx single origin, migration job, backups, CI/E2E integration, security review, load testing, runbooks, final deployment verification, D39, D2, D33 | 8 | Launch checklist complete | **Launchable MVP** |
 | 10+ | AI foundation, then D13; notifications; analytics; payments | 9 | — | — |
 
 ## First slice
@@ -265,7 +269,7 @@ Branch: `v2/phase-0-foundation`, merged through a pull request.
 - [x] `git diff` shows no changes to `Client/`, `Server/`, the root `docker-compose.yml` or `archi/`
 
 ### Deliberately not in Phase 0
-Database schema, Drizzle schema files and migrations (Phase 1); authentication (Phase 1); Socket.IO, BullMQ, the worker role and presence (Phase 3); Zustand (Phase 6); Dockerfiles and a full-stack Compose profile (Phase 9, or earlier if CI end-to-end tests need them); `e2e/` and Playwright (Phase 6); Radix.
+Database schema, Drizzle schema files and migrations (Phase 1); authentication (Phase 1); Socket.IO, BullMQ, the worker role and presence (Phase 3); Zustand (Phase 6, done); Dockerfiles and a full-stack Compose profile (Phase 9, or earlier if CI end-to-end tests need them); `e2e/` and Playwright (Phase 6, done); Radix.
 
 ## Decisions resolved before Phase 0
 
@@ -314,6 +318,68 @@ Branch: `v2/phase-4a-presence-hardening`. Decisions H1–H4 (`decisions/decision
 - **Store:** every write that can change whether a user is online runs in one MULTI with Redis TIME and the heartbeats; dead-instance cleanup removes only the members it read instead of deleting the index.
 - **Tests:** unit tests for the sync plan, the liveness rule, event reporting and collapse, single-flight and retry, and heartbeat retries; integration tests for sync against Redis, both orderings of a disconnect racing a sync, many tabs closing during re-assertion, `disconnectedAtMs`, a missed disconnect on one of two instances (Redis cut through a TCP proxy), Redis reconnect repair, dead-instance timestamps and concurrent cleanup.
 - **Not in Phase 4A:** focus sessions, their migration, endpoints, queue, grace/end jobs and the reconciler sweep that implements late grace (H3) — Phase 4B.
+
+## Phase 4B — Solo Focus (in progress)
+
+Decisions E1–E23 (`decisions/decision-log.md`); protocol in `architecture/focus-timing-protocol.md`, "Solo sessions". Milestones 1–4 are implemented on `v2/phase-4b-solo-focus`. Milestone 5 (web) was built on `v2/phase-5-review`, on top of Phase 5; decisions W1–W6.
+
+- **Schema:** one migration adding `focus_sessions` (solo only: no room columns, solo abandon reasons only, planned 60–14,400 s, `0 ≤ focused ≤ planned`, `ended_at ≥ started_at`, `running_since ≥ started_at`, completed ⇒ `focused = planned`, one in-progress session per user) (`domain/model.md`).
+- **API:** `POST /focus-sessions`, `GET /focus-sessions/current`, `POST /focus-sessions/:id/pause|resume|stop`, each in one transaction locking the session row, then `focus:session:updated` (E6).
+- **Jobs:** a `focus-session` queue with solo end and solo grace jobs; one decision procedure for running sessions shared by the jobs, the reconciler sweep and pause/stop at the planned end (E7, E8, E9); the monotonic disconnect marker with observed/detected evidence, cleared only while it belongs to the session (E10); reconnect-within-grace recovery (E16); reconciler steps 5–6 (late grace, definite-Redis-loss expiry, 12 h stale cleanup).
+- **Recovery (Milestone 4, E17–E23):** decisions read the epoch atomically with presence and defer during the presence-recovery window; scheduling ensures jobs (retained completed/failed BullMQ jobs re-run with attempts reset); the sweep settles terminal outcomes directly under `FOR UPDATE SKIP LOCKED`; stale cleanup runs after it and without Redis; each worker process owns a reconcile trigger that restores a lost schedule and reconciles directly when runs stop.
+- **Presence:** one small change to the Phase 4A layer: a clean shutdown's cleanup reports the new offline reason `instance_shutdown` instead of `disconnect` (E10), so that only a socket's own disconnect counts as `observed` evidence.
+- **Web (Milestone 5, W1–W6):** a solo timer panel on `/dashboard` (`features/focus`): start with a duration and an optional task, running/paused display, pause/resume/stop with an in-page confirmation, restore after reload without a second session, and the server's completion or abandonment shown from `GET /focus-sessions/current`. TanStack Query only, no optimistic updates (E12). The countdown is display only, from the Redis-TIME clock offset. The typed `focus:session:updated` event (emitted by the API after commit, to every tab of the owner) never sets the current session: it triggers a refetch of current, history and summary, as does every socket reconnect.
+- **Tests:** pure timing/transition unit tests with `fast-check` properties (E13); API, PostgreSQL concurrency, Redis/BullMQ and realtime integration tests; web component tests. Playwright stays deferred.
+- **Not in Phase 4B:** rooms, room timers, focus runs, chat, history and summary (Phase 5), AI, notifications, analytics, payments.
+
+## Phase 5 — Review
+
+Started 2026-10-16 on `v2/phase-5-review`, branched from the unmerged Phase 4B branch (its Milestone 4 commits are not on `main` yet). Details: V1–V8 in `decisions/decision-log.md`.
+
+- **API:** `GET /focus-sessions` (history: every status, `started_at DESC, id DESC`, `[from, to)` instants, owner-scoped id cursor, task joined with the owner, soft-deleted tasks marked) and `GET /focus-sessions/summary` (inclusive dates in an IANA `tz`, ended sessions only, counted on their local start date, dense `days`). Read-only, PostgreSQL only; served by the existing `ix_focus_sessions_user_id_started_at`, no migration. The time zone is validated and applied only in Node (`Intl`); PostgreSQL sums per UTC minute.
+- **Contracts:** query and response schemas, `focusSessionPaths.summary`, and calendar-date / time zone helpers shared with the web app (`packages/contracts/src/dates.ts`).
+- **Web:** `/review` with the last 7 days' summary (both totals, a per-day table) and the paged history; a small authenticated navigation.
+- **Tests:** contract unit tests; API integration tests against real PostgreSQL covering authentication, isolation, validation, ordering and pagination, task references, every status, both totals, and time zone boundaries (half-hour offsets, ±14/−11 h, DST start/end, a missing midnight, a 30-minute DST change) checked against an independent per-session calculation; web component tests.
+- **Exit criterion still open:** deleting the legacy app (I12) needs the owner's answer on whether the legacy app is deployed or has MongoDB data worth keeping.
+
+## Phase 8 — Room focus runs (implemented on `v2/phase-8-room-focus-runs`; accepted by the owner 2026-11-11)
+
+Branch `v2/phase-8-room-focus-runs`, branched from `v2/phase-7-room-timer` (not merged into `main`). Decisions D11, D14/15/35, D17, D17a, D19 and RF1–RF17 (`decisions/decision-log.md`).
+
+- **Schema:** migration `0004_add_room_focus_sessions`: `focus_sessions.room_id` / `focus_run_id` (both or neither), room-only abandon reasons, `running_since` solo-only, a partial index on in-progress room runs. Existing rows keep NULL.
+- **Domain:** `modules/room-focus/model.ts` (pure: planned seconds, focused-seconds arithmetic, settlements, `planRun`) with example and property tests.
+- **Redis:** the run ledger (`ledger.ts`) and the timer's atomic write that also closes and opens runs (`room-timer/store.ts`); keys `room:{id}:run:{runId}`, `…:participants`, `rooms:runs:unsettled`.
+- **Service and REST:** opt-in, opt-out, state, departure, disconnect/reconnect, grace, settlement; solo isolation (`NOT_SOLO_SESSION`).
+- **Jobs and recovery:** `room-grace` jobs on the `focus-session` queue; reconciler steps 3, 4 and 7, and step 6b (RF17: room sessions still in progress after 12 h, 16 h maximum, are expired); global Redis-loss recovery (`timer_lost`).
+- **Deployment:** migrate first, then deploy all roles together; stop old workers before migration `0004` is live.
+- **Realtime:** `room:focus:participants`, the snapshot's `focus`, `focus:session:updated` for room sessions.
+- **Web:** the "Focus together" panel on the room page, outcome messages, Review and dashboard handling of room sessions.
+- **Tests:** model properties; ledger, service, REST, reconciler, recovery and realtime integration tests; web component tests; Playwright multi-user journeys (`e2e/tests/room-focus.spec.ts`).
+- **Not in Phase 8:** Phase 9 and later, AI, notifications, payments, analytics.
+
+## Phase 7 — Shared room timer (done, pushed on `v2/phase-7-room-timer`; accepted by the owner 2026-11-11)
+
+Branch `v2/phase-7-room-timer`, branched from `v2/phase-6-rooms` (neither merged into `main`). Decisions D10, D16, D32, I8 and RT1–RT13 (`decisions/decision-log.md`).
+
+- **Domain:** `modules/room-timer/machine.ts`, a pure function (`state, command, nowMs, settings`) with example and property tests (elapsed never exceeds the duration, versions only increase, no illegal transitions, a stale `expectedVersion` never applies).
+- **Redis:** the timer hash and the running-timers index (`ff:room:{id}:timer`, `ff:rooms:timers:running`), written by one tiny version-checked Lua operation; `store.ts`, `service.ts` (bounded retry, materialise once, phase end) and PostgreSQL settings reads.
+- **Realtime:** `room:timer:command` (host only), `room:timer:state`, the snapshot's `timer`; `VERSION_CONFLICT` and `INVALID_TRANSITION` carry the current timer.
+- **Jobs:** BullMQ queue `room-timer`, delayed `phase-end` jobs with ensure semantics, reconciler step 2 (overdue and job-less running timers).
+- **Web:** the timer panel in the room page: phase, remaining time from the synced server clock, host controls with pending, confirmation and error states, read-only for others, offline/reconnecting and "Finishing…" states.
+- **Tests:** machine properties; store and service races; jobs, reconciler repair and Redis loss; multi-client Socket.IO; web component tests; Playwright journeys with several browsers (`e2e/tests/room-timer.spec.ts`).
+- **Not in Phase 7:** room focus sessions, runs, participants and settlement (Phase 8), automatic start of the next phase (D32), AI, notifications, analytics, payments.
+
+## Phase 6 — Rooms and presence (done, pushed on `v2/phase-6-rooms`; accepted by the owner 2026-11-11)
+
+Branch `v2/phase-6-rooms`, branched from `v2/phase-5-review` (neither is merged into `main`). Decisions D8, D9, D10, D16, D20, D36 and M1–M13 (`decisions/decision-log.md`).
+
+- **Schema:** migration `0003_create_rooms`: `rooms` (unique 6-character code, name and duration CHECKs, host `ON DELETE RESTRICT`) and `room_members`. No change to `focus_sessions`: room columns, room abandon reasons and `NOT_SOLO_SESSION` move to Phase 8 (M1).
+- **API (REST):** `modules/rooms`: create, list mine, look up by code, read, members, timer-settings, join/leave membership, host removal, knock approve/reject. Permissions are checked against PostgreSQL; non-members never learn more than the preview (M4).
+- **API (realtime):** `modules/room-realtime`: `room:join` (authoritative snapshot), `room:leave`, knocks (Redis sorted set with TTL), temporary chat (deduplicated, rate limited), room presence in Redis with a per-instance reverse index, synchronised on every heartbeat and cleaned up for dead instances (M5), and the `RoomLive` port the REST module announces through.
+- **Contracts:** `RoomId`, room codes, room/member/preview views and requests, `roomPaths`, the room socket events and their payloads, the new error codes.
+- **Web:** `/rooms` (my rooms, create, join by code, knock) and `/rooms/$roomId` (members and live presence, host controls, temporary chat), with a Zustand store per room fed only by the snapshot and socket events (M11).
+- **Tests:** schema constraints, permission matrix and cross-user isolation, idempotency and races, knock lifecycle, multi-client and two-instance Socket.IO tests (presence, chat, eviction, instance death, resync), web component tests, and a Playwright smoke suite (`e2e/`, `pnpm test:e2e`, M12).
+- **Not in Phase 6:** the room timer (Phase 7), room focus sessions and runs (Phase 8), discovery of public rooms (D12), persisted chat and chat backlog (D7, D24), AI, notifications, analytics, payments.
 
 ## Phase 0 review follow-ups
 

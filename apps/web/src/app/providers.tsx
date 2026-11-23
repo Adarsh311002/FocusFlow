@@ -2,7 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 import { AuthProvider } from '../features/auth/auth-context';
+import { useFocusSessionEvents } from '../features/focus/focus-queries';
 import { RealtimeProvider } from '../features/realtime/realtime-provider';
+import { ThemeProvider } from '../ui/theme';
 
 /**
  * Created once for the lifetime of the module so the cache survives re-renders.
@@ -18,16 +20,27 @@ const queryClient = new QueryClient({
   },
 });
 
+/** Mounts the focus-session event subscription once, inside auth, query and realtime. */
+function FocusSessionEvents() {
+  useFocusSessionEvents();
+  return null;
+}
+
 /**
  * `AuthProvider` sits inside the query client because it clears the cache whenever the
  * session changes; the session itself is not stored in TanStack Query.
  */
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <RealtimeProvider>{children}</RealtimeProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RealtimeProvider>
+            <FocusSessionEvents />
+            {children}
+          </RealtimeProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

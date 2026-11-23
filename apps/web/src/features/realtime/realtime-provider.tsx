@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useSyncExternalStore } from 'react';
 
 import { useAuth } from '../auth/auth-context';
+import { RoomLiveEvents } from '../rooms/room-live-events';
 import { getRealtimeClient, type RealtimeClient, type RealtimeStatus } from './realtime-client';
 
 const RealtimeContext = createContext<RealtimeClient | null>(null);
@@ -32,7 +33,21 @@ export function RealtimeProvider({
     };
   }, [client, signedInAs]);
 
-  return <RealtimeContext value={client}>{children}</RealtimeContext>;
+  return (
+    <RealtimeContext value={client}>
+      {signedInAs !== null && <RoomLiveEvents client={client} userId={signedInAs} />}
+      {children}
+    </RealtimeContext>
+  );
+}
+
+/** The app's live connection, for subscribing to its events. */
+export function useRealtimeClient(): RealtimeClient {
+  const client = useContext(RealtimeContext);
+  if (client === null) {
+    throw new Error('useRealtimeClient must be called inside a <RealtimeProvider>.');
+  }
+  return client;
 }
 
 /** The live connection's status, for rendering. */
@@ -42,4 +57,13 @@ export function useRealtimeStatus(): RealtimeStatus {
     throw new Error('useRealtimeStatus must be called inside a <RealtimeProvider>.');
   }
   return useSyncExternalStore(client.subscribe, client.getStatus);
+}
+
+const NO_SUBSCRIPTION = (): (() => void) => () => undefined;
+const NO_STATUS = (): null => null;
+
+/** Like `useRealtimeStatus`, but `null` outside a provider (decorative indicators only). */
+export function useOptionalRealtimeStatus(): RealtimeStatus | null {
+  const client = useContext(RealtimeContext);
+  return useSyncExternalStore(client?.subscribe ?? NO_SUBSCRIPTION, client?.getStatus ?? NO_STATUS);
 }

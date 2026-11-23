@@ -39,12 +39,12 @@ The workspace uses pnpm (I1, I3). `packages/contracts` has no build step: both a
 Illustrative shapes (written as TypeScript-like pseudocode, not files):
 
 ```
-AbandonReason = "stopped" | "expired" | "grace_expired" | "opted_out" | "left_room"
-              | "removed" | "reset" | "phase_changed" | "timer_lost"
+AbandonReason = "stopped" | "expired" | "grace_expired"            // Phase 4B (E5)
+// Phase 8 widens it with the room reasons:
+//   "opted_out" | "left_room" | "removed" | "reset" | "phase_changed" | "timer_lost"
 
-FocusSessionContext =
-  | { kind: "solo" }
-  | { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
+FocusSessionContext = { kind: "solo" }                              // Phase 4B (E4)
+// Phase 8 adds: { kind: "room"; roomId: RoomId; focusRunId: FocusRunId }
 
 FocusSessionView = {
   id: FocusSessionId
@@ -59,16 +59,18 @@ FocusSessionView = {
   | { status: "abandoned"; endedAt: string; abandonReason: AbandonReason }
 )
 
-TimerView = {
+TimerView = {                                // implemented in Phase 7 (RT1–RT13); `focusRunId` added in Phase 8 (RF2)
+  roomId: RoomId
   phase: "focus" | "short_break" | "long_break"
-  version: number
-  durationMs: number
-  focusRunId: FocusRunId | null
-} & (
-  | { status: "idle"; remainingMs: number }
-  | { status: "running"; endsAtMs: number }
-  | { status: "paused"; remainingMs: number }
-)
+  status: "idle" | "running" | "paused"
+  durationMs: number                           // fixed from the room settings when the phase was created
+  elapsedBeforeMs: number
+  segmentStartedAtMs: number | null            // running only
+  endsAtMs: number | null                      // running only
+  focusRunId: FocusRunId | null                // set in a focus phase, null in a break (Phase 8)
+  version: number                              // starts at Redis TIME ms, +1 per accepted change (RT2)
+}
+// remaining: running → endsAtMs − now; otherwise durationMs − elapsedBeforeMs (display only)
 
 TimerCommand =
   | { type: "start" } | { type: "pause" } | { type: "resume" }
@@ -101,7 +103,7 @@ Server-internal states (for example a run that is closing, or a participant wait
 
 ## Error codes
 
-One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_NOT_OPEN`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
+One closed union shared by REST and socket acknowledgements, including: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_REVOKED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`, `ACCOUNT_EXISTS_LINK_REQUIRED`, `GOOGLE_EMAIL_UNVERIFIED`, `GOOGLE_TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_NOT_OPEN`, `SESSION_IN_PROGRESS`, `NOT_CONNECTED`, `NOT_SOLO_SESSION`, `RUN_CHANGED`, `ROOM_NOT_FOUND`, `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `HOST_CANNOT_LEAVE`, `CANNOT_REMOVE_HOST`, `KNOCK_REQUIRED`, `KNOCK_EXPIRED`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `ROOM_FULL`, `VERSION_CONFLICT`, `INVALID_TRANSITION`, `RATE_LIMITED`.
 
 ## Future: Node ↔ Python contracts
 

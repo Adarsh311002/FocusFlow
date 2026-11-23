@@ -58,6 +58,22 @@ export const upsertReconcileSchedule = async (
 };
 
 /**
+ * Re-registers the reconcile schedule if it is missing (a FLUSHALL removes it with
+ * everything else; nothing stored in Redis can restore it). Reading first keeps the regular
+ * path to one read; concurrent repairs are harmless because the upsert is idempotent.
+ */
+export const ensureReconcileSchedule = async (
+  queue: MaintenanceQueue,
+  config: AppConfig,
+): Promise<'present' | 'repaired'> => {
+  if ((await queue.getJobScheduler(RECONCILE_SCHEDULER_ID)) !== undefined) {
+    return 'present';
+  }
+  await upsertReconcileSchedule(queue, config);
+  return 'repaired';
+};
+
+/**
  * A one-off reconcile run. `dedupeKey` makes repeats collapse into one job (for example
  * one startup run per instance, one recovery run per epoch).
  */

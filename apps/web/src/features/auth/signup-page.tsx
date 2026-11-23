@@ -2,6 +2,7 @@ import { signupRequestSchema } from '@focus-flow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 
+import { AuthShell } from '../../ui/auth-shell';
 import { useAuth } from './auth-context';
 import { authErrorMessage } from './auth-messages';
 
@@ -39,97 +40,99 @@ export function SignupPage() {
   }
 
   return (
-    <section aria-labelledby="signup-heading" className="max-w-sm space-y-4">
-      <h2 id="signup-heading" className="text-base font-semibold">
-        Create an account
-      </h2>
+    <AuthShell>
+      <section aria-labelledby="signup-heading" className="space-y-5">
+        <h2 id="signup-heading" className="font-display text-5xl">
+          Create an account
+        </h2>
 
-      <form
-        noValidate
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <div className="space-y-1">
-          <label htmlFor="signup-display-name" className="block text-sm font-medium">
-            Display name
-          </label>
-          <input
-            id="signup-display-name"
-            name="displayName"
-            type="text"
-            autoComplete="name"
-            required
-            maxLength={50}
-            value={displayName}
-            onChange={(event) => {
-              setDisplayName(event.target.value);
-            }}
-            className="w-full rounded border border-slate-300 px-2 py-1"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <label htmlFor="signup-email" className="block text-sm font-medium">
-            Email
-          </label>
-          <input
-            id="signup-email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-            }}
-            className="w-full rounded border border-slate-300 px-2 py-1"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <label htmlFor="signup-password" className="block text-sm font-medium">
-            Password
-          </label>
-          <input
-            id="signup-password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(event) => {
-              setPassword(event.target.value);
-            }}
-            className="w-full rounded border border-slate-300 px-2 py-1"
-          />
-          <p className="text-xs text-slate-600">At least 8 characters.</p>
-        </div>
-
-        {error !== null && (
-          <p role="alert" className="text-sm text-red-700">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        <form
+          noValidate
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
         >
-          {submitting ? 'Creating account…' : 'Create account'}
-        </button>
-      </form>
+          <div className="space-y-1">
+            <label htmlFor="signup-display-name" className="block text-sm font-medium text-muted">
+              Display name
+            </label>
+            <input
+              id="signup-display-name"
+              name="displayName"
+              type="text"
+              autoComplete="name"
+              required
+              maxLength={50}
+              value={displayName}
+              onChange={(event) => {
+                setDisplayName(event.target.value);
+              }}
+              className="w-full"
+            />
+          </div>
 
-      <p className="text-sm">
-        {'Already have an account? '}
-        <Link to="/login" className="underline">
-          Sign in
-        </Link>
-      </p>
-    </section>
+          <div className="space-y-1">
+            <label htmlFor="signup-email" className="block text-sm font-medium text-muted">
+              Email
+            </label>
+            <input
+              id="signup-email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+              }}
+              className="w-full"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="signup-password" className="block text-sm font-medium text-muted">
+              Password
+            </label>
+            <input
+              id="signup-password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+              className="w-full"
+            />
+            <p className="text-xs text-muted">At least 8 characters.</p>
+          </div>
+
+          {error !== null && (
+            <p role="alert" className="text-sm text-danger">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full rounded-full bg-focus px-4 py-3 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
+          >
+            {submitting ? 'Creating account…' : 'Create account'}
+          </button>
+        </form>
+
+        <p className="text-sm text-muted">
+          {'Already have an account? '}
+          <Link to="/login" className="text-focus underline underline-offset-4">
+            Sign in
+          </Link>
+        </p>
+      </section>
+    </AuthShell>
   );
 }

@@ -1,4 +1,4 @@
-import type { TaskId } from '../ids';
+import type { FocusSessionId, RoomId, TaskId, UserId } from '../ids';
 
 /**
  * Route paths the API serves and the web app calls. Owning them here means the two
@@ -43,6 +43,24 @@ export type TaskPathTemplate = Exclude<(typeof taskPaths)[keyof typeof taskPaths
 export const taskPath = (template: TaskPathTemplate, taskId: TaskId): string =>
   template.replace(':taskId', encodeURIComponent(taskId));
 
+/** Solo focus sessions (Phase 4B, docs/api/rest.md "Focus sessions"). */
+export const focusSessionPaths = {
+  collection: '/focus-sessions',
+  current: '/focus-sessions/current',
+  summary: '/focus-sessions/summary',
+  pause: '/focus-sessions/:sessionId/pause',
+  resume: '/focus-sessions/:sessionId/resume',
+  stop: '/focus-sessions/:sessionId/stop',
+} as const;
+
+export type FocusSessionPathTemplate = (typeof focusSessionPaths)['pause' | 'resume' | 'stop'];
+
+/** Builds a concrete focus-session URL path from one of the per-session templates. */
+export const focusSessionPath = (
+  template: FocusSessionPathTemplate,
+  sessionId: FocusSessionId,
+): string => template.replace(':sessionId', encodeURIComponent(sessionId));
+
 /**
  * Required on every refresh/logout request in addition to the refresh cookie: a
  * bare cross-site form submission cannot set a custom header, so this blocks the
@@ -51,3 +69,33 @@ export const taskPath = (template: TaskPathTemplate, taskId: TaskId): string =>
  * drift on the exact header name.
  */
 export const CLIENT_HEADER_NAME = 'x-focus-flow-client';
+
+/** Rooms and membership (Phase 6, docs/api/rest.md "Rooms"). */
+export const roomPaths = {
+  collection: '/rooms',
+  byCode: '/rooms/by-code/:code',
+  item: '/rooms/:roomId',
+  timerSettings: '/rooms/:roomId/timer-settings',
+  members: '/rooms/:roomId/members',
+  member: '/rooms/:roomId/members/:userId',
+  membership: '/rooms/:roomId/membership',
+  approveKnock: '/rooms/:roomId/knocks/:userId/approve',
+  rejectKnock: '/rooms/:roomId/knocks/:userId/reject',
+} as const;
+
+export type RoomPathTemplate = Exclude<
+  (typeof roomPaths)[keyof typeof roomPaths],
+  '/rooms' | '/rooms/by-code/:code'
+>;
+
+/** Builds a concrete room URL path from one of the `roomPaths` templates. */
+export const roomPath = (
+  template: RoomPathTemplate,
+  params: { readonly roomId: RoomId; readonly userId?: UserId },
+): string =>
+  template
+    .replace(':roomId', encodeURIComponent(params.roomId))
+    .replace(':userId', encodeURIComponent(params.userId ?? ''));
+
+export const roomByCodePath = (code: string): string =>
+  roomPaths.byCode.replace(':code', encodeURIComponent(code));

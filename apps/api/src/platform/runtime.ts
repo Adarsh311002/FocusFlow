@@ -9,10 +9,66 @@ import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
 import type { AuthDeps } from '../modules/auth/service.js';
-import { createPresence, localSocketRefs, type Presence } from '../modules/presence/presence.js';
+import {
+  createFocusSessionChanges,
+  type FocusSessionChanges,
+} from '../modules/focus-sessions/changes.js';
+import {
+  attachFollowUps,
+  attachSessionNotifications,
+} from '../modules/focus-sessions/follow-ups.js';
+import {
+  createFocusSessionQueue,
+  createFocusSessionScheduler,
+  createFocusSessionWorker,
+  type FocusSessionQueue,
+} from '../modules/focus-sessions/jobs.js';
+import {
+  type FocusSessionScheduler,
+  type LifecycleDeps,
+  runSoloEndJob,
+  runSoloGraceJob,
+} from '../modules/focus-sessions/lifecycle.js';
+import {
+  createDisconnectMarkerStore,
+  type DisconnectMarkerStore,
+} from '../modules/focus-sessions/marker-store.js';
+import { handleUserOffline, handleUserOnline } from '../modules/focus-sessions/presence-hints.js';
+import {
+  createDecisionSnapshots,
+  type DecisionSnapshot,
+} from '../modules/focus-sessions/snapshot.js';
+import {
+  createPresence,
+  type InstanceRemovalReason,
+  localSocketRefs,
+  type Presence,
+} from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
 import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
+import { createRoomGraceProcessor, createRoomGraceScheduler } from '../modules/room-focus/jobs.js';
+import { createRunLedger } from '../modules/room-focus/ledger.js';
+import { recoverRoomFocusAfterRedisLoss } from '../modules/room-focus/recovery.js';
+import { createRoomFocusService } from '../modules/room-focus/service.js';
+import {
+  attachFocusAnnouncers,
+  createFocusChangeAnnouncer,
+} from '../modules/room-realtime/focus-announcers.js';
+import { createRoomPresenceCheck } from '../modules/room-realtime/focus-hooks.js';
+import { createRoomRealtime, type RoomRealtime } from '../modules/room-realtime/module.js';
+import { attachTimerFollowUps } from '../modules/room-realtime/timer-follow-ups.js';
+import {
+  createRoomTimerQueue,
+  createRoomTimerScheduler,
+  createRoomTimerWorker,
+  type RoomTimerQueue,
+  type RoomTimerScheduler,
+} from '../modules/room-timer/jobs.js';
+import { createRoomTimerService } from '../modules/room-timer/service.js';
+import { createTimerSettingsReader } from '../modules/room-timer/settings.js';
+import { createRoomTimerStore } from '../modules/room-timer/store.js';
+import type { RoomTimerService, RoomTimerStore } from '../modules/room-timer/types.js';
 import type { AppConfig } from './config.js';
 import { createPool } from './db.js';
 import { createEpochMonitor, type EpochMonitor } from './epoch.js';
@@ -26,7 +82,13 @@ import {
   type MaintenanceQueue,
   upsertReconcileSchedule,
 } from './queues.js';
-import { createRedisClient, createRedisConnection, waitForRedisReady } from './redis.js';
+import { createReconcileTrigger, type ReconcileTrigger } from './reconcile-trigger.js';
+import {
+  createRedisClient,
+  createRedisConnection,
+  redisTimeMs,
+  waitForRedisReady,
+} from './redis.js';
 import { createShutdown, type ShutdownStep } from './shutdown.js';
 import { createSocketEmitter, createSocketServer, type SocketEmitter } from './socket.js';
 
@@ -67,8 +129,8 @@ const closeSocketServer = (io: AppServer): Promise<void> => {
 /**
  * One API process, fully wired but not yet listening. `main.ts` and the integration-test
  * harness both build it, so tests exercise the real startup order (docs/implementation/
- * plan.md, I5): config → logger → PostgreSQL → Redis → epoch check → Express → HTTP
- * server → … → listen.
+ * plan.md, I5): config â†’ logger â†’ PostgreSQL â†’ Redis â†’ epoch check â†’ Express â†’ HTTP
+ * server â†’ â€¦ â†’ listen.
  */
 export type Runtime = {
   readonly config: AppConfig;
@@ -89,11 +151,32 @@ export type Runtime = {
   readonly onSocketConnect: ((socket: AppSocket) => void)[];
   /** Per-user presence: which users have a live socket on a live instance. */
   readonly presence: Presence;
+  /** The realtime side of rooms (Phase 6); exposed so tests can observe and gate its seams. */
+  readonly roomRealtime: RoomRealtime;
+  /** The shared room timer (Phase 7): store, use cases, phase-end queue and scheduler. */
+  readonly roomTimer: {
+    readonly store: RoomTimerStore;
+    readonly service: RoomTimerService;
+    readonly scheduler: RoomTimerScheduler;
+    readonly queue: RoomTimerQueue;
+  };
+  /** After-commit focus-session changes (events and jobs attach here in later milestones). */
+  readonly focusSessionChanges: FocusSessionChanges;
+  /** The Solo Focus lifecycle: marker store, job scheduler and queue (Phase 4B). */
+  readonly focusSessionLifecycle: {
+    readonly markers: DisconnectMarkerStore;
+    /** The decision's atomic Redis read: presence, the epoch and the marker (E17). */
+    readonly snapshotUser: (userId: string) => Promise<DecisionSnapshot>;
+    readonly scheduler: FocusSessionScheduler;
+    readonly queue: FocusSessionQueue;
+  };
   /** The `maintenance` queue (every role can enqueue; only workers process). */
   readonly maintenanceQueue: MaintenanceQueue;
   /** Present when the role runs workers. */
   readonly maintenanceWorker: Worker<ReconcileJob> | undefined;
   readonly reconciler: Reconciler;
+  /** Present when the role runs workers: the process-owned reconcile trigger (E23). */
+  readonly reconcileTrigger: ReconcileTrigger | undefined;
   /**
    * Starts the process according to its ROLE: listens on `listenOn` when the role serves
    * the API (resolving with the bound port), then publishes the heartbeat, ensures the
@@ -190,9 +273,95 @@ export const createRuntime = async (
     },
   };
 
+  // The presence store needs only Redis, so it exists before the HTTP app: focus-session
+  // routes use its authoritative presence check (H2). Socket tracking comes later.
+  const presenceStore = createPresenceStore({
+    redis,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+  });
+  const focusSessionChanges = createFocusSessionChanges(logger);
+  // The disconnect marker (E10) on a dedicated connection (WATCH is connection state). The
+  // routes read it too: a pause or stop at or after the planned end decides with it (E7, E8).
+  const markerConnection = createRedisClient(config, logger);
+  const focusSessionMarkers = createDisconnectMarkerStore({ redis: markerConnection });
+  // Every decision for a running session reads the marker, presence and the epoch in one
+  // MULTI on the general client (E17); the marker connection is only for WATCH writes.
+  const snapshotUser = createDecisionSnapshots(presenceStore);
+
+  // The room timer (Phase 7): every role can enqueue its phase-end jobs and emit its state
+  // (a worker-only process advances phases); only workers process the queue.
+  const roomTimerStore = createRoomTimerStore(redis);
+  const roomTimerService = createRoomTimerService({
+    store: roomTimerStore,
+    readSettings: createTimerSettingsReader(db),
+    logger,
+  });
+  const roomTimerQueue = createRoomTimerQueue(queueConnection, config);
+  const roomTimerScheduler = createRoomTimerScheduler(roomTimerQueue);
+  // Schedule first, then emit (RT13); both only log their failures.
+  // Room focus runs (Phase 8): the run ledger, the grace jobs (on the focus-session queue)
+  // and the service every other part uses. Created before the realtime module needs it.
+  const focusSessionQueue = createFocusSessionQueue(queueConnection, config);
+  const roomFocusLedger = createRunLedger(redis);
+  const roomGraceScheduler = createRoomGraceScheduler(focusSessionQueue);
+  const isRoomPresent = createRoomPresenceCheck({
+    redis,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+  });
+  const roomFocus = createRoomFocusService({
+    db,
+    timer: roomTimerService,
+    ledger: roomFocusLedger,
+    grace: roomGraceScheduler,
+    isPresent: isRoomPresent,
+    logger,
+  });
+  const announceFocusChange = createFocusChangeAnnouncer(roomFocus, socketEmitter, logger);
+  attachFocusAnnouncers(roomFocus, socketEmitter, logger);
+  attachTimerFollowUps(roomTimerService, {
+    focus: roomFocus,
+    scheduler: roomTimerScheduler,
+    emitter: socketEmitter,
+    logger,
+  });
+
+  // The realtime side of rooms (Phase 6): room presence, knocks, chat. The REST module
+  // reaches it only through the RoomLive port.
+  const roomRealtime = createRoomRealtime({
+    redis,
+    db,
+    emitter: socketEmitter,
+    logger,
+    instanceId,
+    instanceTtlMs: config.INSTANCE_TTL_MS,
+    knockTtlMs: config.KNOCK_TTL_MS,
+    maxPresent: config.ROOM_MAX_PRESENT,
+    timer: roomTimerService,
+    focus: roomFocus,
+    checkUser: presenceStore.checkUser,
+  });
+
   // Built for every role so the process is wired the same way; a worker-only process
   // simply never listens, so it serves no HTTP and accepts no sockets.
-  const app = createApp({ config, logger, pool, redis, authDeps });
+  const app = createApp({
+    config,
+    logger,
+    pool,
+    redis,
+    authDeps,
+    focusSessions: {
+      checkUser: presenceStore.checkUser,
+      snapshotUser,
+      presenceRecoveryMs: config.INSTANCE_TTL_MS,
+      changes: focusSessionChanges,
+      graceMs: config.FOCUS_GRACE_MS,
+      markers: focusSessionMarkers,
+    },
+    rooms: { live: roomRealtime.live, logger, focus: roomFocus },
+    roomFocus,
+  });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
   const io = createSocketServer({
@@ -206,24 +375,123 @@ export const createRuntime = async (
   });
 
   const presence = createPresence({
-    store: createPresenceStore({ redis, instanceId, instanceTtlMs: config.INSTANCE_TTL_MS }),
+    store: presenceStore,
     listLocalSockets: () => localSocketRefs(io),
     logger,
   });
   onSocketConnect.push(presence.track);
+  onSocketConnect.push(roomRealtime.attachSocket);
   // Presence is synchronised with the live sockets on every heartbeat, so any missed
   // write is repaired within one interval; data loss and a rejoin sync at once.
-  heartbeat.onTick(() => presence.syncLocal());
+  heartbeat.onTick(async () => {
+    await presence.syncLocal();
+    await roomRealtime.syncLocal(io);
+  });
   epoch.onLocalRecovery(async () => {
     await presence.syncLocal();
+    await roomRealtime.recover(io);
   });
-  heartbeat.onRejoined(() => presence.syncLocal());
+  heartbeat.onRejoined(async () => {
+    await presence.syncLocal();
+    await roomRealtime.syncLocal(io);
+  });
+  // Removing an instance's presence (dead, or a clean shutdown) covers its users and its
+  // room entries; the reconciler and the shutdown sequence both use it.
+  const instanceCleanup = {
+    removeInstance: async (targetId: string, reason: InstanceRemovalReason): Promise<void> => {
+      await presence.removeInstance(targetId, reason);
+      await roomRealtime.removeInstance(targetId);
+    },
+  };
+
+  // Solo Focus lifecycle (Phase 4B): the focus-session queue (every role enqueues; workers
+  // process), the after-commit follow-ups, and the presence hints.
+  const focusSessionScheduler = createFocusSessionScheduler({
+    queue: focusSessionQueue,
+    graceMs: config.FOCUS_GRACE_MS,
+    redisNowMs: () => redisTimeMs(redis),
+  });
+  const lifecycleDeps: LifecycleDeps = {
+    db,
+    checkUser: presenceStore.checkUser,
+    snapshotUser,
+    presenceRecoveryMs: config.INSTANCE_TTL_MS,
+    changes: focusSessionChanges,
+    markers: focusSessionMarkers,
+    graceMs: config.FOCUS_GRACE_MS,
+    scheduler: focusSessionScheduler,
+  };
+  attachFollowUps(focusSessionChanges, {
+    scheduler: focusSessionScheduler,
+    markers: focusSessionMarkers,
+  });
+  attachSessionNotifications(focusSessionChanges, socketEmitter);
+  const hintDeps = {
+    db,
+    markers: focusSessionMarkers,
+    checkUser: presenceStore.checkUser,
+    scheduler: focusSessionScheduler,
+    graceMs: config.FOCUS_GRACE_MS,
+  };
+  presence.onUserOffline((event) => handleUserOffline(hintDeps, event));
+  presence.onUserOnline((userId) => handleUserOnline(hintDeps, userId));
+  const focusWorkerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const focusSessionWorker =
+    focusWorkerConnection === undefined
+      ? undefined
+      : createFocusSessionWorker({
+          connection: focusWorkerConnection,
+          config,
+          logger,
+          processors: {
+            end: (job) => runSoloEndJob(lifecycleDeps, job),
+            grace: (job) => runSoloGraceJob(lifecycleDeps, job),
+            roomGrace: createRoomGraceProcessor(roomFocus),
+          },
+        });
+
+  const roomTimerWorkerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const roomTimerWorker =
+    roomTimerWorkerConnection === undefined
+      ? undefined
+      : createRoomTimerWorker({
+          connection: roomTimerWorkerConnection,
+          config,
+          logger,
+          service: roomTimerService,
+        });
 
   const reconciler = createReconciler({
     redis,
-    presence,
+    presence: instanceCleanup,
     instanceTtlMs: config.INSTANCE_TTL_MS,
+    intervalMs: config.RECONCILER_INTERVAL_MS,
     logger,
+    focusSessions: { deps: lifecycleDeps },
+    roomTimers: { store: roomTimerStore, service: roomTimerService, scheduler: roomTimerScheduler },
+    roomFocus: {
+      db,
+      ledger: roomFocusLedger,
+      service: roomFocus,
+      scheduler: roomGraceScheduler,
+      isPresent: isRoomPresent,
+      timer: roomTimerService,
+      notify: announceFocusChange,
+    },
+  });
+  // Redis lost its data: in-progress room sessions without a ledger entry become timer_lost
+  // (RF10). Only the SET NX winner runs this; the reconciler's step 7 backs it up.
+  epoch.onGlobalRecovery(async () => {
+    await recoverRoomFocusAfterRedisLoss({
+      db,
+      ledger: roomFocusLedger,
+      notify: announceFocusChange,
+      logger,
+    });
   });
   const maintenanceWorker =
     workerConnection === undefined
@@ -233,6 +501,18 @@ export const createRuntime = async (
           config,
           logger,
           reconcile: reconciler.run,
+        });
+  // Restores a lost schedule and reconciles directly when scheduled runs stop (E23).
+  const reconcileTrigger =
+    maintenanceWorker === undefined
+      ? undefined
+      : createReconcileTrigger({
+          redis,
+          queue: maintenanceQueue,
+          config,
+          reconciler,
+          logger,
+          instanceId,
         });
 
   // ioredis emits `ready` after every reconnect: re-check the epoch (Redis may have come
@@ -252,7 +532,10 @@ export const createRuntime = async (
     { name: 'instance heartbeat', run: heartbeat.stop },
     // A clean shutdown removes this instance's presence at once instead of leaving it
     // for the reconciler to find after the heartbeat TTL.
-    { name: 'presence', run: () => presence.removeInstance(instanceId, 'disconnect') },
+    {
+      name: 'presence',
+      run: () => instanceCleanup.removeInstance(instanceId, 'instance_shutdown'),
+    },
     ...(maintenanceWorker === undefined
       ? []
       : [
@@ -260,10 +543,33 @@ export const createRuntime = async (
             name: 'maintenance worker',
             // Graceful when Redis is reachable (the running job finishes); forced when it is
             // not, so BullMQ drops its blocking connection instead of waiting on QUIT.
-            run: () => maintenanceWorker.close(workerConnection?.status !== 'ready'),
+            run: async () => {
+              // The trigger and any direct or running reconcile first: a sweep stops
+              // starting new sessions and the run ends before its connections close.
+              await Promise.all([reconcileTrigger?.stop(), reconciler.stop()]);
+              await maintenanceWorker.close(workerConnection?.status !== 'ready');
+            },
           },
         ]),
     { name: 'maintenance queue', run: () => maintenanceQueue.close() },
+    ...(focusSessionWorker === undefined
+      ? []
+      : [
+          {
+            name: 'focus-session worker',
+            run: () => focusSessionWorker.close(focusWorkerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'focus-session queue', run: () => focusSessionQueue.close() },
+    ...(roomTimerWorker === undefined
+      ? []
+      : [
+          {
+            name: 'room-timer worker',
+            run: () => roomTimerWorker.close(roomTimerWorkerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'room-timer queue', run: () => roomTimerQueue.close() },
     {
       name: 'redis connections',
       run: () =>
@@ -271,7 +577,10 @@ export const createRuntime = async (
           pubClient,
           subClient,
           queueConnection,
+          markerConnection,
           ...(workerConnection === undefined ? [] : [workerConnection]),
+          ...(focusWorkerConnection === undefined ? [] : [focusWorkerConnection]),
+          ...(roomTimerWorkerConnection === undefined ? [] : [roomTimerWorkerConnection]),
         ),
     },
   ];
@@ -297,6 +606,12 @@ export const createRuntime = async (
     started = true;
     await heartbeat.start();
     await ensureSchedule();
+    roomTimerWorker?.run().catch((error: unknown) => {
+      logger.error({ err: error, instanceId }, 'The room-timer worker stopped unexpectedly');
+    });
+    focusSessionWorker?.run().catch((error: unknown) => {
+      logger.error({ err: error, instanceId }, 'The focus-session worker stopped unexpectedly');
+    });
     if (maintenanceWorker !== undefined) {
       maintenanceWorker.run().catch((error: unknown) => {
         logger.error({ err: error, instanceId }, 'The maintenance worker stopped unexpectedly');
@@ -306,6 +621,7 @@ export const createRuntime = async (
       } catch (error) {
         logger.warn({ err: error, instanceId }, 'Could not queue the startup reconcile');
       }
+      reconcileTrigger?.start();
     }
     return port;
   };
@@ -336,9 +652,24 @@ export const createRuntime = async (
     socketEmitter,
     onSocketConnect,
     presence,
+    roomRealtime,
+    focusSessionChanges,
+    focusSessionLifecycle: {
+      markers: focusSessionMarkers,
+      snapshotUser,
+      scheduler: focusSessionScheduler,
+      queue: focusSessionQueue,
+    },
+    roomTimer: {
+      store: roomTimerStore,
+      service: roomTimerService,
+      scheduler: roomTimerScheduler,
+      queue: roomTimerQueue,
+    },
     maintenanceQueue,
     maintenanceWorker,
     reconciler,
+    reconcileTrigger,
     start,
     beforeServerClose,
     shutdownSteps,

@@ -35,6 +35,10 @@ describe('loadConfig', () => {
       SOCKET_PING_TIMEOUT_MS: 10_000,
       ROLE: 'all',
       RECONCILER_INTERVAL_MS: 30_000,
+      FOCUS_GRACE_MS: 60_000,
+      HTTP_RATE_LIMIT: 'on',
+      KNOCK_TTL_MS: 120_000,
+      ROOM_MAX_PRESENT: 50,
     });
   });
 
@@ -65,6 +69,20 @@ describe('loadConfig', () => {
       expect(loadConfig({ ...baseEnv, ROLE: 'worker' }).ROLE).toBe('worker');
       expect(loadConfig({ ...baseEnv, ROLE: 'api' }).ROLE).toBe('api');
       expect(() => loadConfig({ ...baseEnv, ROLE: 'scheduler' })).toThrow(/ROLE/);
+    });
+
+    it('allows a shorter focus grace outside production only', () => {
+      expect(loadConfig({ ...baseEnv, FOCUS_GRACE_MS: '1500' }).FOCUS_GRACE_MS).toBe(1_500);
+      expect(() =>
+        loadConfig({ ...baseEnv, APP_ENV: 'production', FOCUS_GRACE_MS: '1500' }),
+      ).toThrow(/FOCUS_GRACE_MS/);
+    });
+
+    it('allows turning HTTP rate limiting off outside production only', () => {
+      expect(loadConfig({ ...baseEnv, HTTP_RATE_LIMIT: 'off' }).HTTP_RATE_LIMIT).toBe('off');
+      expect(() =>
+        loadConfig({ ...baseEnv, APP_ENV: 'production', HTTP_RATE_LIMIT: 'off' }),
+      ).toThrow(/HTTP_RATE_LIMIT/);
     });
 
     it('rejects durations below 100 ms', () => {
@@ -101,6 +119,15 @@ describe('loadConfig', () => {
     expect(config.ACCESS_TOKEN_TTL_SECONDS).toBe(300);
     expect(config.REFRESH_TOKEN_TTL_SECONDS).toBe(86_400);
     expect(config.REFRESH_OVERLAP_SECONDS).toBe(5);
+  });
+
+  it('reads the room limits', () => {
+    const config = loadConfig({ ...baseEnv, KNOCK_TTL_MS: '5000', ROOM_MAX_PRESENT: '3' });
+
+    expect(config.KNOCK_TTL_MS).toBe(5_000);
+    expect(config.ROOM_MAX_PRESENT).toBe(3);
+    expect(() => loadConfig({ ...baseEnv, ROOM_MAX_PRESENT: '0' })).toThrow(/ROOM_MAX_PRESENT/);
+    expect(() => loadConfig({ ...baseEnv, KNOCK_TTL_MS: '5' })).toThrow(/KNOCK_TTL_MS/);
   });
 
   it('fails and names the variable when DATABASE_URL is missing', () => {

@@ -1,0 +1,260 @@
+import { z } from 'zod';
+
+import { calendarDateSchema, calendarDaysBetween, timeZoneSchema } from '../dates';
+import { focusRunIdSchema, focusSessionIdSchema, roomIdSchema, taskIdSchema } from '../ids';
+import { TASK_TITLE_MAX_LENGTH } from './tasks';
+
+// Solo focus sessions (Phase 4B; docs/architecture/contracts.md "Key contract shapes",
+// docs/api/rest.md "Focus sessions", decisions E1–E16). Room sessions arrive in Phase 8,
+// which widens `AbandonReason` and `FocusSessionContext` (E4, E5, M1).
+
+/** Matches the `ck_focus_sessions_planned_seconds` CHECK constraint (E1). */
+export const FOCUS_SESSION_PLANNED_SECONDS_MIN = 60;
+export const FOCUS_SESSION_PLANNED_SECONDS_MAX = 14_400;
+
+export const plannedSecondsSchema = z
+  .number()
+  .int()
+  .min(FOCUS_SESSION_PLANNED_SECONDS_MIN)
+  .max(FOCUS_SESSION_PLANNED_SECONDS_MAX);
+
+export const focusSessionStatusSchema = z.enum(['in_progress', 'completed', 'abandoned']);
+export type FocusSessionStatus = z.infer<typeof focusSessionStatusSchema>;
+
+/**
+ * The solo reasons (E5; `grace_expired` is shared) and the room-only ones added in Phase 8
+ * (RF1): the person opted out, left the room or was removed, the host reset or changed the
+ * phase, or the room's live state was lost (`timer_lost`).
+ */
+export const abandonReasonSchema = z.enum([
+  'stopped',
+  'grace_expired',
+  'expired',
+  'opted_out',
+  'left_room',
+  'removed',
+  'reset',
+  'phase_changed',
+  'timer_lost',
+]);
+export type AbandonReason = z.infer<typeof abandonReasonSchema>;
+
+/** Where a session runs: on its own, or in a room's focus run (Phase 8). */
+export const focusSessionContextSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('solo') }),
+  z.object({ kind: z.literal('room'), roomId: roomIdSchema, focusRunId: focusRunIdSchema }),
+]);
+export type FocusSessionContext = z.infer<typeof focusSessionContextSchema>;
+
+/**
+ * The task a session was started with. Unlike the task routes, a session keeps showing
+ * its task after the task is soft-deleted (D38), marked `deleted`.
+ */
+export const focusSessionTaskSchema = z.object({
+  id: taskIdSchema,
+  title: z.string().min(1).max(TASK_TITLE_MAX_LENGTH),
+  deleted: z.boolean(),
+});
+export type FocusSessionTask = z.infer<typeof focusSessionTaskSchema>;
+
+const focusSessionViewBase = {
+  id: focusSessionIdSchema,
+  context: focusSessionContextSchema,
+  task: focusSessionTaskSchema.nullable(),
+  plannedSeconds: plannedSecondsSchema,
+  /** Accumulated before the current running stretch (D6); whole seconds. */
+  focusedSeconds: z.number().int().nonnegative(),
+  startedAt: z.iso.datetime(),
+};
+
+/**
+ * A focus session as the API returns it. The lifecycle is a discriminated union, so an
+ * in-progress session with an end time, or an abandoned one without a reason, cannot
+ * be represented. `runningSince` is `null` while the session is paused.
+ */
+export const focusSessionViewSchema = z.discriminatedUnion('status', [
+  z.object({
+    ...focusSessionViewBase,
+    status: z.literal('in_progress'),
+    runningSince: z.iso.datetime().nullable(),
+  }),
+  z.object({ ...focusSessionViewBase, status: z.literal('completed'), endedAt: z.iso.datetime() }),
+  z.object({
+    ...focusSessionViewBase,
+    status: z.literal('abandoned'),
+    endedAt: z.iso.datetime(),
+    abandonReason: abandonReasonSchema,
+  }),
+]);
+export type FocusSessionView = z.infer<typeof focusSessionViewSchema>;
+
+// Inbound schemas are strict: unknown keys (for example a `userId`) are rejected
+// (docs/architecture/contracts.md, rule 7).
+
+/**
+ * `POST /focus-sessions`. `taskId` is optional; the server never fills in the user's
+ * current task (E3).
+ */
+export const startFocusSessionRequestSchema = z.strictObject({
+  plannedSeconds: plannedSecondsSchema,
+  taskId: taskIdSchema.optional(),
+});
+export type StartFocusSessionRequest = z.infer<typeof startFocusSessionRequestSchema>;
+
+/** Path parameters of every `/focus-sessions/:sessionId/…` route. */
+export const focusSessionParamsSchema = z.strictObject({ sessionId: focusSessionIdSchema });
+export type FocusSessionParams = z.infer<typeof focusSessionParamsSchema>;
+
+/** `201` from start; `200` from pause, resume and stop (repeats included, E11). */
+export const focusSessionResponseSchema = z.object({ session: focusSessionViewSchema });
+export type FocusSessionResponse = z.infer<typeof focusSessionResponseSchema>;
+
+export const startFocusSessionResponseSchema = focusSessionResponseSchema;
+export type StartFocusSessionResponse = FocusSessionResponse;
+export const pauseFocusSessionResponseSchema = focusSessionResponseSchema;
+export type PauseFocusSessionResponse = FocusSessionResponse;
+export const resumeFocusSessionResponseSchema = focusSessionResponseSchema;
+export type ResumeFocusSessionResponse = FocusSessionResponse;
+export const stopFocusSessionResponseSchema = focusSessionResponseSchema;
+export type StopFocusSessionResponse = FocusSessionResponse;
+
+/** `GET /focus-sessions/current`: the in-progress session, or `null`. */
+export const currentFocusSessionResponseSchema = z.object({
+  session: focusSessionViewSchema.nullable(),
+});
+export type CurrentFocusSessionResponse = z.infer<typeof currentFocusSessionResponseSchema>;
+
+/**
+ * `details` of a `409 SESSION_IN_PROGRESS` error: the existing in-progress session, so a
+ * retried start can recover it.
+ */
+export const sessionInProgressDetailsSchema = z.object({ session: focusSessionViewSchema });
+export type SessionInProgressDetails = z.infer<typeof sessionInProgressDetailsSchema>;
+
+// Review (Phase 5, decisions V1–V8 in docs/decisions/decision-log.md): history and summary.
+
+export const FOCUS_SESSION_LIST_DEFAULT_LIMIT = 50;
+export const FOCUS_SESSION_LIST_MAX_LIMIT = 100;
+
+/** The longest summary range, in calendar days with both ends included (V4). */
+export const FOCUS_SESSION_SUMMARY_MAX_DAYS = 366;
+
+/**
+ * The instants the review API accepts, both ends included. The floor is the same 1970 one
+ * the summary uses (V4) — no session can have started earlier — and the ceiling is the
+ * last instant a four-digit ISO year can express. The date format alone does not keep a
+ * bound inside that range: `0000-01-01T00:00:00+14:00` lands in the BC era and
+ * `9999-12-31T23:59:59.999-12:00` in year 10000, instants whose spelling (`… BC`, a
+ * five-digit year) is then left to whatever the database driver and the server's own time
+ * zone make of them. Nothing can match such a bound, so it is the client's mistake: a 400
+ * here rather than an unpredictable query further down.
+ */
+const MIN_INSTANT_MS = Date.parse('1970-01-01T00:00:00.000Z');
+const MAX_INSTANT_MS = Date.parse('9999-12-31T23:59:59.999Z');
+
+/**
+ * The same ceiling as an instant bound, for the summary: its calendar dates are widened by
+ * whole days before they reach PostgreSQL, and a date near 9999-12-31 would otherwise be
+ * widened past the four-digit ISO year. The server clamps the widened end to this value,
+ * which costs nothing — no session can have started later.
+ */
+export const REVIEW_MAX_INSTANT_MS = MAX_INSTANT_MS;
+
+/**
+ * An instant with an explicit offset (`Z` or `+05:30`), never a local time. At most
+ * millisecond precision, the precision sessions are stored with, so a boundary is never
+ * silently rounded, and inside the supported range above.
+ */
+const instantSchema = z.iso
+  .datetime({ offset: true })
+  .refine((value) => !/\.\d{4,}/.test(value), { message: 'At most millisecond precision.' })
+  .refine(
+    (value) => {
+      // `Date.parse` is also what the server uses to turn the bound into an instant, so it
+      // decides here too: a value the format check let through but that parses to NaN (a
+      // leap second, say) must never reach the query layer as an invalid `Date`.
+      const instantMs = Date.parse(value);
+      return (
+        Number.isFinite(instantMs) && instantMs >= MIN_INSTANT_MS && instantMs <= MAX_INSTANT_MS
+      );
+    },
+    { message: 'Must be between 1970-01-01T00:00:00Z and 9999-12-31T23:59:59.999Z.' },
+  );
+
+/** Summary dates start at 1970 (V4): no session can be older, and it keeps arithmetic simple. */
+const summaryDateSchema = calendarDateSchema.refine((date) => date >= '1970-01-01', {
+  message: 'Dates before 1970 are not supported.',
+});
+
+/**
+ * `GET /focus-sessions` query (V1, V2). `from` and `to` are instants and select sessions
+ * by `startedAt` in `[from, to)`; either may be left out. Newest-started first. `cursor`
+ * is opaque: whatever the previous page returned as `nextCursor`.
+ */
+export const listFocusSessionsQuerySchema = z
+  .strictObject({
+    from: instantSchema.optional(),
+    to: instantSchema.optional(),
+    cursor: z.string().min(1).max(128).optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(FOCUS_SESSION_LIST_MAX_LIMIT)
+      .default(FOCUS_SESSION_LIST_DEFAULT_LIMIT),
+  })
+  .refine(
+    (query) =>
+      query.from === undefined ||
+      query.to === undefined ||
+      Date.parse(query.from) < Date.parse(query.to),
+    { message: '`from` must be earlier than `to`.', path: ['to'] },
+  );
+export type ListFocusSessionsQuery = z.infer<typeof listFocusSessionsQuerySchema>;
+
+/** Every status, the in-progress session included (V2); `nextCursor` is `null` on the last page. */
+export const focusSessionListResponseSchema = z.object({
+  sessions: z.array(focusSessionViewSchema),
+  nextCursor: z.string().nullable(),
+});
+export type FocusSessionListResponse = z.infer<typeof focusSessionListResponseSchema>;
+
+/**
+ * `GET /focus-sessions/summary` query (V3–V5). `from` and `to` are calendar dates in
+ * `tz`, both included, at most `FOCUS_SESSION_SUMMARY_MAX_DAYS` days. `tz` is an IANA
+ * time zone name (D18); the server never uses its own time zone.
+ */
+export const focusSessionSummaryQuerySchema = z
+  .strictObject({ from: summaryDateSchema, to: summaryDateSchema, tz: timeZoneSchema })
+  .refine((query) => calendarDaysBetween(query.from, query.to) >= 0, {
+    message: '`from` must not be later than `to`.',
+    path: ['to'],
+  })
+  .refine((query) => calendarDaysBetween(query.from, query.to) < FOCUS_SESSION_SUMMARY_MAX_DAYS, {
+    message: `The range may cover at most ${String(FOCUS_SESSION_SUMMARY_MAX_DAYS)} days.`,
+    path: ['to'],
+  });
+export type FocusSessionSummaryQuery = z.infer<typeof focusSessionSummaryQuerySchema>;
+
+const wholeNumberSchema = z.number().int().nonnegative();
+
+export const focusSessionSummaryDaySchema = z.object({
+  date: calendarDateSchema,
+  completedFocusedSeconds: wholeNumberSchema,
+  totalFocusedSeconds: wholeNumberSchema,
+});
+export type FocusSessionSummaryDay = z.infer<typeof focusSessionSummaryDaySchema>;
+
+/**
+ * Ended sessions only, each counted on the calendar date (in `tz`) on which it started
+ * (V6, V7). `completed…` counts completed sessions; `total…` adds abandoned ones' actual
+ * time (D34). `days` lists every date of the range oldest first, zeros included, and each
+ * total is the sum of its daily values.
+ */
+export const focusSessionSummaryResponseSchema = z.object({
+  completedCount: wholeNumberSchema,
+  completedFocusedSeconds: wholeNumberSchema,
+  totalFocusedSeconds: wholeNumberSchema,
+  days: z.array(focusSessionSummaryDaySchema),
+});
+export type FocusSessionSummaryResponse = z.infer<typeof focusSessionSummaryResponseSchema>;

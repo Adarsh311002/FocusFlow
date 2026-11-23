@@ -15,7 +15,7 @@ export function TasksPanel() {
 
   return (
     <section aria-labelledby="tasks-heading" className="space-y-4">
-      <h3 id="tasks-heading" className="text-base font-semibold">
+      <h3 id="tasks-heading" className="font-display text-4xl">
         Tasks
       </h3>
       <NewTaskForm />
@@ -30,8 +30,8 @@ export function TasksPanel() {
             }}
             className={
               status === tab.status
-                ? 'rounded bg-slate-900 px-3 py-1 text-sm text-white'
-                : 'rounded border border-slate-300 px-3 py-1 text-sm'
+                ? 'rounded-full bg-focus px-4 py-2 text-sm font-medium text-focus-ink shadow-glow transition hover:brightness-110'
+                : 'rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm'
             }
           >
             {tab.label}

@@ -4,23 +4,25 @@ Undecided items, grouped by when they must be decided. Each has a recommended de
 
 Nothing below blocks the MVP schema: each item either adds to the design later or only affects behaviour, configuration or a later phase.
 
+**Owner decision, 2026-11-11:** the non-blocking items D2, D12, D20, D24, D31, D32, D34, D36 and D37 are **deferred**: they stay listed here with their recommended defaults (which the implementation follows), but they do not block delivery. M1–M13, RT1–RT13 and RF1–RF17 are accepted as the MVP baseline (see `decision-log.md`).
+
 ## Product decisions that can stay open during implementation
 
 | ID | Question | Recommended default | Must be decided by |
 |---|---|---|---|
-| D2 | Account deletion and data retention. What happens to rooms a deleted user hosts? | No deletion feature in the MVP. User-owned data cascades; deleting a room host is blocked until this is decided. | Public launch (data-protection law) |
-| D12 | Public room discovery, and room size limits | No public listing in the MVP: join by link/code, plus "My Rooms". A global safety limit on people present in a room (e.g. 50). | Before building discovery |
-| D18 | Timezone for "days" in reviews | The client passes `tz` (IANA) on summary requests. A stored per-user timezone arrives with personalization. | Personalization phase |
-| D20 | Must the host be online for someone to knock? | Yes. Knocking when the host is offline returns `HOST_OFFLINE`. Offline join requests would be a separate later feature. | — |
-| D24 | Short temporary chat backlog for late joiners | None in the MVP (still temporary under D7 if added). | — |
+| D2 (deferred) | Account deletion and data retention. What happens to rooms a deleted user hosts? | No deletion feature in the MVP. User-owned data cascades; deleting a room host is blocked until this is decided. | Public launch (data-protection law) |
+| D12 (deferred) | Public room discovery, and room size limits | No public listing in the MVP: join by link/code, plus "My Rooms". A global safety limit on people present in a room (e.g. 50). | Before building discovery |
+| D18 | Timezone for "days" in reviews | The client passes `tz` (IANA) on summary requests. A stored per-user timezone arrives with personalization. **Implemented as this default in Phase 5** (V3, V5). | Personalization phase |
+| D20 (deferred) | Must the host be online for someone to knock? | Yes. Knocking when the host is offline returns `HOST_OFFLINE`. Offline join requests would be a separate later feature. | — |
+| D24 (deferred) | Short temporary chat backlog for late joiners | None in the MVP (still temporary under D7 if added). | — |
 | D26 | Guest (logged-out) timer | Browser-only timer with no persistence, or drop the legacy `/timer` route. | Before public launch |
 | D29 | Task description field | Leave out until there is UI for it (adding a nullable column later is non-breaking). | — |
-| D31 | Opting in to the room's focus during a break (for the next focus) | MVP: opt-in only during a focus phase. | — |
-| D32 | Does the next room phase start automatically? | No. Manual start is safe when the host is absent (D10). | — |
+| D31 (deferred) | Opting in to the room's focus during a break (for the next focus) | MVP: opt-in only during a focus phase. | — |
+| D32 (deferred) | Does the next room phase start automatically? | No. Manual start is safe when the host is absent (D10). | — |
 | D33 | Landing page claims (pricing, analytics, offline mode, soundscapes) | Rewrite to match what exists. | Public launch |
-| D34 | Do abandoned sessions' partial minutes count toward review totals? | The summary returns both `completedFocusedSeconds` and `totalFocusedSeconds`; the UI decides what to show. | Review UI design |
-| D36 | Can a member removed from a public room rejoin immediately? | Yes: removal is a "kick" in the MVP. Private rooms require a new knock. Bans are a later feature. | — |
-| D37 | Recorded focused time for sessions abandoned as `timer_lost` | 0, because it cannot be known. | — |
+| D34 (deferred) | Do abandoned sessions' partial minutes count toward review totals? | The summary returns both `completedFocusedSeconds` and `totalFocusedSeconds`; the UI decides what to show. **Implemented as this default in Phase 5**: the Review page shows both, labelled (V6, V8). | Review UI design |
+| D36 (deferred) | Can a member removed from a public room rejoin immediately? | Yes: removal is a "kick" in the MVP. Private rooms require a new knock. Bans are a later feature. | — |
+| D37 (deferred) | Recorded focused time for sessions abandoned as `timer_lost` | 0, because it cannot be known. | — |
 | D39 | Email verification and password reset flows | Not needed for the MVP build (D1 removed the security dependency). **Password reset must exist before public launch.** | Public launch |
 | D45 | Can a soft-deleted task be restored? | Defer. | Later |
 
@@ -38,15 +40,21 @@ Nothing below blocks the MVP schema: each item either adds to the design later o
 | Item | Notes / recommended default |
 |---|---|
 | Token lifetimes and overlap window | e.g. access 15 min, refresh 30 days, overlap ~20 s. |
-| Stale solo session cleanup window | How long a solo session may stay in progress (measured from `started_at`; in practice a paused one) before `abandoned(expired)` (e.g. 12 h). |
-| Duration bounds | Room phase durations and solo planned time (e.g. 1–240 min). |
-| Knock TTL | e.g. 120 s. |
+| Duration bounds | **Decided in Phase 6 (M3):** focus 60–14,400 s, short break 60–3,600 s, long break 60–7,200 s. Solo planned time: 60–14,400 s (E1). |
+| Knock TTL | **Decided in Phase 6 (M7):** `KNOCK_TTL_MS`, default 120 s. |
 | Redis hosting | Must support AOF persistence and `maxmemory-policy noeviction`. |
 | `Idempotency-Key` support | For create endpoints; not required for the MVP. |
-| Rate-limit values | Chat, knocks, auth endpoints. |
+| Rate-limit values | Auth endpoints. **Phase 6 (M7, M8):** chat 10 messages per 10 s and knocks 5 per minute, per user, in Redis. |
 | API bundler | esbuild directly or via `tsdown`. |
 | Rate-limiting implementation | `rate-limiter-flexible` (Redis-backed) or a small in-house helper. |
 | Exact TypeScript and Drizzle versions | Pinned at Phase 0; upgraded deliberately. |
+| V1–V8 — Phase 5 review details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Review decisions"): history `from`/`to` are instants, `[from, to)` on `started_at`; history lists every status, `started_at DESC, id DESC`, owner-scoped id cursor, limit 50/100; summary `from`/`to` are inclusive dates in `tz`, ≤ 366 days, ≥ 1970; `tz` is `UTC` or an `Area/Location` name validated and computed with `Intl` only; the summary counts ended sessions only; a session counts on its local start date, dense `days`; `/review` shows the last 7 days in the browser zone. |
+| W1–W6 — Phase 4B Milestone 5 web details | Chosen during implementation, awaiting the owner's review (`decision-log.md`, "Solo Focus web decisions"): the timer is a `/dashboard` panel; `GET /focus-sessions/current` is the truth and `focus:session:updated` only triggers refetches (current, history, summary); the countdown is display only and says "Finishing…" at zero; controls disable while pending and duplicates join; presets 15/25/50 min plus custom 1–240; the API emits the event from its own after-commit listener |
+
+| M1–M13 — Phase 6 rooms details | **Accepted by the owner 2026-11-11 as the MVP baseline** (`decision-log.md`, "Rooms decisions"): no `focus_sessions` changes until Phase 8 (superseded by migration `0004`); six-character codes without look-alikes; duration bounds; non-members get 404 and only the by-code preview; Redis room presence with a per-instance reverse index synchronised on every heartbeat; `room:join` snapshot; knocks with a 120 s TTL, host must be online, rate limited; temporary deduplicated, rate-limited chat; `room:leave` ends presence only, removal evicts sockets; `room:member:joined`; `ROOM_MAX_PRESENT` 50 (the D12 safety limit); web routes, Zustand per room; Playwright on the installed Chrome. |
+| RT1–RT13 — Phase 7 room timer details | **Accepted by the owner 2026-11-11 as the MVP baseline** (RT1 and RT8 confirmed: reset from idle, running and paused; PostgreSQL owns the settings and Redis holds the active phase's duration) (`decision-log.md`, "Room timer decisions"): the timer is created at first access; version base the Redis TIME in milliseconds; `reset` allowed from idle; `room-timer` queue with ensure semantics and job ids `phase-end_{roomId}_{version}`; host check against PostgreSQL per command and 20 commands per 10 s; rejection details carry the current timer; bounded 3-attempt retry; durations read from PostgreSQL (no Redis copy); the next phase is never started automatically (D32); reconciler step 2. |
+
+| RF1–RF17 — Phase 8 room focus run details | **Accepted by the owner 2026-11-11 as the MVP baseline** (`decision-log.md`, "Room focus run decisions"); migration `0004` approved with a coordinated deployment (migrate first, then deploy all roles together; old workers must not process new room-focus sessions): schema; a run for every focus phase (idle too); the timer and run changes in one atomic write; opt-in order and `RUN_ENDING` below 60 s; focused time rounded down, `ended_at` clamped; row-locked idempotent settlement; the grace job (60 s plus a 1 s early tolerance) on the focus-session queue; departure vs. disconnect; the PostgreSQL-driven reconciler sweep; global recovery abandons room sessions without a ledger entry as `timer_lost`; solo isolation; events; REST rate limit; RF17 stale room sessions (12 h, 16 h maximum, reconciler step 6b). D17a (a phase that reached its true end is completed even by a late reset/setPhase) is decided. The former open question "does a room session need a 12 h stale cap" (RF-L7) is **resolved by RF17**. |
 
 ## Tracked follow-ups
 
@@ -76,6 +84,8 @@ Known work that is deliberately outside the phase that surfaced it.
 | D43 — Completing the current task | Clears it as the current task (approved) |
 | D44 — Explicit Google linking endpoint | Part of the MVP, Phase 1b (approved) |
 | R1–R8 — Phase 3 real-time foundation | Presence keys with reverse index and heartbeat sorted set; Redis TIME as protocol clock; revocation decided by PostgreSQL whenever the Redis marker is absent (R3, revised); socket cap deferred; default transports (sticky sessions needed with several instances); ping 10 s/10 s, heartbeat 10 s, TTL 30 s, reconciler 30 s; worker role without HTTP; no product events yet (approved; see `decision-log.md`) |
+| E1–E16 — Phase 4B Solo Focus | Planned 60–14,400 s; 12 h stale window; optional open own task, never inferred; no room columns and solo-only abandon reasons until Phase 6; event on every transition; the planned end wins over pause/stop; only an observed disconnect at or after the end proves presence through it; PostgreSQL clock for sessions, Redis TIME for presence, 2 s tolerance biased toward grace; monotonic `{sessionId}:{latestDisconnectedAtMs}:{evidence}` marker via WATCH/MULTI, cleared only while it belongs to the session; repeats on ended sessions are 200; TanStack Query only; fast-check now; round down; extra session invariants; reconnect-within-grace recovery, only in the grace job of exactly the recorded disconnect (approved, scope revised after the Milestone 3 audit; see `decision-log.md`) |
+| E17–E23 — Phase 4B recovery (Milestone 4) | Every running-session decision reads the epoch and the marker in the same atomic Redis read as presence, after the row lock (the marker alone only if that read fails); presence is untrusted for `INSTANCE_TTL_MS` after an epoch is created and presence-dependent decisions defer (E8 still decides); the 12 h stale cleanup runs after the normal decision and expires a deferred session anyway; scheduling ensures a job, re-running a retained completed/failed BullMQ job with its attempts reset; start/resume answer 503 on untrusted presence; stale cleanup runs without Redis; each worker process restores a lost reconcile schedule and reconciles directly after 3 × `RECONCILER_INTERVAL_MS` without a finished run (approved; see `decision-log.md`) |
 | H1–H4 — Phase 4A presence hardening | Two-way presence sync on every heartbeat; offline events are hints with `disconnectedAtMs` and every decision re-checks presence; late grace instead of `expired` for a missed disconnect without an epoch change; online hint (approved; see `decision-log.md`) |
 | T1–T6 — Phase 2 task details | Single-task read, `id DESC` ordering with one full index, `GET /me` re-read after clearing, no optimistic updates yet, tasks on `/dashboard`, limits (approved; see `decision-log.md`) |
 

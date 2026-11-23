@@ -14,7 +14,8 @@ import {
   useSetCurrentTask,
 } from './task-queries';
 
-const BUTTON = 'rounded border border-slate-300 px-2 py-0.5 text-sm disabled:opacity-50';
+const BUTTON =
+  'rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50';
 
 /**
  * One task and its actions. Each action waits for the server (no optimistic updates in
@@ -71,7 +72,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
   }
 
   return (
-    <li className="space-y-2 rounded border border-slate-200 p-3" aria-label={task.title}>
+    <li className="space-y-2 rounded-2xl border border-line bg-surface p-4" aria-label={task.title}>
       {editing ? (
         <form
           noValidate
@@ -89,7 +90,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
             onChange={(event) => {
               setDraft(event.target.value);
             }}
-            className="w-full rounded border border-slate-300 px-2 py-1"
+            className="w-full rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong"
           />
           <button type="submit" disabled={pending} className={BUTTON}>
             {rename.isPending ? 'Saving…' : 'Save'}
@@ -108,7 +109,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
           </button>
         </form>
       ) : (
-        <p className={task.status === 'completed' ? 'text-slate-500 line-through' : ''}>
+        <p className={task.status === 'completed' ? 'text-muted line-through' : ''}>
           {task.title}
           {isCurrent && <span className="ml-2 text-xs font-semibold uppercase">Current</span>}
         </p>
@@ -214,7 +215,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
       )}
 
       {error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}

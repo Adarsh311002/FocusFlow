@@ -1,10 +1,12 @@
-import { errorBodySchema } from '@focus-flow/contracts';
+import { errorBodySchema, errorCodes } from '@focus-flow/contracts';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
   AppError,
+  appError,
   createErrorHandler,
+  ERROR_STATUS,
   type ErrorHandlerLogger,
   type ErrorHandlerRequest,
   type ErrorHandlerResponse,
@@ -258,5 +260,36 @@ describe('createErrorHandler', () => {
 
     expect(harness.nextCalls).toEqual([error]);
     expect(harness.sent.status).toBeUndefined();
+  });
+});
+
+describe('ERROR_STATUS', () => {
+  it('gives every error code a 4xx or 5xx status', () => {
+    for (const code of errorCodes) {
+      expect(ERROR_STATUS[code]).toBeGreaterThanOrEqual(400);
+      expect(ERROR_STATUS[code]).toBeLessThan(600);
+    }
+    expect(Object.keys(ERROR_STATUS).sort()).toEqual([...errorCodes].sort());
+  });
+
+  it('maps the room codes as documented', () => {
+    expect(ERROR_STATUS).toMatchObject({
+      ROOM_NOT_FOUND: 404,
+      NOT_A_MEMBER: 403,
+      NOT_HOST: 403,
+      KNOCK_REQUIRED: 403,
+      HOST_CANNOT_LEAVE: 409,
+      CANNOT_REMOVE_HOST: 409,
+      NOT_PRIVATE: 409,
+      ALREADY_MEMBER: 409,
+      HOST_OFFLINE: 409,
+      ROOM_FULL: 409,
+      KNOCK_EXPIRED: 410,
+      RATE_LIMITED: 429,
+    });
+  });
+
+  it('builds an AppError with the default status', () => {
+    expect(appError('KNOCK_EXPIRED', 'gone')).toMatchObject({ code: 'KNOCK_EXPIRED', status: 410 });
   });
 });

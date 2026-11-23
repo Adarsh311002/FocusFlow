@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   foreignKey,
   index,
+  integer,
   pgTable,
   type PgTableExtraConfigValue,
   primaryKey,
@@ -145,5 +147,190 @@ export const authSessions = pgTable(
       foreignColumns: [users.id],
     }).onDelete('cascade'),
     index('ix_auth_sessions_user_id').on(table.userId),
+  ],
+);
+
+// Phase 4B: solo focus sessions (docs/domain/model.md, decisions D6, D14/15/35, E1–E16).
+// Solo sessions have `room_id`/`focus_run_id` NULL; Phase 8 room sessions (RF1) set both
+// and add the room-only abandon reasons. The lifecycle rules that need the clock or presence (completion,
+// grace, expiry) live in modules/focus-sessions; the table guarantees the invariants that
+// must hold whatever code writes it.
+export const focusSessions = pgTable(
+  'focus_sessions',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    // D4: optional. Starting with a deleted or completed task is rejected by the service
+    // (E3); a task deleted later stays linked for history (D38).
+    taskId: uuid(),
+    status: text().notNull(),
+    abandonReason: text(),
+    // RF1: set together for a room focus session, NULL for a solo one. The run itself lives
+    // in Redis, so `focus_run_id` has no foreign key.
+    roomId: uuid(),
+    focusRunId: uuid(),
+    plannedSeconds: integer().notNull(),
+    // D6: time accumulated before the current running stretch, whole seconds (E14).
+    focusedSeconds: integer().notNull().default(0),
+    // D6: start of the current running stretch; NULL while paused or ended.
+    runningSince: timestamp({ withTimezone: true }),
+    startedAt: timestamp({ withTimezone: true }).notNull(),
+    endedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_focus_sessions', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_focus_sessions_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // RF1: no ON DELETE action (P1); rooms are never deleted in the MVP.
+    foreignKey({
+      name: 'fk_focus_sessions_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }),
+    // Composite FK: the task must be one of this user's own tasks. No ON DELETE action
+    // (P1): tasks are soft-deleted, so a task row only disappears together with its user,
+    // whose sessions cascade away in the same statement.
+    foreignKey({
+      name: 'fk_focus_sessions_task_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }),
+    check(
+      'ck_focus_sessions_status',
+      sql`${table.status} IN ('in_progress', 'completed', 'abandoned')`,
+    ),
+    // E5 (solo) plus the room reasons of RF1.
+    check(
+      'ck_focus_sessions_abandon_reason',
+      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost')`,
+    ),
+    // RF1: a room session has both the room and the run, a solo one has neither.
+    check(
+      'ck_focus_sessions_room_run',
+      sql`(${table.roomId} IS NULL) = (${table.focusRunId} IS NULL)`,
+    ),
+    // RF1: the room timer owns the clock of a room session, so `running_since` is solo-only.
+    check(
+      'ck_focus_sessions_running_since_solo',
+      sql`${table.roomId} IS NULL OR ${table.runningSince} IS NULL`,
+    ),
+    // E1.
+    check('ck_focus_sessions_planned_seconds', sql`${table.plannedSeconds} BETWEEN 60 AND 14400`),
+    check(
+      'ck_focus_sessions_focused_seconds',
+      sql`${table.focusedSeconds} BETWEEN 0 AND ${table.plannedSeconds}`,
+    ),
+    check(
+      'ck_focus_sessions_ended_at',
+      sql`(${table.status} = 'in_progress') = (${table.endedAt} IS NULL)`,
+    ),
+    check(
+      'ck_focus_sessions_abandon_reason_presence',
+      sql`(${table.status} = 'abandoned') = (${table.abandonReason} IS NOT NULL)`,
+    ),
+    check(
+      'ck_focus_sessions_running_since',
+      sql`${table.runningSince} IS NULL OR ${table.status} = 'in_progress'`,
+    ),
+    check(
+      'ck_focus_sessions_ended_after_started',
+      sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`,
+    ),
+    // E15.
+    check(
+      'ck_focus_sessions_running_since_after_started',
+      sql`${table.runningSince} IS NULL OR ${table.runningSince} >= ${table.startedAt}`,
+    ),
+    check(
+      'ck_focus_sessions_completed_focused',
+      sql`${table.status} <> 'completed' OR ${table.focusedSeconds} = ${table.plannedSeconds}`,
+    ),
+    // At most one in-progress session per user. It also serves every scan of in-progress
+    // sessions (the reconciler sweep, stale cleanup), since it holds only those rows.
+    uniqueIndex('uq_focus_sessions_user_id_in_progress')
+      .on(table.userId)
+      .where(sql`${table.status} = 'in_progress'`),
+    // History, newest first (Phase 5), and the ON DELETE CASCADE from users.
+    index('ix_focus_sessions_user_id_started_at').on(table.userId, table.startedAt.desc()),
+    // RF1: the participants of a run, and the sweep of in-progress room sessions.
+    index('ix_focus_sessions_room_run_in_progress')
+      .on(table.roomId, table.focusRunId)
+      .where(sql`${table.status} = 'in_progress'`),
+  ],
+);
+
+// Phase 6: rooms and membership (docs/domain/model.md, decisions D8, D9, D16, M1–M10).
+// Persistent shared spaces: presence, knocks and chat are Redis-only. The phase durations
+// are saved here (D16); the live timer arrives in Phase 7. The host also has a
+// `room_members` row, created in the same transaction as the room (a rule the service
+// keeps; the database cannot express it).
+export const rooms = pgTable(
+  'rooms',
+  {
+    id: uuid().notNull(),
+    // Six characters from an alphabet without look-alikes (M2), uppercase.
+    code: text().notNull(),
+    name: text().notNull(),
+    // RESTRICT until account deletion is decided (D2): a host cannot be deleted while
+    // their rooms exist.
+    hostId: uuid().notNull(),
+    isPrivate: boolean().notNull(),
+    focusSeconds: integer().notNull().default(1500),
+    shortBreakSeconds: integer().notNull().default(300),
+    longBreakSeconds: integer().notNull().default(900),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_rooms', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_rooms_host_id',
+      columns: [table.hostId],
+      foreignColumns: [users.id],
+    }).onDelete('restrict'),
+    uniqueIndex('uq_rooms_code').on(table.code),
+    check('ck_rooms_code', sql`${table.code} ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$'`),
+    check('ck_rooms_name', sql`char_length(${table.name}) BETWEEN 1 AND 60`),
+    // M3: duration bounds, in whole seconds.
+    check('ck_rooms_focus_seconds', sql`${table.focusSeconds} BETWEEN 60 AND 14400`),
+    check('ck_rooms_short_break_seconds', sql`${table.shortBreakSeconds} BETWEEN 60 AND 3600`),
+    check('ck_rooms_long_break_seconds', sql`${table.longBreakSeconds} BETWEEN 60 AND 7200`),
+    // The ON DELETE RESTRICT check of users and "rooms I host".
+    index('ix_rooms_host_id').on(table.hostId),
+  ],
+);
+
+export const roomMembers = pgTable(
+  'room_members',
+  {
+    roomId: uuid().notNull(),
+    userId: uuid().notNull(),
+    joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_members', columns: [table.roomId, table.userId] }),
+    foreignKey({
+      name: 'fk_room_members_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_members_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // "My Rooms": a user's rooms, most recently joined first, and the users cascade.
+    index('ix_room_members_user_id_joined_at').on(table.userId, table.joinedAt.desc()),
   ],
 );

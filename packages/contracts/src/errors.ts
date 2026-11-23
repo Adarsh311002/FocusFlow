@@ -18,6 +18,32 @@ export const errorCodes = [
   // Tasks (Phase 2, docs/api/rest.md)
   'TASK_NOT_FOUND',
   'TASK_NOT_OPEN',
+  // Focus sessions (Phase 4B, docs/api/rest.md)
+  'SESSION_IN_PROGRESS',
+  'NOT_CONNECTED',
+  // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
+  'ROOM_NOT_FOUND',
+  'NOT_A_MEMBER',
+  'NOT_JOINED',
+  'NOT_HOST',
+  'HOST_CANNOT_LEAVE',
+  'CANNOT_REMOVE_HOST',
+  'KNOCK_REQUIRED',
+  'KNOCK_EXPIRED',
+  'NOT_PRIVATE',
+  'ALREADY_MEMBER',
+  'HOST_OFFLINE',
+  'ROOM_FULL',
+  'RATE_LIMITED',
+  // Room timer (Phase 7, docs/api/socket-events.md)
+  'VERSION_CONFLICT',
+  'INVALID_TRANSITION',
+  // Room focus runs (Phase 8, docs/api/rest.md)
+  'RUN_CHANGED',
+  'RUN_ENDING',
+  'NOT_PRESENT',
+  'NOT_FOCUS_PHASE',
+  'NOT_SOLO_SESSION',
 ] as const;
 
 export const errorCodeSchema = z.enum(errorCodes);
