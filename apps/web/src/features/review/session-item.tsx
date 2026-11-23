@@ -16,21 +16,36 @@ export function SessionItem({
   const running = session.status === 'in_progress' && session.runningSince !== null;
 
   return (
-    <li
-      aria-label={`${title}, ${status}`}
-      className="space-y-1 rounded border border-slate-200 p-3 text-sm"
-    >
+    <li aria-label={`${title}, ${status}`} className="relative space-y-1.5 text-sm">
+      <span
+        aria-hidden="true"
+        className={`absolute top-1 -left-[2.6rem] h-4 w-4 rounded-full border-4 border-canvas ${
+          session.status === 'completed'
+            ? 'bg-focus shadow-glow'
+            : session.status === 'in_progress'
+              ? 'animate-pulse bg-ok'
+              : 'bg-muted/60'
+        }`}
+      />
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className={session.task === null ? 'text-slate-500 italic' : 'font-medium'}>
+        <p
+          className={
+            session.task === null
+              ? 'font-display text-2xl text-muted italic'
+              : 'font-display text-2xl'
+          }
+        >
           {title}
           {session.task?.deleted === true && (
-            <span className="ml-2 text-xs text-slate-500">(deleted)</span>
+            <span className="ml-2 text-xs text-muted">(deleted)</span>
           )}
         </p>
-        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold">{status}</span>
+        <span className="rounded-full border border-line px-3 py-1 text-[10px] tracking-[0.2em] text-muted uppercase">
+          {status}
+        </span>
       </div>
       {session.context.kind === 'room' && (
-        <p className="text-slate-600">
+        <p className="text-muted">
           {'Focused together in a room · '}
           <Link
             to="/rooms/$roomId"
@@ -45,10 +60,10 @@ export function SessionItem({
         {`Focused ${formatDuration(session.focusedSeconds)} of ${formatDuration(session.plannedSeconds)} planned`}
         {running && (
           // `focusedSeconds` excludes the stretch that is running right now (D6).
-          <span className="text-slate-500"> (plus the current running stretch)</span>
+          <span className="text-muted"> (plus the current running stretch)</span>
         )}
       </p>
-      <p className="text-slate-600">
+      <p className="text-muted">
         {'Started '}
         <time dateTime={session.startedAt}>{formatDateTime(session.startedAt, timeZone)}</time>
         {session.status !== 'in_progress' && (

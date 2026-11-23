@@ -75,3 +75,10 @@ export function sessionStatusLabel(session: FocusSessionView): string {
       }
   }
 }
+
+/** A calendar date `YYYY-MM-DD` as a short weekday ("Mon"); zone-free like `formatDayLabel`. */
+export function formatWeekdayShort(date: string, locale?: string): string {
+  return new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(
+    new Date(`${date}T12:00:00.000Z`),
+  );
+}

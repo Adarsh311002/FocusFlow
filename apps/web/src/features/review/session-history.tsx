@@ -8,11 +8,11 @@ export function SessionHistory({ timeZone }: { timeZone: string }) {
 
   let body;
   if (history.isPending) {
-    body = <p className="text-slate-600">Loading your focus sessions…</p>;
+    body = <p className="text-muted">Loading your focus sessions…</p>;
   } else if (history.data === undefined) {
     // Nothing loaded yet and the first page failed.
     body = (
-      <p role="alert" className="text-sm text-red-700">
+      <p role="alert" className="text-sm text-danger">
         {reviewErrorMessage(history.error)}
       </p>
     );
@@ -21,9 +21,12 @@ export function SessionHistory({ timeZone }: { timeZone: string }) {
     body = (
       <div className="space-y-3">
         {sessions.length === 0 ? (
-          <p className="text-slate-600">No focus sessions yet.</p>
+          <p className="text-muted">No focus sessions yet.</p>
         ) : (
-          <ul aria-label="Focus sessions" className="space-y-2">
+          <ul
+            aria-label="Focus sessions"
+            className="relative ml-3 space-y-8 border-l border-line pl-8"
+          >
             {sessions.map((session) => (
               <SessionItem key={session.id} session={session} timeZone={timeZone} />
             ))}
@@ -31,7 +34,7 @@ export function SessionHistory({ timeZone }: { timeZone: string }) {
         )}
         {history.isError && (
           // A failed next page or refresh keeps the sessions already on screen.
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {reviewErrorMessage(history.error)}
           </p>
         )}
@@ -42,7 +45,7 @@ export function SessionHistory({ timeZone }: { timeZone: string }) {
             onClick={() => {
               void history.fetchNextPage();
             }}
-            className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50"
+            className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50"
           >
             {history.isFetchingNextPage ? 'Loading…' : 'Load more'}
           </button>
@@ -52,8 +55,8 @@ export function SessionHistory({ timeZone }: { timeZone: string }) {
   }
 
   return (
-    <section aria-labelledby="history-heading" className="space-y-3">
-      <h3 id="history-heading" className="text-base font-semibold">
+    <section aria-labelledby="history-heading" className="space-y-6">
+      <h3 id="history-heading" className="font-display text-4xl">
         Focus sessions
       </h3>
       {body}
