@@ -15,7 +15,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   if (status === 'loading') {
     return (
-      <p role="status" aria-live="polite" className="text-slate-600">
+      <p role="status" aria-live="polite" className="text-muted">
         Checking your session…
       </p>
     );

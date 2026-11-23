@@ -4,6 +4,7 @@ import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { LandingPage } from '../features/landing/landing-page';
 import { ReviewPage } from '../features/review/review-page';
 import { RoomPage } from '../features/rooms/room-page';
 import { RoomsPage } from '../features/rooms/rooms-page';
@@ -15,6 +16,12 @@ const rootRoute = createRootRoute({ component: RootLayout });
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  component: LandingPage,
+});
+
+const statusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/status',
   component: SystemStatus,
 });
 
@@ -96,6 +103,7 @@ const roomRoute = createRoute({
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  statusRoute,
   loginRoute,
   signupRoute,
   dashboardRoute,

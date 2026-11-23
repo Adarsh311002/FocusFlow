@@ -12,7 +12,7 @@ const LABELS: Record<RealtimeStatus, string> = {
 export function ConnectionStatus() {
   const status = useRealtimeStatus();
   return (
-    <p role="status" aria-live="polite" className="text-xs text-slate-500">
+    <p role="status" aria-live="polite" className="text-xs text-muted">
       {`Live connection: ${LABELS[status]}`}
     </p>
   );

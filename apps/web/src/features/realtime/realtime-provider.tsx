@@ -58,3 +58,12 @@ export function useRealtimeStatus(): RealtimeStatus {
   }
   return useSyncExternalStore(client.subscribe, client.getStatus);
 }
+
+const NO_SUBSCRIPTION = (): (() => void) => () => undefined;
+const NO_STATUS = (): null => null;
+
+/** Like `useRealtimeStatus`, but `null` outside a provider (decorative indicators only). */
+export function useOptionalRealtimeStatus(): RealtimeStatus | null {
+  const client = useContext(RealtimeContext);
+  return useSyncExternalStore(client?.subscribe ?? NO_SUBSCRIPTION, client?.getStatus ?? NO_STATUS);
+}
