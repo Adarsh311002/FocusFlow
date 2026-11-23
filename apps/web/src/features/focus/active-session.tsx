@@ -1,6 +1,8 @@
 import type { FocusSessionView } from '@focus-flow/contracts';
 import { useEffect, useRef, useState } from 'react';
 
+import { buttonClass } from '../../ui/primitives';
+import { ProgressRing } from '../../ui/progress-ring';
 import { focusErrorMessage } from './focus-messages';
 import {
   useFocusConnection,
@@ -14,14 +16,14 @@ import { useClockSynced, useServerNowMs } from './use-server-now';
 
 type InProgress = Extract<FocusSessionView, { status: 'in_progress' }>;
 
-const PRIMARY = 'rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50';
+const PRIMARY = buttonClass('primary');
 /** Gaps before the re-asks at 0 s, ~2 s and ~5 s after zero; then every `REASK_EVERY_MS`. */
 const REASK_GAPS_MS = [0, 2_000, 3_000] as const;
 const REASK_EVERY_MS = 10_000;
 /** A paused session this old gets a note that unresolved sessions are cleaned up (E2). */
 const OLD_PAUSED_MS = 2 * 60 * 60 * 1000;
 
-const SECONDARY = 'rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50';
+const SECONDARY = buttonClass('ghost');
 
 /**
  * A running or paused session. The clock is display only: at 0:00 the browser keeps
@@ -103,47 +105,52 @@ export function ActiveSession({ session }: { session: InProgress }) {
   }
 
   return (
-    <div ref={rootRef} className="space-y-3">
+    <div ref={rootRef} className="space-y-5 text-center">
       <div>
-        <p className="text-lg font-semibold">
+        <p className="font-display text-3xl">
           {session.task === null ? 'Focus session' : session.task.title}
           {session.task?.deleted === true && (
-            <span className="ml-2 text-xs font-normal text-slate-500">(task deleted)</span>
+            <span className="ml-2 text-xs font-normal text-muted">(task deleted)</span>
           )}
         </p>
         {/* Only state changes are announced; the ticking clock is deliberately silent. */}
-        <p role="status" className="text-sm font-medium text-slate-700">
+        <p role="status" className="text-sm font-medium text-focus">
           {paused ? 'Paused' : 'Running'}
         </p>
       </div>
 
-      <p className="text-4xl font-semibold tabular-nums">
-        <span className="sr-only">Time remaining </span>
-        {formatClock(remaining)}
-      </p>
-      <p className="text-sm text-slate-600">
-        {`Focused ${formatClock(focused)} of ${formatClock(session.plannedSeconds)}`}
-      </p>
+      <ProgressRing progress={focused / session.plannedSeconds} muted={paused}>
+        <p className="font-display text-7xl tabular-nums">
+          <span className="sr-only">Time remaining </span>
+          {formatClock(remaining)}
+        </p>
+        <p className="mt-2 text-sm text-muted">
+          {`Focused ${formatClock(focused)} of ${formatClock(session.plannedSeconds)}`}
+        </p>
+      </ProgressRing>
       {!clockSynced && (
         // Not a live region: a caveat on the numbers, not an event to announce.
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted">
           Syncing with the server clock — the time shown may be a few seconds off.
         </p>
       )}
       {connection === 'not-connected' && !paused && (
         // A paused session is not abandoned by a disconnect (D35), so only a running one warns.
-        <p role="alert" className="text-sm text-amber-800">
+        <p
+          role="alert"
+          className="rounded-xl border border-warm/40 bg-warm/10 p-3 text-sm text-warm"
+        >
           Focus Flow must stay open and connected — a running session ends if you stay disconnected
           for about a minute.
         </p>
       )}
       {atZero && (
-        <p role="status" className="text-sm text-slate-600">
+        <p role="status" className="text-sm text-muted">
           Finishing… waiting for the server to confirm
         </p>
       )}
       {paused && nowMs - Date.parse(session.startedAt) > OLD_PAUSED_MS && (
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-muted">
           This session has been paused for a long time. An unresolved session is cleaned up
           automatically.
         </p>
@@ -152,7 +159,7 @@ export function ActiveSession({ session }: { session: InProgress }) {
       {confirmingStop ? (
         <div className="space-y-2">
           <p className="text-sm">{`Stop and keep ${String(wholeMinutes(focused))} min recorded?`}</p>
-          <div className="flex gap-2">
+          <div className="flex justify-center gap-2">
             <button
               ref={confirmRef}
               type="button"
@@ -183,7 +190,7 @@ export function ActiveSession({ session }: { session: InProgress }) {
           </div>
         </div>
       ) : (
-        <div className="flex gap-2">
+        <div className="flex justify-center gap-3">
           {paused ? (
             <button
               ref={resumeRef}
@@ -231,7 +238,7 @@ export function ActiveSession({ session }: { session: InProgress }) {
 
       {error !== null && (
         // The buttons stay usable, so pressing the same one again is the retry.
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {focusErrorMessage(error)}
         </p>
       )}

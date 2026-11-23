@@ -66,6 +66,19 @@ export function useCurrentFocusSession(): UseQueryResult<FocusSessionView | null
 }
 
 /**
+ * What the cache last knew about the current session, for decoration only: a passive
+ * observer that never fetches (the Focus panel's query owns the reads).
+ */
+export function useCachedCurrentFocusSession(): FocusSessionView | null | undefined {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: focusCurrentKey(userId),
+    queryFn: getCurrentFocusSession,
+    enabled: false,
+  }).data;
+}
+
+/**
  * Asks the server for the current session again without becoming another observer of the
  * query: a second `useCurrentFocusSession()` would also refetch on its own mount.
  */

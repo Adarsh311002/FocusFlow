@@ -1,6 +1,7 @@
 import type { TaskId, TaskView } from '@focus-flow/contracts';
 import { useState } from 'react';
 
+import { buttonClass, INPUT_CLASS } from '../../ui/primitives';
 import { useAuth } from '../auth/auth-context';
 import { useTask, useTaskList } from '../tasks/task-queries';
 import { focusErrorMessage } from './focus-messages';
@@ -66,18 +67,22 @@ export function StartSessionForm() {
     <form
       noValidate
       aria-label="Start a focus session"
-      className="space-y-3"
+      className="space-y-5"
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
       <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Duration</legend>
-        <div className="flex flex-wrap items-center gap-3">
+        <legend className="mb-2 text-sm font-medium text-muted">Duration</legend>
+        <div className="grid grid-cols-3 gap-2">
           {PRESET_MINUTES.map((minutes) => (
-            <label key={minutes} className="flex items-center gap-1 text-sm">
+            <label
+              key={minutes}
+              className="cursor-pointer rounded-2xl border border-line bg-surface px-3 py-4 text-center text-sm transition hover:bg-surface-strong has-[:checked]:border-focus has-[:checked]:bg-focus/15 has-[:checked]:shadow-glow has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus"
+            >
               <input
+                className="sr-only"
                 type="radio"
                 name="duration"
                 checked={choice.kind === 'preset' && choice.minutes === minutes}
@@ -90,8 +95,8 @@ export function StartSessionForm() {
             </label>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <label htmlFor="focus-custom-minutes" className="text-sm">
+        <div className="flex items-center gap-3">
+          <label htmlFor="focus-custom-minutes" className="text-sm text-muted">
             Custom minutes
           </label>
           <input
@@ -106,13 +111,13 @@ export function StartSessionForm() {
               setChoice({ kind: 'custom', text: event.target.value });
               setDurationError(null);
             }}
-            className="w-24 rounded border border-slate-300 px-2 py-1"
+            className={INPUT_CLASS + ' max-w-28'}
           />
         </div>
       </fieldset>
 
       <div className="space-y-1">
-        <label htmlFor="focus-task" className="block text-sm font-medium">
+        <label htmlFor="focus-task" className="block text-sm font-medium text-muted">
           Task
         </label>
         <select
@@ -122,7 +127,7 @@ export function StartSessionForm() {
           onChange={(event) => {
             setTaskChoice(event.target.value);
           }}
-          className="w-full rounded border border-slate-300 px-2 py-1"
+          className={INPUT_CLASS}
         >
           <option value="">No task</option>
           {options.map((task) => (
@@ -136,12 +141,12 @@ export function StartSessionForm() {
       <button
         type="submit"
         disabled={start.isPending}
-        className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        className={buttonClass('primary', 'w-full py-3 text-base')}
       >
         {start.isPending ? 'Starting…' : 'Start focus'}
       </button>
       {error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}

@@ -12,7 +12,7 @@ import { StartSessionForm } from './start-session-form';
  * The focus step of the loop: decide the task, then focus. A running session is restored
  * from the server after a reload; nothing here ever starts a session by itself.
  */
-export function FocusPanel() {
+export function FocusPanel({ variant = 'card' }: { readonly variant?: 'card' | 'bare' }) {
   const current = useCurrentFocusSession();
   // A session (or "no session") from an earlier successful read. It is what the page last
   // knew, not proof that the server can be reached now.
@@ -21,7 +21,7 @@ export function FocusPanel() {
   let body;
   if (current.isPending) {
     body = (
-      <p role="status" className="text-slate-600">
+      <p role="status" className="text-muted">
         Checking for a running session…
       </p>
     );
@@ -50,9 +50,13 @@ export function FocusPanel() {
   return (
     <section
       aria-labelledby="focus-heading"
-      className="space-y-3 rounded-md border border-slate-300 p-4"
+      className={
+        variant === 'card'
+          ? 'space-y-6 rounded-[2rem] border border-line bg-surface p-6 shadow-card backdrop-blur-xl md:p-8'
+          : 'space-y-6'
+      }
     >
-      <h3 id="focus-heading" className="text-sm font-semibold uppercase text-slate-600">
+      <h3 id="focus-heading" className="text-xs tracking-[0.3em] text-focus uppercase">
         Focus
       </h3>
       {/* A failed background read must not hide what is already known: the notice sits
@@ -84,14 +88,14 @@ function RoomSessionNotice({
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-lg font-semibold">{session.task?.title ?? 'Focus together'}</p>
-      <p role="status" className="text-sm text-slate-700">
+      <p className="font-display text-3xl">{session.task?.title ?? 'Focus together'}</p>
+      <p role="status" className="text-sm text-muted">
         {`You are in a room's focus run (${String(wholeMinutes(session.plannedSeconds))} min planned). The room's timer controls it, so you can leave it from the room.`}
       </p>
       <Link
         to="/rooms/$roomId"
         params={{ roomId }}
-        className="inline-block rounded border border-slate-300 px-3 py-1 text-sm"
+        className="inline-block rounded-xl border border-line bg-surface px-4 py-2 text-sm hover:bg-surface-strong"
       >
         Open the room
       </Link>
@@ -112,7 +116,7 @@ function ReadFailure({
 }) {
   return (
     <div className="space-y-2">
-      <p role="alert" className="text-sm text-red-700">
+      <p role="alert" className="text-sm text-danger">
         {focusErrorMessage(error)}
         {note === undefined ? '' : ` ${note}`}
       </p>
@@ -125,7 +129,7 @@ function ReadFailure({
             void onRetry();
           }
         }}
-        className="rounded border border-slate-300 px-3 py-1 text-sm aria-disabled:opacity-50"
+        className="rounded-xl border border-line bg-surface px-4 py-2 text-sm aria-disabled:opacity-50"
       >
         Retry
       </button>

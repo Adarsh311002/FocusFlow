@@ -54,18 +54,18 @@ export function NewTaskForm() {
           onChange={(event) => {
             setTitle(event.target.value);
           }}
-          className="w-full rounded border border-slate-300 px-2 py-1"
+          className="w-full rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong"
         />
         <button
           type="submit"
           disabled={create.isPending}
-          className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+          className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
         >
           {create.isPending ? 'Adding…' : 'Add'}
         </button>
       </div>
       {error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}

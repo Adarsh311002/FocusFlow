@@ -16,11 +16,11 @@ export function TaskList({ status }: { status: TaskStatus }) {
   const list = useTaskList(status);
 
   if (list.isPending) {
-    return <p className="text-slate-600">Loading tasks…</p>;
+    return <p className="text-muted">Loading tasks…</p>;
   }
   if (list.isError) {
     return (
-      <p role="alert" className="text-sm text-red-700">
+      <p role="alert" className="text-sm text-danger">
         {taskErrorMessage(list.error)}
       </p>
     );
@@ -28,7 +28,7 @@ export function TaskList({ status }: { status: TaskStatus }) {
 
   const tasks = list.data.pages.flatMap((page) => page.tasks);
   if (tasks.length === 0) {
-    return <p className="text-slate-600">{EMPTY[status]}</p>;
+    return <p className="text-muted">{EMPTY[status]}</p>;
   }
 
   return (
@@ -45,7 +45,7 @@ export function TaskList({ status }: { status: TaskStatus }) {
           onClick={() => {
             void list.fetchNextPage();
           }}
-          className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50"
+          className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50"
         >
           {list.isFetchingNextPage ? 'Loading…' : 'Load more'}
         </button>
