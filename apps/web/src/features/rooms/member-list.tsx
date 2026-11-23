@@ -4,12 +4,19 @@ import { useState } from 'react';
 import { HostBadge } from './room-badges';
 import { useRoomLive } from './room-live-store';
 import { roomErrorMessage } from './room-messages';
-import { useRemoveRoomMember, useRoomMembers } from './room-queries';
+import {
+  useBlockRoomMember,
+  useRemoveRoomMember,
+  useRoomBlocks,
+  useRoomMembers,
+  useUnblockRoomMember,
+} from './room-queries';
 
 /**
  * The room's members (durable, from the server) with a live "here / not here" mark per
  * person, from the presence the server reports for this room. The host can remove others,
- * after an in-page confirmation.
+ * after an in-page confirmation, either letting them rejoin or blocking them (B1), and can
+ * lift a block from the blocked list.
  */
 export function MemberList({
   roomId,
@@ -24,6 +31,8 @@ export function MemberList({
   const presence = useRoomLive(roomId, (state) => state.presence);
   const joined = useRoomLive(roomId, (state) => state.joinStatus === 'joined');
   const remove = useRemoveRoomMember(roomId);
+  const block = useBlockRoomMember(roomId);
+  const busy = remove.isPending || block.isPending;
   const [confirming, setConfirming] = useState<UserId | null>(null);
 
   const present = new Set(presence.map((entry) => entry.userId));
@@ -76,6 +85,7 @@ export function MemberList({
                   type="button"
                   onClick={() => {
                     remove.reset();
+                    block.reset();
                     setConfirming(member.userId);
                   }}
                   className="ml-auto rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-xs"
@@ -87,12 +97,15 @@ export function MemberList({
                 <span
                   role="group"
                   aria-label={`Confirm removing ${member.displayName}`}
-                  className="ml-auto flex items-center gap-2 text-sm"
+                  className="mt-2 flex w-full flex-wrap items-center gap-2 rounded-2xl border border-line bg-canvas/40 p-3 text-sm"
                 >
-                  <span>{`Remove ${member.displayName} from the room?`}</span>
+                  <span className="w-full">{`Remove ${member.displayName} from the room?`}</span>
+                  <span className="w-full text-xs text-muted">
+                    They can come back (in a private room, by knocking again) unless you block them.
+                  </span>
                   <button
                     type="button"
-                    disabled={remove.isPending}
+                    disabled={busy}
                     onClick={() => {
                       remove.mutate(member.userId, {
                         onSuccess: () => {
@@ -106,11 +119,25 @@ export function MemberList({
                   </button>
                   <button
                     type="button"
-                    disabled={remove.isPending}
+                    disabled={busy}
+                    onClick={() => {
+                      block.mutate(member.userId, {
+                        onSuccess: () => {
+                          setConfirming(null);
+                        },
+                      });
+                    }}
+                    className="rounded-lg border border-danger/50 px-2 py-1 text-xs font-medium text-danger disabled:opacity-50"
+                  >
+                    {block.isPending ? 'Blocking…' : 'Remove and block'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
                     onClick={() => {
                       setConfirming(null);
                     }}
-                    className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-xs disabled:opacity-50"
+                    className="rounded-full border border-line bg-surface px-4 py-1.5 text-xs transition hover:bg-surface-strong disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -130,11 +157,48 @@ export function MemberList({
       </h3>
       {joined && <p className="text-sm text-muted">{`${String(presence.length)} here now`}</p>}
       {body}
-      {remove.error !== null && (
+      {(remove.error ?? block.error) !== null && (
         <p role="alert" className="text-sm text-danger">
-          {roomErrorMessage(remove.error)}
+          {roomErrorMessage(remove.error ?? block.error)}
         </p>
       )}
+      {isHost && <BlockedList roomId={roomId} />}
     </section>
+  );
+}
+
+/** The host's list of blocked people, each with Unblock (B5, B6). Hidden while empty. */
+function BlockedList({ roomId }: { roomId: RoomId }) {
+  const blocks = useRoomBlocks(roomId, true);
+  const unblock = useUnblockRoomMember(roomId);
+  if (blocks.data === undefined || blocks.data.length === 0) {
+    return null;
+  }
+  return (
+    <div className="space-y-2 border-t border-line pt-4">
+      <h4 className="text-[10px] tracking-[0.3em] text-muted uppercase">Blocked</h4>
+      <ul aria-label="Blocked people" className="space-y-2">
+        {blocks.data.map((entry) => (
+          <li key={entry.userId} className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-muted">{entry.displayName}</span>
+            <button
+              type="button"
+              disabled={unblock.isPending}
+              onClick={() => {
+                unblock.mutate(entry.userId);
+              }}
+              className="rounded-full border border-line px-3 py-1 text-xs transition hover:bg-surface-strong disabled:opacity-50"
+            >
+              {`Unblock ${entry.displayName}`}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {unblock.error !== null && (
+        <p role="alert" className="text-sm text-danger">
+          {roomErrorMessage(unblock.error)}
+        </p>
+      )}
+    </div>
   );
 }

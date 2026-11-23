@@ -9,4 +9,5 @@ export const roomKeys = {
   list: (userId: string) => ['rooms', userId, 'list'] as const,
   detail: (userId: string, roomId: RoomId) => ['rooms', userId, 'detail', roomId] as const,
   members: (userId: string, roomId: RoomId) => ['rooms', userId, 'members', roomId] as const,
+  blocks: (userId: string, roomId: RoomId) => ['rooms', userId, 'blocks', roomId] as const,
 };
