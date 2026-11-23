@@ -321,6 +321,15 @@ Full text: `docs/decisions/decision-log.md`.
 - `GET /focus-sessions/insights?from&to&tz` (a sibling of `/summary`, same V1–V8 rules and ≤ 366-day range) returns totals and completion rate, per-day goal progress, current/longest streak (days with a completed session, over all history), a 7×24 start-hour heatmap in the user's time zone, the top 10 tasks (deleted ones flagged, plus a no-task bucket), the previous equal-length period with deltas, and the solo/room split.
 - `users.daily_goal_seconds` (default 7200, 300–43,200) is read in `UserView.dailyGoalSeconds` and changed with `PATCH /me`.
 
+### Intention (IN1–IN6, approved 2026-11-23)
+Full text: `docs/decisions/decision-log.md`.
+- **IN1** An intention is stored as a task and made the current task; no new storage.
+- **IN2** The start form asks "What will you finish in this session?"; a named intention becomes the session's explicit `taskId` (E3 unchanged). Starting without one is still allowed, with a nudge.
+- **IN3** Once per local day, on the first signed-in page (and right after sign-in), a full-screen ritual asks for today's one thing and the daily focus goal; skippable ("Not today" or Esc); remembered in `localStorage` only; mounted through `IntentionPromptProvider` in `AppProviders`.
+- **IN4** The daily goal is also editable from the account menu (`PATCH /me`).
+- **IN5** Dashboard and Review draw `GET /focus-sessions/insights` (goal ring, streak, week vs last week, completion, goal line, top tasks, heatmap, room share; 7/30/90 days on Review).
+- **IN6** Hosts choose "Yes, remove" or "Remove and block" and can unblock from a "Blocked" list.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
