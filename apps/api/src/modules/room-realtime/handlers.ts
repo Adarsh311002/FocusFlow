@@ -29,7 +29,13 @@ import {
   type RateLimiter,
   TIMER_RATE,
 } from './limiter.js';
-import { findRoom, findRoomForMember, findUserProfiles, isRoomMember } from './queries.js';
+import {
+  findRoom,
+  findRoomForMember,
+  findUserProfiles,
+  isRoomBlocked,
+  isRoomMember,
+} from './queries.js';
 import type { RoomPresence } from './room-presence.js';
 import { buildSnapshot } from './snapshot.js';
 
@@ -145,6 +151,10 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
     }
     const room = await findRoomForMember(db, roomId, userId);
     if (room === undefined) {
+      // A blocked person is told so (B2); everyone else learns nothing about the room (M4).
+      if (await isRoomBlocked(db, roomId, userId)) {
+        throw new SocketAckError('ROOM_BLOCKED', 'The host has blocked you from this room.');
+      }
       throw new SocketAckError('NOT_A_MEMBER', 'You are not a member of this room.');
     }
 
@@ -287,6 +297,9 @@ export const registerRoomHandlers = (socket: AppSocket, deps: RoomHandlerDeps): 
     const room = await findRoom(db, roomId);
     if (room === undefined) {
       throw new SocketAckError('ROOM_NOT_FOUND', 'This room does not exist.');
+    }
+    if (await isRoomBlocked(db, roomId, userId)) {
+      throw new SocketAckError('ROOM_BLOCKED', 'The host has blocked you from this room.');
     }
     if (!room.isPrivate) {
       throw new SocketAckError('NOT_PRIVATE', 'This room is public; join it directly.');

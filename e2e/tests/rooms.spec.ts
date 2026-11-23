@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { api, errorCodeOf } from '../support/focus';
 import {
   chatLog,
   closeAll,
@@ -139,6 +140,42 @@ test('removal: the removed member loses the room and must knock again', async ({
     await expect(guest.page.getByRole('log', { name: 'Chat messages' })).toHaveCount(0);
 
     expectNoErrors(host);
+  } finally {
+    await closeAll(host, guest);
+  }
+});
+
+test('removal with block: the blocked member is refused until the host unblocks them', async ({
+  browser,
+}) => {
+  const host = await signUp(browser, 'Host');
+  const guest = await signUp(browser, 'Guest');
+  try {
+    const roomName = `Block ${host.name}`;
+    const { code, url } = await createRoom(host, roomName, { isPrivate: false });
+    const me = await api(guest, 'GET', '/me');
+    const guestId = (me.body as { user: { id: string } }).user.id;
+    const roomId = new URL(url).pathname.split('/').filter(Boolean).pop() ?? '';
+    await findRoom(guest, code);
+    await guest.page.getByRole('button', { name: 'Join room' }).click();
+    await expect(member(host, guest.name).getByText(HERE)).toBeVisible();
+
+    // The host removes AND blocks the guest (REST; the web app has no block control yet).
+    const blocked = await api(host, 'PUT', `/rooms/${roomId}/blocks/${guestId}`);
+    expect(blocked.status).toBe(200);
+    await expect(member(host, guest.name)).toHaveCount(0);
+    await expect(
+      guest.page.getByRole('heading', { name: 'You are no longer in this room' }),
+    ).toBeVisible();
+
+    // A blocked person cannot rejoin, unlike after a plain removal.
+    const refused = await api(guest, 'POST', `/rooms/${roomId}/membership`);
+    expect(refused.status).toBe(403);
+    expect(errorCodeOf(refused)).toBe('ROOM_BLOCKED');
+    expect((await api(host, 'GET', `/rooms/${roomId}/blocks`)).status).toBe(200);
+
+    expect((await api(host, 'DELETE', `/rooms/${roomId}/blocks/${guestId}`)).status).toBe(204);
+    expect((await api(guest, 'POST', `/rooms/${roomId}/membership`)).status).toBe(201);
   } finally {
     await closeAll(host, guest);
   }

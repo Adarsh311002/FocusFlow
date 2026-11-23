@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
-import { roomMembers, rooms, users } from '../../db/schema.js';
+import { roomBlocks, roomMembers, rooms, users } from '../../db/schema.js';
 
 // The few PostgreSQL reads the realtime side needs. Writes (rooms, memberships) belong to
 // the REST module; the socket handlers only ever read.
@@ -18,6 +18,16 @@ export const isRoomMember = async (db: Db, roomId: string, userId: string): Prom
     .select({ userId: roomMembers.userId })
     .from(roomMembers)
     .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.userId, userId)))
+    .limit(1);
+  return rows.length > 0;
+};
+
+/** Whether the host blocked this person from the room (B1). */
+export const isRoomBlocked = async (db: Db, roomId: string, userId: string): Promise<boolean> => {
+  const rows = await db
+    .select({ id: roomBlocks.id })
+    .from(roomBlocks)
+    .where(and(eq(roomBlocks.roomId, roomId), eq(roomBlocks.userId, userId)))
     .limit(1);
   return rows.length > 0;
 };

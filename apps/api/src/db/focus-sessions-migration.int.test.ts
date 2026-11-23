@@ -42,7 +42,8 @@ const copyUpTo0003 = async (): Promise<string> => {
   const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
     entries: { tag: string }[];
   };
-  journal.entries = journal.entries.filter((entry) => !entry.tag.startsWith('0004_'));
+  // Everything from 0004 on is left out, so a later migration cannot be applied before it.
+  journal.entries = journal.entries.filter((entry) => entry.tag < '0004_');
   await writeFile(journalPath, JSON.stringify(journal));
   return dir;
 };

@@ -2,6 +2,8 @@ import {
   ROOM_FOCUS_SECONDS,
   ROOM_LONG_BREAK_SECONDS,
   ROOM_SHORT_BREAK_SECONDS,
+  roomBlockResponseSchema,
+  roomBlocksResponseSchema,
   roomByCodePath,
   roomListResponseSchema,
   roomLookupResponseSchema,
@@ -24,7 +26,7 @@ import {
   startRoomsApp,
 } from '../../../test/rooms.js';
 import { signUpTestUser, type TestUser } from '../../../test/users.js';
-import { focusSessions, roomMembers, rooms } from '../../db/schema.js';
+import { focusSessions, roomBlocks, roomMembers, rooms } from '../../db/schema.js';
 import { generateRoomCode } from './code.js';
 import type { RoomFocusDepartures } from './ports.js';
 
@@ -844,7 +846,7 @@ describe('DELETE /rooms/:roomId/membership', () => {
     expect(first.status).toBe(204);
     expect(await memberRows(room.id)).toHaveLength(1);
     expect(requireApp().live.calls).toEqual([
-      { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'left'] },
+      { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'left', false] },
     ]);
 
     const second = await api(bob, 'DELETE', url(roomPaths.membership, room.id));
@@ -884,7 +886,7 @@ describe('DELETE /rooms/:roomId/membership', () => {
     expect(remaining.map((row) => row.userId).sort()).toEqual([alice.userId, bob.userId].sort());
     expect(remaining.find((row) => row.userId === bob.userId)).toEqual(bobRow);
     expect(requireApp().live.calls).toEqual([
-      { name: 'announceMemberRemoved', args: [room.id, carol.userId, 'left'] },
+      { name: 'announceMemberRemoved', args: [room.id, carol.userId, 'left', false] },
     ]);
   });
 
@@ -905,7 +907,7 @@ describe('DELETE /rooms/:roomId/members/:userId', () => {
     const first = await api(alice, 'DELETE', url(roomPaths.member, room.id, bob.userId));
     expect(first.status).toBe(204);
     expect(requireApp().live.calls).toEqual([
-      { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed'] },
+      { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed', false] },
     ]);
     expect((await memberRows(room.id)).map((row) => row.userId)).toEqual([alice.userId]);
 
@@ -1156,24 +1158,6 @@ describe('POST /rooms/:roomId/knocks/:userId/approve', () => {
       await requireHarness().db.delete(focusSessions);
     });
 
-    const openFocusSession = async (roomId: string, user: TestUser): Promise<string> => {
-      const id = uuidv7();
-      await requireHarness().db.insert(focusSessions).values({
-        id,
-        userId: user.userId,
-        status: 'in_progress',
-        roomId,
-        focusRunId: uuidv7(),
-        plannedSeconds: 1500,
-        focusedSeconds: 0,
-        startedAt: new Date(),
-      });
-      return id;
-    };
-
-    const sessionOf = async (id: string) =>
-      (await requireHarness().db.select().from(focusSessions).where(eq(focusSessions.id, id)))[0];
-
     it('takes the same departure path as a removal: membership gone, focus session abandoned, sockets evicted', async () => {
       const room = await createRoom(alice, { isPrivate: true });
       const live = requireApp().live;
@@ -1198,7 +1182,7 @@ describe('POST /rooms/:roomId/knocks/:userId/approve', () => {
       });
       expect(departureLog).toEqual([`${bob.userId}:removed`]);
       expect(live.calls.filter((call) => call.name === 'announceMemberRemoved')).toEqual([
-        { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed'] },
+        { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed', false] },
       ]);
       expect(live.names()).not.toContain('announceMemberJoined');
     });
@@ -1399,5 +1383,203 @@ describe('the real runtime', () => {
       204,
     );
     expect((await callApi(base, guest, 'GET', url(roomPaths.item, room.id))).status).toBe(404);
+  });
+});
+
+const openFocusSession = async (roomId: string, user: TestUser): Promise<string> => {
+  const id = uuidv7();
+  await requireHarness().db.insert(focusSessions).values({
+    id,
+    userId: user.userId,
+    status: 'in_progress',
+    roomId,
+    focusRunId: uuidv7(),
+    plannedSeconds: 1500,
+    focusedSeconds: 0,
+    startedAt: new Date(),
+  });
+  return id;
+};
+
+const sessionOf = async (id: string) =>
+  (await requireHarness().db.select().from(focusSessions).where(eq(focusSessions.id, id)))[0];
+
+describe('room blocks (B1–B8)', () => {
+  beforeEach(async () => {
+    await requireHarness().db.delete(focusSessions);
+  });
+
+  const block = (host: TestUser, roomId: string, userId: string) =>
+    api(host, 'PUT', url(roomPaths.block, roomId, userId));
+  const blockRows = async (roomId: string) =>
+    requireHarness().db.select().from(roomBlocks).where(eq(roomBlocks.roomId, roomId));
+
+  it('removes and blocks a member, announces it with blocked=true and lists the block', async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    resetLive();
+
+    const result = await block(alice, room.id, bob.userId);
+    expect(result.status).toBe(200);
+    expect(roomBlockResponseSchema.parse(result.body).block.userId).toBe(bob.userId);
+    expect(requireApp().live.calls.filter((c) => c.name === 'announceMemberRemoved')).toEqual([
+      { name: 'announceMemberRemoved', args: [room.id, bob.userId, 'removed', true] },
+    ]);
+    expect((await memberRows(room.id)).map((row) => row.userId)).toEqual([alice.userId]);
+
+    const list = roomBlocksResponseSchema.parse(
+      (await api(alice, 'GET', url(roomPaths.blocks, room.id))).body,
+    );
+    expect(list.blocks.map((entry) => entry.userId)).toEqual([bob.userId]);
+  });
+
+  it('is idempotent and announces the removal only once', async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    resetLive();
+    expect((await block(alice, room.id, bob.userId)).status).toBe(200);
+    expect((await block(alice, room.id, bob.userId)).status).toBe(200);
+    expect(await blockRows(room.id)).toHaveLength(1);
+    expect(
+      requireApp()
+        .live.names()
+        .filter((n) => n === 'announceMemberRemoved'),
+    ).toHaveLength(1);
+  });
+
+  it('can block a person who is not a member (a pre-emptive block)', async () => {
+    const room = await createRoom(alice);
+    resetLive();
+    expect((await block(alice, room.id, carol.userId)).status).toBe(200);
+    expect(requireApp().live.names()).not.toContain('announceMemberRemoved');
+    const join = await api(carol, 'POST', url(roomPaths.membership, room.id));
+    expect(join.status).toBe(403);
+    expect(errorCodeOf(join)).toBe('ROOM_BLOCKED');
+  });
+
+  it('refuses a blocked person: join (public and private), by-code lookup and approval', async () => {
+    const publicRoom = await createRoom(alice);
+    const privateRoom = await createRoom(alice, { isPrivate: true });
+    await joinAs(bob, publicRoom);
+    await approveInto(alice, bob, privateRoom);
+    await block(alice, publicRoom.id, bob.userId);
+    await block(alice, privateRoom.id, bob.userId);
+
+    for (const room of [publicRoom, privateRoom]) {
+      const join = await api(bob, 'POST', url(roomPaths.membership, room.id));
+      expect(join.status).toBe(403);
+      expect(errorCodeOf(join)).toBe('ROOM_BLOCKED');
+      const lookup = await api(bob, 'GET', roomByCodePath(room.code));
+      expect(lookup.status).toBe(403);
+      expect(errorCodeOf(lookup)).toBe('ROOM_BLOCKED');
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(false);
+    }
+
+    // A knock that is still pending cannot be approved into membership either.
+    requireApp().live.pendingKnocks.add(`${privateRoom.id}:${bob.userId}`);
+    const approve = await api(
+      alice,
+      'POST',
+      url(roomPaths.approveKnock, privateRoom.id, bob.userId),
+    );
+    expect(approve.status).toBe(403);
+    expect(errorCodeOf(approve)).toBe('ROOM_BLOCKED');
+    expect((await memberRows(privateRoom.id)).some((row) => row.userId === bob.userId)).toBe(false);
+  });
+
+  it('rejects a pending knock of the person being blocked', async () => {
+    const room = await createRoom(alice, { isPrivate: true });
+    resetLive();
+    requireApp().live.pendingKnocks.add(`${room.id}:${bob.userId}`);
+    await block(alice, room.id, bob.userId);
+    expect(requireApp().live.calls).toContainEqual({
+      name: 'resolveKnock',
+      args: [room.id, alice.userId, bob.userId, 'rejected'],
+    });
+    expect(requireApp().live.pendingKnocks.size).toBe(0);
+  });
+
+  it("abandons the blocked member's room focus session like any removal", async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    departureLog.length = 0;
+    const sessionId = await openFocusSession(room.id, bob);
+    await block(alice, room.id, bob.userId);
+    expect(departureLog).toEqual([`${bob.userId}:removed`]);
+    expect(await sessionOf(sessionId)).toMatchObject({
+      status: 'abandoned',
+      abandonReason: 'removed',
+    });
+  });
+
+  it('unblocking lifts the ban without making the person a member again', async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    await block(alice, room.id, bob.userId);
+    const unblock = await api(alice, 'DELETE', url(roomPaths.block, room.id, bob.userId));
+    expect(unblock.status).toBe(204);
+    expect((await api(alice, 'DELETE', url(roomPaths.block, room.id, bob.userId))).status).toBe(
+      204,
+    );
+    expect(await blockRows(room.id)).toHaveLength(0);
+    expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(false);
+    expect((await api(bob, 'POST', url(roomPaths.membership, room.id))).status).toBe(201);
+
+    const privateRoom = await createRoom(alice, { isPrivate: true });
+    await block(alice, privateRoom.id, bob.userId);
+    await api(alice, 'DELETE', url(roomPaths.block, privateRoom.id, bob.userId));
+    const rejoin = await api(bob, 'POST', url(roomPaths.membership, privateRoom.id));
+    expect(errorCodeOf(rejoin)).toBe('KNOCK_REQUIRED');
+  });
+
+  it('a plain removal still allows a rejoin and creates no block (B1)', async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    await api(alice, 'DELETE', url(roomPaths.member, room.id, bob.userId));
+    expect(await blockRows(room.id)).toHaveLength(0);
+    expect((await api(bob, 'POST', url(roomPaths.membership, room.id))).status).toBe(201);
+  });
+
+  it('is host-only: NOT_HOST to a member, 404 to a non-member or a missing room (M4)', async () => {
+    const room = await createRoom(alice);
+    await joinAs(bob, room);
+    for (const send of [
+      (user: TestUser) => api(user, 'GET', url(roomPaths.blocks, room.id)),
+      (user: TestUser) => block(user, room.id, carol.userId),
+      (user: TestUser) => api(user, 'DELETE', url(roomPaths.block, room.id, carol.userId)),
+    ]) {
+      const asMember = await send(bob);
+      expect(asMember.status).toBe(403);
+      expect(errorCodeOf(asMember)).toBe('NOT_HOST');
+      const asOutsider = await send(carol);
+      expect(asOutsider.status).toBe(404);
+      expect(errorCodeOf(asOutsider)).toBe('ROOM_NOT_FOUND');
+    }
+    const missing = await block(alice, uuidv7(), bob.userId);
+    expect(missing.status).toBe(404);
+    expect(await blockRows(room.id)).toHaveLength(0);
+  });
+
+  it('refuses to block the host or an unknown user', async () => {
+    const room = await createRoom(alice);
+    const self = await block(alice, room.id, alice.userId);
+    expect(self.status).toBe(409);
+    expect(errorCodeOf(self)).toBe('CANNOT_REMOVE_HOST');
+    const unknown = await block(alice, room.id, uuidv7());
+    expect(unknown.status).toBe(404);
+    expect(errorCodeOf(unknown)).toBe('NOT_FOUND');
+  });
+
+  it('never leaves a blocked person as a member when a join races the block', async () => {
+    for (let round = 0; round < 8; round += 1) {
+      const room = await createRoom(alice);
+      const [join] = await Promise.all([
+        api(bob, 'POST', url(roomPaths.membership, room.id)),
+        block(alice, room.id, bob.userId),
+      ]);
+      expect([201, 403]).toContain(join.status);
+      expect((await memberRows(room.id)).some((row) => row.userId === bob.userId)).toBe(false);
+      expect(await blockRows(room.id)).toHaveLength(1);
+    }
   });
 });

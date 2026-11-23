@@ -1,4 +1,5 @@
 import type {
+  RoomBlockView,
   RoomMembershipView,
   RoomMemberView,
   RoomPreview,
@@ -7,7 +8,7 @@ import type {
 } from '@focus-flow/contracts';
 import { roomCodeSchema, roomIdSchema, userIdSchema } from '@focus-flow/contracts';
 
-import type { MemberRow, RoomRow } from './queries.js';
+import type { BlockRow, MemberRow, RoomRow } from './queries.js';
 
 // Rows to contract views. Persistence types never leave this module; ids and codes are
 // re-branded through the contract schemas, so a malformed stored value is a server bug.
@@ -48,4 +49,11 @@ export const toMembershipView = (
   roomId: roomIdSchema.parse(roomId),
   userId: userIdSchema.parse(userId),
   joinedAt: joinedAt.toISOString(),
+});
+
+export const toBlockView = (row: BlockRow): RoomBlockView => ({
+  userId: userIdSchema.parse(row.userId),
+  displayName: row.displayName,
+  avatarUrl: row.avatarUrl,
+  blockedAt: row.blockedAt.toISOString(),
 });

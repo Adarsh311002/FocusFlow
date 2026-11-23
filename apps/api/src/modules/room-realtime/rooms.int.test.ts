@@ -726,8 +726,18 @@ describe('membership changes', () => {
         hostDepartures.length === 1 &&
         tabRemoved.every((events) => events.length === 1),
     );
-    expect(hostRemoved[0]).toEqual({ roomId, userId: guest.userId, reason: 'removed' });
-    expect(tabRemoved[0]?.[0]).toEqual({ roomId, userId: guest.userId, reason: 'removed' });
+    expect(hostRemoved[0]).toEqual({
+      roomId,
+      userId: guest.userId,
+      reason: 'removed',
+      blocked: false,
+    });
+    expect(tabRemoved[0]?.[0]).toEqual({
+      roomId,
+      userId: guest.userId,
+      reason: 'removed',
+      blocked: false,
+    });
     expect(await redisEntries(roomId, guest.userId)).toEqual([]);
 
     // Out of the room: no more messages, and sending is refused. The host's send is the
@@ -760,8 +770,57 @@ describe('membership changes', () => {
     expect((await rest(guest, 'DELETE', `/rooms/${roomId}/membership`)).status).toBe(204);
 
     await eventually(() => removed.length === 1 && own.length === 1);
-    expect(removed[0]).toEqual({ roomId, userId: guest.userId, reason: 'left' });
+    expect(removed[0]).toEqual({ roomId, userId: guest.userId, reason: 'left', blocked: false });
     expect(await redisEntries(roomId, guest.userId)).toEqual([]);
+  });
+});
+
+const knock = (socket: Socket, roomId: string) =>
+  emitWithAck<Answer>(socket, 'room:knock', { roomId });
+
+describe('blocked members (B2, B4)', () => {
+  it('tells a blocked member and the room, and refuses room:join afterwards', async () => {
+    const host = await newUser('host');
+    const guest = await newUser('guest');
+    const roomId = await createRoom(host);
+    await joinMembership(guest, roomId);
+    const hostSocket = await connect(host);
+    const guestSocket = await connect(guest);
+    await joinOk(hostSocket, roomId);
+    await joinOk(guestSocket, roomId);
+    const hostRemoved = recordEvents(hostSocket, 'room:member:removed');
+    const ownRemoved = recordEvents(guestSocket, 'room:member:removed');
+
+    expect((await rest(host, 'PUT', `/rooms/${roomId}/blocks/${guest.userId}`)).status).toBe(200);
+
+    await eventually(() => hostRemoved.length === 1 && ownRemoved.length === 1);
+    const expected = { roomId, userId: guest.userId, reason: 'removed', blocked: true };
+    expect(hostRemoved[0]).toEqual(expected);
+    expect(ownRemoved[0]).toEqual(expected);
+    expect(await redisEntries(roomId, guest.userId)).toEqual([]);
+
+    expect(await join(guestSocket, roomId)).toMatchObject({ error: { code: 'ROOM_BLOCKED' } });
+    expect((await rest(host, 'DELETE', `/rooms/${roomId}/blocks/${guest.userId}`)).status).toBe(
+      204,
+    );
+    // Unblocked is not a member again: the usual answer for a stranger.
+    expect(await join(guestSocket, roomId)).toMatchObject({ error: { code: 'NOT_A_MEMBER' } });
+  });
+
+  it('refuses room:knock for a blocked person and allows it again once unblocked', async () => {
+    const host = await newUser('host');
+    const visitor = await newUser('visitor');
+    const roomId = await createRoom(host, true);
+    await connect(host, requireSecond());
+    const visitorSocket = await connect(visitor);
+    await eventually(() => requireHarness().runtime.presence.isUserOnline(host.userId));
+
+    expect((await rest(host, 'PUT', `/rooms/${roomId}/blocks/${visitor.userId}`)).status).toBe(200);
+    expect(await knock(visitorSocket, roomId)).toMatchObject({ error: { code: 'ROOM_BLOCKED' } });
+    expect(await requireHarness().redis.zcard(redisKeys.roomKnocks(roomId))).toBe(0);
+
+    await rest(host, 'DELETE', `/rooms/${roomId}/blocks/${visitor.userId}`);
+    expect(await knock(visitorSocket, roomId)).toMatchObject({ ok: true });
   });
 });
 

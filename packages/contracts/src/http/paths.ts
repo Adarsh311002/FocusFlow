@@ -48,6 +48,7 @@ export const focusSessionPaths = {
   collection: '/focus-sessions',
   current: '/focus-sessions/current',
   summary: '/focus-sessions/summary',
+  insights: '/focus-sessions/insights',
   pause: '/focus-sessions/:sessionId/pause',
   resume: '/focus-sessions/:sessionId/resume',
   stop: '/focus-sessions/:sessionId/stop',
@@ -79,6 +80,8 @@ export const roomPaths = {
   members: '/rooms/:roomId/members',
   member: '/rooms/:roomId/members/:userId',
   membership: '/rooms/:roomId/membership',
+  blocks: '/rooms/:roomId/blocks',
+  block: '/rooms/:roomId/blocks/:userId',
   approveKnock: '/rooms/:roomId/knocks/:userId/approve',
   rejectKnock: '/rooms/:roomId/knocks/:userId/reject',
 } as const;
