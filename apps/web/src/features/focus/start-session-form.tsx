@@ -1,8 +1,9 @@
-import type { TaskId, TaskView } from '@focus-flow/contracts';
+import { TASK_TITLE_MAX_LENGTH, type TaskId, type TaskView } from '@focus-flow/contracts';
 import { useState } from 'react';
 
 import { buttonClass, INPUT_CLASS } from '../../ui/primitives';
 import { useAuth } from '../auth/auth-context';
+import { useAdoptIntention } from '../intention/intention-queries';
 import { useTask, useTaskList } from '../tasks/task-queries';
 import { focusErrorMessage } from './focus-messages';
 import { useStartFocusSession } from './focus-queries';
@@ -15,9 +16,11 @@ const DEFAULT_PRESET = 25;
 type Choice = { kind: 'preset'; minutes: number } | { kind: 'custom'; text: string };
 
 /**
- * Starts a solo focus session. The task selector preselects the user's current task purely
- * as a convenience; the server never infers it (E3), so the choice is always sent
- * explicitly. If the chosen task changed meanwhile, the server's 404/409 is shown as is.
+ * Starts a solo focus session. It first asks what the session is for: a new intention
+ * becomes a task (and the current task) that the session is started on; otherwise the
+ * task selector preselects the user's current task purely as a convenience. The server
+ * never infers the task (E3), so the choice is always sent explicitly. If the chosen task
+ * changed meanwhile, the server's 404/409 is shown as is.
  */
 export function StartSessionForm() {
   const { user } = useAuth();
@@ -29,6 +32,8 @@ export function StartSessionForm() {
   const [choice, setChoice] = useState<Choice>({ kind: 'preset', minutes: DEFAULT_PRESET });
   const [taskChoice, setTaskChoice] = useState<string | null>(null);
   const [durationError, setDurationError] = useState<string | null>(null);
+  const [intention, setIntention] = useState('');
+  const adopt = useAdoptIntention();
 
   // The first page of open tasks, plus the current task when it is open but on a later page.
   const options: TaskView[] = openTasks.data?.pages.flatMap((page) => page.tasks) ?? [];
@@ -43,7 +48,7 @@ export function StartSessionForm() {
   const wanted = taskChoice ?? currentTaskId ?? '';
   const selectedTaskId = options.some((task) => task.id === wanted) ? wanted : '';
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     const parsed =
       choice.kind === 'preset'
         ? ({ ok: true, plannedSeconds: choice.minutes * 60 } as const)
@@ -54,14 +59,33 @@ export function StartSessionForm() {
     }
     setDurationError(null);
     start.reset();
+    adopt.reset();
+    let taskId = selectedTaskId === '' ? null : (selectedTaskId as TaskId);
+    const named = intention.trim();
+    if (named !== '') {
+      try {
+        taskId = (await adopt.mutateAsync(named)).id;
+        setIntention('');
+      } catch {
+        return; // Shown below; nothing was started.
+      }
+    }
     start.mutate(
-      selectedTaskId === ''
+      taskId === null
         ? { plannedSeconds: parsed.plannedSeconds }
-        : { plannedSeconds: parsed.plannedSeconds, taskId: selectedTaskId as TaskId },
+        : { plannedSeconds: parsed.plannedSeconds, taskId },
     );
   }
 
-  const error = durationError ?? (start.error === null ? null : focusErrorMessage(start.error));
+  const naming = intention.trim() !== '';
+  const pending = start.isPending || adopt.isPending;
+  const error =
+    durationError ??
+    (adopt.error === null
+      ? start.error === null
+        ? null
+        : focusErrorMessage(start.error)
+      : 'Your intention could not be saved, so the session did not start. Try again.');
 
   return (
     <form
@@ -70,9 +94,28 @@ export function StartSessionForm() {
       className="space-y-5"
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
+        void submit();
       }}
     >
+      <div className="space-y-2">
+        <label htmlFor="focus-intention" className="font-display block text-2xl leading-snug">
+          What will you finish in this session?
+        </label>
+        <input
+          id="focus-intention"
+          name="intention"
+          type="text"
+          autoComplete="off"
+          maxLength={TASK_TITLE_MAX_LENGTH}
+          value={intention}
+          placeholder="Name one thing, e.g. Draft the intro section"
+          onChange={(event) => {
+            setIntention(event.target.value);
+          }}
+          className={INPUT_CLASS + ' py-3 text-base'}
+        />
+      </div>
+
       <fieldset className="space-y-2">
         <legend className="mb-2 text-sm font-medium text-muted">Duration</legend>
         <div className="grid grid-cols-3 gap-2">
@@ -118,12 +161,13 @@ export function StartSessionForm() {
 
       <div className="space-y-1">
         <label htmlFor="focus-task" className="block text-sm font-medium text-muted">
-          Task
+          {naming ? 'Task (your intention will become a new task)' : 'Task'}
         </label>
         <select
           id="focus-task"
           name="taskId"
-          value={selectedTaskId}
+          disabled={naming}
+          value={naming ? '' : selectedTaskId}
           onChange={(event) => {
             setTaskChoice(event.target.value);
           }}
@@ -140,11 +184,16 @@ export function StartSessionForm() {
 
       <button
         type="submit"
-        disabled={start.isPending}
+        disabled={pending}
         className={buttonClass('primary', 'w-full py-3 text-base')}
       >
-        {start.isPending ? 'Starting…' : 'Start focus'}
+        {pending ? 'Starting…' : 'Start focus'}
       </button>
+      {!naming && selectedTaskId === '' && (
+        <p className="text-xs text-muted">
+          No intention yet. You can start anyway, but naming one thing makes the time count.
+        </p>
+      )}
       {error !== null && (
         <p role="alert" className="text-sm text-danger">
           {error}

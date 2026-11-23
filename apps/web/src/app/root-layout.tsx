@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../features/auth/auth-context';
 import { authErrorMessage } from '../features/auth/auth-messages';
+import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
+import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
 import { AmbientBackground } from '../ui/ambient-background';
 import { JungleAttention, JungleHint } from '../ui/jungle/critters';
@@ -182,6 +184,7 @@ function AccountMenu() {
               <p className="font-display text-2xl">{user.displayName}</p>
               <p className="text-xs text-muted">{user.email}</p>
             </div>
+            <DailyGoalSetting />
             <button
               type="button"
               role="menuitem"
@@ -234,8 +237,50 @@ export function RootLayout() {
         <Outlet />
       </main>
       <ForestSoundToggle />
+      <DailyIntentionRitual />
       <JungleAttention />
       <JungleHint />
+    </div>
+  );
+}
+
+const GOAL_HOURS: readonly number[] = [1, 2, 3, 4, 5, 6, 8];
+
+function hoursText(hours: number): string {
+  return hours === 1 ? '1 hour' : `${String(Math.round(hours * 10) / 10)} hours`;
+}
+
+/** The daily focus goal (A2), changeable any time from the account menu. */
+function DailyGoalSetting() {
+  const { user } = useAuth();
+  const setGoal = useSetDailyGoal();
+  const hours = dailyGoalOf(user) / 3600;
+  const listed = GOAL_HOURS.includes(hours);
+  return (
+    <div className="space-y-1">
+      <label htmlFor="daily-goal-setting" className="block text-xs text-muted">
+        Daily focus goal
+      </label>
+      <select
+        id="daily-goal-setting"
+        value={listed ? String(hours) : ''}
+        disabled={setGoal.isPending}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (next > 0) {
+            setGoal.mutate(next * 3600);
+          }
+        }}
+        className="w-full text-sm"
+      >
+        {!listed && <option value="">{hoursText(hours)}</option>}
+        {GOAL_HOURS.map((option) => (
+          <option key={option} value={String(option)}>
+            {hoursText(option)}
+          </option>
+        ))}
+      </select>
+      {setGoal.isError && <p className="text-xs text-danger">The goal did not save. Try again.</p>}
     </div>
   );
 }
