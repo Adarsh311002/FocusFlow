@@ -30,11 +30,11 @@ export function MemberList({
 
   let body;
   if (members.isPending) {
-    body = <p className="text-slate-600">Loading members…</p>;
+    body = <p className="text-muted">Loading members…</p>;
   } else if (members.data === undefined) {
     body = (
       <div className="space-y-2">
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {roomErrorMessage(members.error)}
         </p>
         <button
@@ -42,7 +42,7 @@ export function MemberList({
           onClick={() => {
             void members.refetch();
           }}
-          className="rounded border border-slate-300 px-3 py-1 text-sm"
+          className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm"
         >
           Try again
         </button>
@@ -63,13 +63,13 @@ export function MemberList({
               {joined && (
                 <span
                   aria-hidden="true"
-                  className={`inline-block h-2.5 w-2.5 rounded-full ${isHere ? 'bg-green-600' : 'bg-slate-300'}`}
+                  className={`inline-block h-2.5 w-2.5 rounded-full ${isHere ? 'bg-ok shadow-[0_0_8px_var(--ff-ok)]' : 'bg-muted/40'}`}
                 />
               )}
               <span>{member.displayName}</span>
               {member.isHost && <HostBadge />}
               {joined && (
-                <span className="text-xs text-slate-600">{isHere ? 'Here now' : 'Not here'}</span>
+                <span className="text-xs text-muted">{isHere ? 'Here now' : 'Not here'}</span>
               )}
               {canRemove && confirming !== member.userId && (
                 <button
@@ -78,7 +78,7 @@ export function MemberList({
                     remove.reset();
                     setConfirming(member.userId);
                   }}
-                  className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs"
+                  className="ml-auto rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-xs"
                 >
                   {`Remove ${member.displayName}`}
                 </button>
@@ -100,7 +100,7 @@ export function MemberList({
                         },
                       });
                     }}
-                    className="rounded bg-red-700 px-2 py-0.5 text-xs text-white disabled:opacity-50"
+                    className="rounded-lg bg-danger px-2 py-1 text-xs font-medium text-canvas disabled:opacity-50"
                   >
                     {remove.isPending ? 'Removing…' : 'Yes, remove'}
                   </button>
@@ -110,7 +110,7 @@ export function MemberList({
                     onClick={() => {
                       setConfirming(null);
                     }}
-                    className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-50"
+                    className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-xs disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -125,13 +125,13 @@ export function MemberList({
 
   return (
     <section aria-labelledby="members-heading" className="space-y-2">
-      <h3 id="members-heading" className="text-base font-semibold">
+      <h3 id="members-heading" className="font-display text-3xl">
         Members
       </h3>
-      {joined && <p className="text-sm text-slate-600">{`${String(presence.length)} here now`}</p>}
+      {joined && <p className="text-sm text-muted">{`${String(presence.length)} here now`}</p>}
       {body}
       {remove.error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {roomErrorMessage(remove.error)}
         </p>
       )}

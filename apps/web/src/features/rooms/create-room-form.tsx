@@ -77,7 +77,7 @@ export function CreateRoomForm() {
         submit();
       }}
     >
-      <h3 className="text-base font-semibold">Create a room</h3>
+      <h3 className="font-display text-3xl">Create a room</h3>
       <div className="space-y-1">
         <label htmlFor="room-name" className="block text-sm font-medium">
           Room name
@@ -92,7 +92,7 @@ export function CreateRoomForm() {
           onChange={(event) => {
             setName(event.target.value);
           }}
-          className="w-full rounded border border-slate-300 px-2 py-1"
+          className="w-full rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong"
         />
       </div>
       <label className="flex items-center gap-2 text-sm">
@@ -122,7 +122,7 @@ export function CreateRoomForm() {
                 onChange={(event) => {
                   setTexts({ ...texts, [field.key]: event.target.value });
                 }}
-                className="w-24 rounded border border-slate-300 px-2 py-1"
+                className="w-24 rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong"
               />
             </div>
           ))}
@@ -131,12 +131,12 @@ export function CreateRoomForm() {
       <button
         type="submit"
         disabled={create.isPending}
-        className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
       >
         {create.isPending ? 'Creating…' : 'Create room'}
       </button>
       {error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}

@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 
 import { ApiError } from '../../lib/api-client';
+import { ForestVisual } from '../../ui/forest-visual';
+import { Critter, SlothArt } from '../../ui/jungle/critters';
 import { useAuth } from '../auth/auth-context';
 import { ConnectionStatus } from '../realtime/connection-status';
 import { useRealtimeClient, useRealtimeStatus } from '../realtime/realtime-provider';
@@ -19,9 +21,15 @@ import { TimerSettingsForm } from './timer-settings-form';
 import { useRoomSession } from './use-room-session';
 import { useTimerCommands } from './use-timer-commands';
 
+/** The glass card every room panel sits on. */
+const CARD = 'rounded-[2rem] border border-line bg-surface p-6 shadow-card backdrop-blur-xl md:p-8';
+
 function BackToRooms() {
   return (
-    <Link to="/rooms" className="inline-block rounded border border-slate-300 px-3 py-1 text-sm">
+    <Link
+      to="/rooms"
+      className="inline-block rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm"
+    >
       Back to my rooms
     </Link>
   );
@@ -31,7 +39,7 @@ function BackToRooms() {
 function Unavailable({ title, message }: { title: string; message: string }) {
   return (
     <section aria-labelledby="room-heading" className="max-w-xl space-y-3">
-      <h2 id="room-heading" className="text-base font-semibold">
+      <h2 id="room-heading" className="font-display text-5xl md:text-6xl">
         {title}
       </h2>
       <p role="status" aria-live="polite">
@@ -71,7 +79,7 @@ function RoomConnection({ roomId, rejoin }: { roomId: RoomId; rejoin: () => void
         <button
           type="button"
           onClick={rejoin}
-          className="rounded border border-slate-300 px-3 py-1 text-sm"
+          className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm"
         >
           Try joining again
         </button>
@@ -143,7 +151,7 @@ function RoomActions({
           onClick={() => {
             void leave();
           }}
-          className="rounded border border-slate-300 px-3 py-1 disabled:opacity-50"
+          className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong disabled:opacity-50"
         >
           {leaving ? 'Leaving…' : 'Leave room'}
         </button>
@@ -154,7 +162,7 @@ function RoomActions({
               leavePermanently.reset();
               setConfirming(true);
             }}
-            className="rounded border border-red-700 px-3 py-1 text-red-700"
+            className="rounded-full border border-danger/40 bg-danger/10 px-4 py-2 text-danger"
           >
             Leave permanently
           </button>
@@ -172,7 +180,7 @@ function RoomActions({
               onClick={() => {
                 void leaveForGood();
               }}
-              className="rounded bg-red-700 px-3 py-1 text-white disabled:opacity-50"
+              className="rounded-full bg-danger px-4 py-2 font-medium text-canvas disabled:opacity-50"
             >
               {leavePermanently.isPending ? 'Leaving…' : 'Yes, leave permanently'}
             </button>
@@ -182,7 +190,7 @@ function RoomActions({
               onClick={() => {
                 setConfirming(false);
               }}
-              className="rounded border border-slate-300 px-3 py-1 disabled:opacity-50"
+              className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong disabled:opacity-50"
             >
               Cancel
             </button>
@@ -190,7 +198,7 @@ function RoomActions({
         </div>
       )}
       {shownError !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {shownError}
         </p>
       )}
@@ -211,10 +219,14 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
   const isHost = room.hostId === user.id;
 
   return (
-    <section aria-labelledby="room-heading" className="max-w-xl space-y-6">
-      <header className="space-y-2">
+    <section aria-labelledby="room-heading" className="relative space-y-8">
+      <Critter kind="sloth" className="-top-10 right-[4%] hidden lg:block" bubble="below">
+        <SlothArt />
+      </Critter>
+      <header className="space-y-4">
+        <p className="text-xs tracking-[0.3em] text-focus uppercase">( Focus room )</p>
         <div className="flex flex-wrap items-center gap-2">
-          <h2 id="room-heading" className="text-base font-semibold">
+          <h2 id="room-heading" className="font-display text-5xl md:text-6xl">
             {room.name}
           </h2>
           <PrivacyBadge isPrivate={room.isPrivate} />
@@ -224,28 +236,55 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
         <RoomConnection roomId={room.id} rejoin={rejoin} />
       </header>
 
-      <TimerPanel roomId={room.id} isHost={isHost} commands={timerCommands} rejoin={rejoin} />
-
-      <RoomFocusPanel roomId={room.id} currentUserId={user.id} refresh={refresh} />
-
-      <MemberList roomId={room.id} isHost={isHost} currentUserId={user.id} />
-
-      {isHost && room.isPrivate && <KnockList roomId={room.id} />}
-      {isHost && (
-        <TimerSettingsForm
-          roomId={room.id}
-          settings={room.timerSettings}
-          commands={timerCommands}
-        />
-      )}
-
-      <ChatPanel
-        roomId={room.id}
-        currentUserId={user.id}
-        canSend={realtime === 'connected' && joined}
-      />
-
-      <RoomActions room={room} isHost={isHost} onLeaving={onLeaving} />
+      <div className="grid items-start gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-8">
+          <div className="relative overflow-hidden rounded-[2.5rem] border border-line bg-canvas-2 shadow-card">
+            <ForestVisual energy={0.35} className="absolute inset-0 h-full w-full lg:left-1/3" />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-r from-canvas-2 via-canvas-2/75 to-canvas-2/10"
+            />
+            <div className="relative p-6 md:p-10">
+              <TimerPanel
+                roomId={room.id}
+                isHost={isHost}
+                commands={timerCommands}
+                rejoin={rejoin}
+              />
+            </div>
+          </div>
+          <div className={CARD}>
+            <RoomFocusPanel roomId={room.id} currentUserId={user.id} refresh={refresh} />
+          </div>
+          {isHost && (
+            <div className={CARD}>
+              <TimerSettingsForm
+                roomId={room.id}
+                settings={room.timerSettings}
+                commands={timerCommands}
+              />
+            </div>
+          )}
+        </div>
+        <aside className="space-y-6 lg:sticky lg:top-28 lg:col-span-4">
+          <div className={CARD}>
+            <MemberList roomId={room.id} isHost={isHost} currentUserId={user.id} />
+          </div>
+          {isHost && room.isPrivate && (
+            <div className={CARD}>
+              <KnockList roomId={room.id} />
+            </div>
+          )}
+          <div className={CARD}>
+            <ChatPanel
+              roomId={room.id}
+              currentUserId={user.id}
+              canSend={realtime === 'connected' && joined}
+            />
+          </div>
+          <RoomActions room={room} isHost={isHost} onLeaving={onLeaving} />
+        </aside>
+      </div>
     </section>
   );
 }
@@ -272,7 +311,7 @@ function RoomLoader({ roomId }: { roomId: RoomId }) {
   }
   if (room.isPending) {
     return (
-      <p role="status" aria-live="polite" className="text-slate-600">
+      <p role="status" aria-live="polite" className="text-muted">
         Loading the room…
       </p>
     );
@@ -288,10 +327,10 @@ function RoomLoader({ roomId }: { roomId: RoomId }) {
     }
     return (
       <section aria-labelledby="room-heading" className="max-w-xl space-y-3">
-        <h2 id="room-heading" className="text-base font-semibold">
+        <h2 id="room-heading" className="font-display text-5xl md:text-6xl">
           Room
         </h2>
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {roomErrorMessage(room.error)}
         </p>
         <div className="flex gap-2">
@@ -300,7 +339,7 @@ function RoomLoader({ roomId }: { roomId: RoomId }) {
             onClick={() => {
               void room.refetch();
             }}
-            className="rounded border border-slate-300 px-3 py-1 text-sm"
+            className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm"
           >
             Try again
           </button>

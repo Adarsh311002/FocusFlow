@@ -29,7 +29,7 @@ function StateLabel({ participant, nowMs }: { participant: RoomFocusParticipant;
   const left = graceSecondsLeft(participant.disconnectedAtMs, nowMs);
   return (
     // Not colour alone: a word and a marker. The countdown is a label; the server decides.
-    <span className="text-xs font-medium text-amber-800">
+    <span className="text-xs font-medium text-warm">
       <span aria-hidden="true">… </span>
       {left > 0
         ? `Reconnecting — about ${String(left)} s left before their session ends`
@@ -74,18 +74,18 @@ export function RoomFocusParticipants({
         {announcement}
       </p>
       {count === 0 ? (
-        <p className="text-sm text-slate-600">No one has joined this focus run yet.</p>
+        <p className="text-sm text-muted">No one has joined this focus run yet.</p>
       ) : (
         <ul aria-labelledby="room-focus-participants-heading" className="space-y-1">
           {participants.map((participant) => (
             <li
               key={participant.userId}
-              className="flex flex-wrap items-baseline gap-x-3 rounded border border-slate-200 px-2 py-1 text-sm"
+              className="flex flex-wrap items-baseline gap-x-3 rounded border border-line px-2 py-1 text-sm"
             >
               <span className="font-medium">
                 {participant.displayName}
                 {participant.userId === selfId && (
-                  <span className="font-normal text-slate-600"> (you)</span>
+                  <span className="font-normal text-muted"> (you)</span>
                 )}
               </span>
               <StateLabel participant={participant} nowMs={nowMs} />
@@ -94,7 +94,7 @@ export function RoomFocusParticipants({
         </ul>
       )}
       {stale && count > 0 && (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted">
           Last known list — it will update when the room is live again.
         </p>
       )}

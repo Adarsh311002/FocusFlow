@@ -19,8 +19,10 @@ import { PHASE_LABEL, remainingSecondsAt, STATUS_LABEL } from './timer-display';
 import { ConfirmGroup } from './timer-panel';
 import { useTimerClock } from './use-timer-clock';
 
-const PRIMARY = 'rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50';
-const SECONDARY = 'rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50';
+const PRIMARY =
+  'rounded-full bg-focus px-4 py-2 text-sm font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50';
+const SECONDARY =
+  'rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50';
 const FOCUS_RING = 'focus-visible:outline-2 focus-visible:outline-offset-2';
 
 type InProgress = Extract<FocusSessionView, { status: 'in_progress' }>;
@@ -67,7 +69,7 @@ function TaskPicker({
         onChange={(event) => {
           onChange(event.target.value);
         }}
-        className="w-full rounded border border-slate-300 px-2 py-1 disabled:opacity-50"
+        className="w-full rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong disabled:opacity-50"
       >
         <option value="">No task</option>
         {options.map((task) => (
@@ -76,7 +78,7 @@ function TaskPicker({
           </option>
         ))}
       </select>
-      <p className="text-xs text-slate-600">
+      <p className="text-xs text-muted">
         Only you see your task. The others see that you are focusing, not what on.
       </p>
     </div>
@@ -217,7 +219,7 @@ export function RoomFocusPanel({
           {busy ? 'Leaving…' : 'Leave focus'}
         </button>
         {realtime !== 'connected' && (
-          <p role="status" className="text-sm text-amber-800">
+          <p role="status" className="text-sm text-warm">
             You are disconnected. Your focus continues while Focus Flow reconnects you, but your
             session ends if you stay away for about a minute.
           </p>
@@ -226,13 +228,13 @@ export function RoomFocusPanel({
     );
   } else if (timer !== null && !inFocusPhase) {
     action = (
-      <p className="text-sm text-slate-700">
+      <p className="text-sm text-muted">
         {`The room is in a ${PHASE_LABEL[timer.phase].toLowerCase()}. You can join the next focus phase when it begins.`}
       </p>
     );
   } else if (otherSession !== null) {
     action = (
-      <p className="text-sm text-slate-700">
+      <p className="text-sm text-muted">
         {`You already have a focus session in progress${otherSession.context.kind === 'room' ? ' in another room' : ' on your own'}. Finish or end it before joining this one.`}
       </p>
     );
@@ -259,13 +261,13 @@ export function RoomFocusPanel({
           {busy ? 'Joining…' : 'Join focus'}
         </button>
         {!canAct && (
-          <p role="status" className="text-sm text-amber-800">
+          <p role="status" className="text-sm text-warm">
             {realtime === 'idle'
               ? 'Joining needs a live connection. Reconnect to join the focus run.'
               : 'Joining is paused while the room connects.'}
           </p>
         )}
-        <p className="text-xs text-slate-600">
+        <p className="text-xs text-muted">
           Joining counts from now until the end of this focus phase. Nothing is recorded unless you
           join.
         </p>
@@ -275,10 +277,10 @@ export function RoomFocusPanel({
 
   return (
     <section aria-labelledby="room-focus-heading" className="space-y-3">
-      <h3 id="room-focus-heading" className="text-base font-semibold">
+      <h3 id="room-focus-heading" className="font-display text-3xl">
         Focus together
       </h3>
-      <p className="text-sm text-slate-700">
+      <p className="text-sm text-muted">
         Being in the room does not start a focus session. You join the focus run yourself.
       </p>
       <p className="text-sm">
@@ -292,19 +294,19 @@ export function RoomFocusPanel({
       <div ref={rootRef} aria-busy={busy} className="space-y-3">
         {action}
         {busy && (
-          <p role="status" className="text-sm text-slate-600">
+          <p role="status" className="text-sm text-muted">
             Sending to the server…
           </p>
         )}
         {actions.error !== null && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {roomFocusErrorMessage(actions.error)}
           </p>
         )}
       </div>
 
       {outcome !== null && (
-        <div role="status" className="space-y-2 rounded border border-slate-300 bg-slate-50 p-3">
+        <div role="status" className="space-y-2 rounded border border-line bg-surface p-3">
           <p className="text-sm">{focusOutcomeMessage(outcome)}</p>
           <button
             type="button"
@@ -320,7 +322,7 @@ export function RoomFocusPanel({
 
       {restState.isError && restState.data === undefined && live === null && (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {roomFocusErrorMessage(restState.error)}
           </p>
           <button

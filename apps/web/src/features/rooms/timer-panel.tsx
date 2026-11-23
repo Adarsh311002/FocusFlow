@@ -16,8 +16,10 @@ import {
 import { useTimerClock } from './use-timer-clock';
 import type { TimerCommandsApi } from './use-timer-commands';
 
-const PRIMARY = 'rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50';
-const SECONDARY = 'rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50';
+const PRIMARY =
+  'rounded-full bg-focus px-4 py-2 text-sm font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50';
+const SECONDARY =
+  'rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50';
 const FOCUS_RING = 'focus-visible:outline-2 focus-visible:outline-offset-2';
 
 /** Gaps before the re-asks once a running timer shows 0:00; then every `REASK_EVERY_MS`. */
@@ -29,9 +31,9 @@ const REASK_EVERY_MS = 10_000;
  * (solid / dashed / dotted) and a short marker, with a tint on top.
  */
 const PHASE_STYLE: Readonly<Record<TimerPhase, { box: string; marker: string }>> = {
-  focus: { box: 'border-2 border-solid border-slate-900 bg-slate-50', marker: '[F]' },
-  short_break: { box: 'border-2 border-dashed border-emerald-700 bg-emerald-50', marker: '[S]' },
-  long_break: { box: 'border-2 border-dotted border-sky-700 bg-sky-50', marker: '[L]' },
+  focus: { box: 'border-2 border-solid border-focus/60 bg-focus/5', marker: '[F]' },
+  short_break: { box: 'border-2 border-dashed border-ok/60 bg-ok/5', marker: '[S]' },
+  long_break: { box: 'border-2 border-dotted border-violet/60 bg-violet/5', marker: '[L]' },
 };
 
 /** An in-page yes/no, like the solo "stop" confirmation. */
@@ -213,7 +215,7 @@ function HostControls({
       </div>
 
       <div role="group" aria-label="Switch phase" className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-slate-700">Switch to</span>
+        <span className="text-sm text-muted">Switch to</span>
         {PHASES.map((phase) => (
           <button
             key={phase}
@@ -231,7 +233,7 @@ function HostControls({
       </div>
 
       {pending && (
-        <p role="status" className="text-sm text-slate-600">
+        <p role="status" className="text-sm text-muted">
           Sending to the server…
         </p>
       )}
@@ -288,10 +290,10 @@ export function TimerPanel({
   if (timer === null) {
     return (
       <section aria-labelledby="timer-heading" className="space-y-2">
-        <h3 id="timer-heading" className="text-base font-semibold">
+        <h3 id="timer-heading" className="font-display text-3xl">
           Room timer
         </h3>
-        <p role="status" aria-live="polite" className="text-sm text-slate-600">
+        <p role="status" aria-live="polite" className="text-sm text-muted">
           {realtime === 'connected'
             ? 'Loading the timer…'
             : 'The timer will appear once you are connected.'}
@@ -310,20 +312,25 @@ export function TimerPanel({
 
   return (
     <section aria-labelledby="timer-heading" className="space-y-3">
-      <h3 id="timer-heading" className="text-base font-semibold">
+      <h3 id="timer-heading" className="font-display text-3xl">
         Room timer
       </h3>
 
-      <div className={`space-y-2 rounded p-3 ${style.box}`}>
+      <div className={`space-y-4 rounded-3xl p-6 md:p-8 ${style.box}`}>
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <p className="text-lg font-semibold">
-            <span aria-hidden="true">{style.marker} </span>
+          <p className="font-display text-3xl">
+            <span
+              aria-hidden="true"
+              className="mr-2 rounded-full border border-current/30 px-2 py-0.5 align-middle font-sans text-[10px] tracking-widest text-muted"
+            >
+              {style.marker}
+            </span>
             {PHASE_LABEL[timer.phase]}
           </p>
-          <p className="text-sm font-medium text-slate-700">{STATUS_LABEL[timer.status]}</p>
+          <p className="text-sm font-medium text-muted">{STATUS_LABEL[timer.status]}</p>
         </div>
 
-        <p className="text-4xl font-semibold tabular-nums">
+        <p className="font-display text-8xl leading-none tabular-nums md:text-9xl">
           <span className="sr-only">Time remaining </span>
           {formatClock(remaining)}
         </p>
@@ -335,9 +342,12 @@ export function TimerPanel({
           aria-valuemax={progress.totalSeconds}
           aria-valuenow={progress.elapsedSeconds}
           aria-valuetext={`${formatClock(remaining)} remaining of ${formatClock(progress.totalSeconds)}`}
-          className="h-2 w-full overflow-hidden rounded bg-slate-200"
+          className="h-2 w-full overflow-hidden rounded-full bg-line"
         >
-          <div className="h-full bg-slate-700" style={{ width: `${String(percent)}%` }} />
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-focus to-violet"
+            style={{ width: `${String(percent)}%` }}
+          />
         </div>
 
         {/* Announced politely when the phase or status changes; the ticking clock is silent. */}
@@ -346,7 +356,7 @@ export function TimerPanel({
         </p>
 
         {timer.status === 'idle' && (
-          <p className="text-sm text-slate-700">
+          <p className="text-sm text-muted">
             {isHost
               ? 'The timer has not started. Press Start timer when everyone is ready.'
               : 'The timer has not started. The host will start it.'}
@@ -354,19 +364,19 @@ export function TimerPanel({
         )}
         {!synced && (
           // A caveat on the numbers, not an event to announce.
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted">
             Syncing with the server clock — the time shown may be a few seconds off.
           </p>
         )}
         {finishing && (
-          <p role="status" className="text-sm text-slate-600">
+          <p role="status" className="text-sm text-muted">
             Finishing… waiting for the server
           </p>
         )}
       </div>
 
       {realtime !== 'connected' && (
-        <p role="status" className="text-sm text-amber-800">
+        <p role="status" className="text-sm text-warm">
           {realtime === 'idle'
             ? 'No connection: timer controls are paused and the time shown may be out of date.'
             : 'Timer controls are paused while the room reconnects.'}
@@ -376,11 +386,11 @@ export function TimerPanel({
       {isHost ? (
         <HostControls timer={timer} commands={commands} canCommand={canCommand} />
       ) : (
-        <p className="text-sm text-slate-600">Only the host controls the timer.</p>
+        <p className="text-sm text-muted">Only the host controls the timer.</p>
       )}
 
       {commands.error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {commands.error}
         </p>
       )}

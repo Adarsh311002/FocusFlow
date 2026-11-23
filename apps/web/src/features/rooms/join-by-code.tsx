@@ -86,7 +86,7 @@ function KnockRequest({ room, onRecheck }: { room: Preview; onRecheck: () => voi
           <p role="status" aria-live="polite" className="text-sm">
             Waiting for the host to answer…
           </p>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-muted">
             {`The request expires in ${String(Math.max(0, Math.ceil((outgoing.expiresAtMs - now) / 1000)))} seconds.`}
           </p>
           <button
@@ -95,19 +95,19 @@ function KnockRequest({ room, onRecheck }: { room: Preview; onRecheck: () => voi
             onClick={() => {
               void cancel();
             }}
-            className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50"
+            className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50"
           >
             Cancel request
           </button>
         </>
       )}
       {outgoing?.status === 'rejected' && (
-        <p role="status" aria-live="polite" className="text-sm text-red-700">
+        <p role="status" aria-live="polite" className="text-sm text-danger">
           The host declined your request.
         </p>
       )}
       {outgoing?.status === 'expired' && (
-        <p role="status" aria-live="polite" className="text-sm text-slate-700">
+        <p role="status" aria-live="polite" className="text-sm text-muted">
           Your request expired before the host answered.
         </p>
       )}
@@ -118,7 +118,7 @@ function KnockRequest({ room, onRecheck }: { room: Preview; onRecheck: () => voi
           onClick={() => {
             void ask();
           }}
-          className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+          className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
         >
           {busy
             ? 'Asking…'
@@ -128,7 +128,7 @@ function KnockRequest({ room, onRecheck }: { room: Preview; onRecheck: () => voi
         </button>
       )}
       {error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}
@@ -158,12 +158,12 @@ function PublicJoin({ room, onRecheck }: { room: Preview; onRecheck: () => void 
             },
           });
         }}
-        className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
       >
         {join.isPending ? 'Joining…' : 'Join room'}
       </button>
       {join.error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {roomErrorMessage(join.error)}
         </p>
       )}
@@ -177,7 +177,7 @@ function LookupCard({ result, onRecheck }: { result: RoomLookupResponse; onReche
     <div
       role="group"
       aria-label="Room found"
-      className="space-y-2 rounded border border-slate-200 p-3"
+      className="space-y-2 rounded-2xl border border-line bg-surface p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{room.name}</span>
@@ -187,7 +187,7 @@ function LookupCard({ result, onRecheck }: { result: RoomLookupResponse; onReche
         <Link
           to="/rooms/$roomId"
           params={{ roomId: room.id }}
-          className="inline-block rounded bg-slate-900 px-3 py-1 text-white"
+          className="inline-block rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110"
         >
           Open room
         </Link>
@@ -232,7 +232,7 @@ export function JoinByCode() {
 
   return (
     <section aria-labelledby="join-heading" className="space-y-3">
-      <h3 id="join-heading" className="text-base font-semibold">
+      <h3 id="join-heading" className="font-display text-3xl">
         Join with a code
       </h3>
       <form
@@ -258,18 +258,18 @@ export function JoinByCode() {
             onChange={(event) => {
               setCode(event.target.value);
             }}
-            className="w-40 rounded border border-slate-300 px-2 py-1 font-mono uppercase"
+            className="w-40 rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong font-mono uppercase"
           />
           <button
             type="submit"
             disabled={lookup.isPending}
-            className="rounded border border-slate-300 px-3 py-1 disabled:opacity-50"
+            className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong disabled:opacity-50"
           >
             {lookup.isPending ? 'Looking…' : 'Find room'}
           </button>
         </div>
         {error !== null && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {error}
           </p>
         )}

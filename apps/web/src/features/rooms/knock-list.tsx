@@ -19,11 +19,11 @@ export function KnockList({ roomId }: { roomId: RoomId }) {
 
   return (
     <section aria-labelledby="knocks-heading" className="space-y-2">
-      <h3 id="knocks-heading" className="text-base font-semibold">
+      <h3 id="knocks-heading" className="font-display text-3xl">
         Join requests
       </h3>
       {open.length === 0 ? (
-        <p className="text-sm text-slate-600">No one is waiting to join.</p>
+        <p className="text-sm text-muted">No one is waiting to join.</p>
       ) : (
         <ul aria-label="Join requests" className="space-y-2">
           {open.map((knock) => (
@@ -33,7 +33,7 @@ export function KnockList({ roomId }: { roomId: RoomId }) {
               className="flex flex-wrap items-center gap-2"
             >
               <span className="font-medium">{knock.displayName}</span>
-              <span className="text-xs text-slate-600">
+              <span className="text-xs text-muted">
                 {`expires in ${String(Math.max(0, Math.ceil((knock.expiresAtMs - now) / 1000)))} s`}
               </span>
               <button
@@ -43,7 +43,7 @@ export function KnockList({ roomId }: { roomId: RoomId }) {
                   answer.reset();
                   answer.mutate({ userId: knock.userId, answer: 'approve' });
                 }}
-                className="rounded bg-slate-900 px-2 py-0.5 text-sm text-white disabled:opacity-50"
+                className="rounded-full bg-focus px-4 py-2 text-sm font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
               >
                 {`Approve ${knock.displayName}`}
               </button>
@@ -54,7 +54,7 @@ export function KnockList({ roomId }: { roomId: RoomId }) {
                   answer.reset();
                   answer.mutate({ userId: knock.userId, answer: 'reject' });
                 }}
-                className="rounded border border-slate-300 px-2 py-0.5 text-sm disabled:opacity-50"
+                className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50"
               >
                 {`Reject ${knock.displayName}`}
               </button>
@@ -63,7 +63,7 @@ export function KnockList({ roomId }: { roomId: RoomId }) {
         </ul>
       )}
       {answer.error !== null && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           {roomErrorMessage(answer.error)}
         </p>
       )}

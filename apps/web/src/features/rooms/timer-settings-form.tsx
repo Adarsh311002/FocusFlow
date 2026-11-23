@@ -98,7 +98,7 @@ export function TimerSettingsForm({
           submit();
         }}
       >
-        <h3 className="text-base font-semibold">Timer lengths</h3>
+        <h3 className="font-display text-3xl">Timer lengths</h3>
         <div className="flex flex-wrap gap-3">
           {TIMER_FIELDS.map((field) => (
             <div key={field.key} className="space-y-1">
@@ -115,31 +115,31 @@ export function TimerSettingsForm({
                   setSaved(false);
                   setEdits({ ...edits, [field.key]: event.target.value });
                 }}
-                className="w-24 rounded border border-slate-300 px-2 py-1"
+                className="w-24 rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong"
               />
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-600">Applies from the next phase.</p>
-        <p className="text-xs text-slate-600">The phase already on the clock keeps its length.</p>
+        <p className="text-xs text-muted">Applies from the next phase.</p>
+        <p className="text-xs text-muted">The phase already on the clock keeps its length.</p>
         <button
           type="submit"
           disabled={update.isPending || changed.length === 0}
-          className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+          className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
         >
           {update.isPending ? 'Saving…' : 'Save lengths'}
         </button>
-        <p role="status" aria-live="polite" className="text-sm text-slate-700">
+        <p role="status" aria-live="polite" className="text-sm text-muted">
           {saved ? 'Saved. The new lengths apply from the next phase.' : ''}
         </p>
         {error !== null && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {error}
           </p>
         )}
       </form>
       <div className="space-y-2">
-        <p className="text-xs text-slate-600">
+        <p className="text-xs text-muted">
           Save the new lengths first, then apply them now to restart the current phase with its new
           length.
         </p>
@@ -165,7 +165,7 @@ export function TimerSettingsForm({
                 applyNow();
               }
             }}
-            className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-50"
+            className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-sm disabled:opacity-50"
           >
             Apply now (reset the timer)
           </button>

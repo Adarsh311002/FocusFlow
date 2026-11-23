@@ -82,10 +82,10 @@ export function ChatPanel({
 
   return (
     <section aria-labelledby="chat-heading" className="space-y-2">
-      <h3 id="chat-heading" className="text-base font-semibold">
+      <h3 id="chat-heading" className="font-display text-3xl">
         Chat
       </h3>
-      <p className="text-xs text-slate-600">Messages are temporary and disappear when you leave.</p>
+      <p className="text-xs text-muted">Messages are temporary and disappear when you leave.</p>
       <ol
         ref={logRef}
         role="log"
@@ -99,23 +99,21 @@ export function ChatPanel({
           stickToBottom.current =
             log.scrollHeight - log.scrollTop - log.clientHeight <= NEAR_BOTTOM_PX;
         }}
-        className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-200 p-2"
+        className="max-h-64 space-y-1 overflow-y-auto rounded-2xl border border-line bg-surface p-4"
       >
-        {messages.length === 0 && <li className="text-sm text-slate-500">No messages yet.</li>}
+        {messages.length === 0 && <li className="text-sm text-muted">No messages yet.</li>}
         {messages.map((message) => (
           <li key={message.clientMessageId} className="text-sm">
             <span className="font-medium">
               {message.sender.userId === currentUserId ? 'You' : message.sender.displayName}
             </span>
             {message.sentAtMs !== null && (
-              <span className="ml-2 text-xs text-slate-500">{timeOf(message.sentAtMs)}</span>
+              <span className="ml-2 text-xs text-muted">{timeOf(message.sentAtMs)}</span>
             )}
             <span className="block whitespace-pre-wrap break-words">{message.body}</span>
-            {message.status === 'pending' && (
-              <span className="text-xs text-slate-500">Sending…</span>
-            )}
+            {message.status === 'pending' && <span className="text-xs text-muted">Sending…</span>}
             {message.status === 'failed' && (
-              <span className="flex flex-wrap items-center gap-2 text-xs text-red-700">
+              <span className="flex flex-wrap items-center gap-2 text-xs text-danger">
                 <span>{`Not sent. ${message.error ?? ''}`.trim()}</span>
                 <button
                   type="button"
@@ -123,7 +121,7 @@ export function ChatPanel({
                   onClick={() => {
                     retry(message);
                   }}
-                  className="rounded border border-slate-300 px-2 py-0.5 text-slate-900 disabled:opacity-50"
+                  className="rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong text-ink disabled:opacity-50"
                 >
                   Retry
                 </button>
@@ -157,22 +155,22 @@ export function ChatPanel({
               setDraft(event.target.value);
               setInvalid(false);
             }}
-            className="w-full rounded border border-slate-300 px-2 py-1 disabled:opacity-50"
+            className="w-full rounded-full border border-line bg-surface px-4 py-1.5 transition hover:bg-surface-strong disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={!canSend}
-            className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+            className="rounded-full bg-focus px-4 py-2 font-medium text-focus-ink shadow-glow transition hover:brightness-110 disabled:opacity-50"
           >
             Send
           </button>
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted">
           {`${String(draft.length)} / ${String(CHAT_BODY_MAX_LENGTH)}`}
           {!canSend && ' · Chat is unavailable until the room is connected.'}
         </p>
         {invalid && (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger">
             {INVALID_CHAT_BODY}
           </p>
         )}
