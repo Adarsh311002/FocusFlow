@@ -29,7 +29,7 @@ describe('focusSessionInsightsQuerySchema', () => {
 });
 
 describe('updateMeRequestSchema', () => {
-  it('accepts the goal within its bounds only, and nothing else', () => {
+  it('accepts the goal within its bounds only, and no unknown setting', () => {
     expect(updateMeRequestSchema.safeParse({ dailyGoalSeconds: 3_600 }).success).toBe(true);
     expect(
       updateMeRequestSchema.safeParse({ dailyGoalSeconds: DAILY_GOAL_SECONDS.min }).success,
@@ -41,7 +41,21 @@ describe('updateMeRequestSchema', () => {
     expect(updateMeRequestSchema.safeParse({ dailyGoalSeconds: 43_201 }).success).toBe(false);
     expect(updateMeRequestSchema.safeParse({ dailyGoalSeconds: 60.5 }).success).toBe(false);
     expect(updateMeRequestSchema.safeParse({}).success).toBe(false);
-    expect(updateMeRequestSchema.safeParse({ displayName: 'x' }).success).toBe(false);
+    expect(updateMeRequestSchema.safeParse({ email: 'x@example.com' }).success).toBe(false);
+  });
+
+  it('accepts the profile settings within their rules (ST1–ST3)', () => {
+    expect(updateMeRequestSchema.parse({ displayName: '  Ada  ' }).displayName).toBe('Ada');
+    expect(updateMeRequestSchema.safeParse({ displayName: '   ' }).success).toBe(false);
+    expect(updateMeRequestSchema.safeParse({ avatarPreset: 'owl' }).success).toBe(true);
+    expect(updateMeRequestSchema.safeParse({ avatarPreset: null }).success).toBe(true);
+    expect(updateMeRequestSchema.safeParse({ avatarPreset: 'dragon' }).success).toBe(false);
+    expect(updateMeRequestSchema.safeParse({ defaultSessionSeconds: 2_400 }).success).toBe(true);
+    for (const seconds of [59, 14_460, 1_530]) {
+      expect(updateMeRequestSchema.safeParse({ defaultSessionSeconds: seconds }).success).toBe(
+        false,
+      );
+    }
   });
 });
 

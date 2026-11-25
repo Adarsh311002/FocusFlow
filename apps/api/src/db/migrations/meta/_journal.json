@@ -71,6 +71,13 @@
       "when": 1795600381545,
       "tag": "0009_weekly_priorities",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795602054051,
+      "tag": "0010_profile_settings",
+      "breakpoints": true
     }
   ]
 }

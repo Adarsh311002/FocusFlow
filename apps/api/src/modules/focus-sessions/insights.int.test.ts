@@ -244,6 +244,26 @@ describe('GET /focus-sessions/insights', () => {
     expect(result.goalDaysMet).toBe(1);
   });
 
+  it('changes the display name, the avatar and the default session length (ST1–ST3)', async () => {
+    const user = await signUpTestUser(requireHarness());
+    const fresh = meResponseSchema.parse((await call(user, 'GET', mePaths.self)).body).user;
+    expect(fresh).toMatchObject({ avatarPreset: null, defaultSessionSeconds: 1_500 });
+
+    const patch = await call(user, 'PATCH', mePaths.self, {
+      displayName: '  Ada  ',
+      avatarPreset: 'sloth',
+      defaultSessionSeconds: 3_000,
+    });
+    expect(patch.status).toBe(200);
+    expect(meResponseSchema.parse(patch.body).user).toMatchObject({
+      displayName: 'Ada',
+      avatarPreset: 'sloth',
+      defaultSessionSeconds: 3_000,
+    });
+    const back = await call(user, 'PATCH', mePaths.self, { avatarPreset: null });
+    expect(meResponseSchema.parse(back.body).user.avatarPreset).toBeNull();
+  });
+
   it('rejects an out-of-bounds, unknown or empty settings update', async () => {
     const user = await signUpTestUser(requireHarness());
     for (const body of [
@@ -251,7 +271,12 @@ describe('GET /focus-sessions/insights', () => {
       { dailyGoalSeconds: DAILY_GOAL_SECONDS.max + 1 },
       { dailyGoalSeconds: 1_800.5 },
       { dailyGoalSeconds: '3600' },
-      { displayName: 'Mallory' },
+      // The email is not a setting (unknown keys are refused).
+      { email: 'mallory@example.com' },
+      { displayName: '   ' },
+      { avatarPreset: 'dragon' },
+      { defaultSessionSeconds: 59 },
+      { defaultSessionSeconds: 1_530 },
       {},
     ]) {
       const result = await call(user, 'PATCH', mePaths.self, body);

@@ -1,4 +1,5 @@
 import {
+  avatarPresetSchema,
   identityProviderSchema,
   taskIdSchema,
   userIdSchema,
@@ -27,6 +28,8 @@ export const toUserView = async (db: Db, user: UserRow): Promise<UserView> => {
     avatarUrl: user.avatarUrl,
     currentTaskId: user.currentTaskId === null ? null : taskIdSchema.parse(user.currentTaskId),
     dailyGoalSeconds: user.dailyGoalSeconds,
+    avatarPreset: avatarPresetSchema.nullable().parse(user.avatarPreset),
+    defaultSessionSeconds: user.defaultSessionSeconds,
     identities: identityProvidersSchema.parse(providers),
   };
 };

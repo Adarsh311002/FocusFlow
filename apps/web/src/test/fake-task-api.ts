@@ -32,7 +32,9 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
   const thoughts: { id: string; body: string; sessionId: string | null; createdAt: string }[] = [];
   const now = () => new Date().toISOString();
 
-  const user = () => ({ ...userBody, currentTaskId });
+  /** Settings changed with `PATCH /me` (A2, ST1–ST3). */
+  let settings: Record<string, unknown> = {};
+  const user = () => ({ ...userBody, ...settings, currentTaskId });
 
   const view = (task: FakeTask) => {
     const base = {
@@ -74,6 +76,17 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
     }
     if (path === authPaths.logout) {
       return noContentResponse();
+    }
+    if (path === mePaths.self && request.method === 'PATCH') {
+      const changes = parsedBody(request);
+      settings = {
+        ...settings,
+        ...changes,
+        ...(typeof changes.displayName === 'string'
+          ? { displayName: changes.displayName.trim() }
+          : {}),
+      };
+      return jsonResponse(200, { user: user() });
     }
     if (path === mePaths.self) {
       return jsonResponse(200, { user: user() });

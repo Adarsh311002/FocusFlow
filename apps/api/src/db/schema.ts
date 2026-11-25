@@ -41,6 +41,10 @@ export const users = pgTable(
     currentTaskId: uuid(),
     // A1: the user's daily focus goal in whole seconds (dashboard progress, streak views).
     dailyGoalSeconds: integer().notNull().default(7200),
+    // ST2: a forest-animal avatar chosen in settings (NULL: the initial).
+    avatarPreset: text(),
+    // ST3: the session length the start form opens with.
+    defaultSessionSeconds: integer().notNull().default(1500),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -66,6 +70,14 @@ export const users = pgTable(
     check('ck_users_email_lowercase', sql`${table.email} = lower(${table.email})`),
     check('ck_users_display_name_length', sql`char_length(${table.displayName}) BETWEEN 1 AND 50`),
     check('ck_users_daily_goal_seconds', sql`${table.dailyGoalSeconds} BETWEEN 300 AND 43200`),
+    check(
+      'ck_users_avatar_preset',
+      sql`${table.avatarPreset} IN ('monkey', 'sloth', 'toucan', 'frog', 'owl', 'butterfly', 'jaguar')`,
+    ),
+    check(
+      'ck_users_default_session_seconds',
+      sql`${table.defaultSessionSeconds} BETWEEN 60 AND 14400`,
+    ),
   ],
 );
 
