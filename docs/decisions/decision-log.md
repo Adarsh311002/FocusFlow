@@ -651,6 +651,12 @@ Requested by the owner (feature roadmap, Wave 1): note a distraction during a se
 - **PT4 Let it go.** `DELETE /parked-thoughts/:thoughtId` → `204`; no history is kept. Another user's or an unknown thought is 404 on every route.
 - **PT5 Web.** A running session (solo panel and the room's Focus together panel) has a "Park it and keep going" field (Enter saves and clears; a count of what is parked for after the session). When the session ends, its thoughts are listed under the check-in with "Make it a task" and "Let it go"; every other open thought is listed under the dashboard's tasks.
 
+### FQ1–FQ4 — Focus quality (approved and implemented 2026-11-25, Wave 1)
+- **FQ1** `focus_sessions.check_in_quality` smallint 1–5 (migration `0008`; CHECK: needs a check-in outcome), "how deep was it?": 1 Scattered, 2 Distracted, 3 Steady, 4 Focused, 5 Deep flow. Optional part of the check-in (CI2): `quality?` in the request, `checkIn.quality | null` in the view; a later check-in without it clears it.
+- **FQ2** It is the user's own rating: it changes no status, time or completion rule.
+- **FQ3** Insights add `quality: { ratedCount, average, byHour[24] }` over the range's ended sessions, by local start hour (V7 rules); averages to 2 decimals, `null` where nothing was rated.
+- **FQ4** Web: five depth buttons in the check-in (optional, chosen before the outcome); the recorded answer shows "depth N/5"; Review shows "Your deepest hours" (average depth per start hour; the best hour needs at least 2 ratings).
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

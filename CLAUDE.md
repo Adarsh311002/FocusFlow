@@ -350,6 +350,9 @@ Full text: `docs/decisions/decision-log.md`.
 - **PT2** `GET/POST /parked-thoughts`; at most 200 open per user (`409 THOUGHTS_FULL`). **PT3** `POST /parked-thoughts/:id/task` deletes the thought and creates the task in one transaction (not made current). **PT4** `DELETE /parked-thoughts/:id` → 204. All owner-scoped 404.
 - **PT5** Web: a park field in running solo and room sessions; the ended-session notice lists that session's thoughts; the dashboard lists the rest.
 
+### Focus quality (FQ1–FQ4, approved 2026-11-25)
+- **FQ1** `check_in_quality` 1–5 (migration `0008`), optional in the check-in. **FQ2** Never affects status or time. **FQ3** Insights `quality { ratedCount, average, byHour[24] }`. **FQ4** Depth buttons in the check-in; "Your deepest hours" on Review.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
