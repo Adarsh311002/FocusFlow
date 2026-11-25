@@ -41,6 +41,16 @@ const HOUR_MS = 60 * 60 * 1_000;
 
 beforeAll(async () => {
   harness = await startTestHarness({ RECONCILER_INTERVAL_MS: '600000' });
+  // The instance runs one reconcile at startup (E23). Wait for it to finish: otherwise it can
+  // still hold a row lock when the first sweep below runs, which then reports `locked` (its
+  // own SKIP LOCKED) instead of `expired`. After it, no run is due for 30 minutes.
+  const deadline = Date.now() + 30_000;
+  while ((await harness.redis.get(redisKeys.reconcileLastFinished)) === null) {
+    if (Date.now() > deadline) {
+      throw new Error('the startup reconcile never finished');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }, 180_000);
 
 afterAll(async () => {
