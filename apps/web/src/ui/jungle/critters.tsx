@@ -119,22 +119,50 @@ function JungleAttentionInner() {
   return null;
 }
 
-/** A one-time nudge: the animals have something to say. */
+const HINT_SEEN_KEY = 'ff-jungle-hint-seen';
+const HINT_AFTER_MS = 5000;
+const HINT_FOR_MS = 12_000;
+
+function hintSeen(): boolean {
+  try {
+    return window.localStorage.getItem(HINT_SEEN_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function rememberHintSeen(): void {
+  try {
+    window.localStorage.setItem(HINT_SEEN_KEY, '1');
+  } catch {
+    // Only means the hint may show once more.
+  }
+}
+
+/**
+ * A one-time nudge: the animals have something to say. It shows once per browser, hides
+ * itself after a few seconds and never takes clicks meant for the page under it (only its
+ * own dismiss button is clickable), so it cannot cover a form or a button on a small screen.
+ */
 function JungleHintInner() {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
-    const show = setTimeout(() => {
-      if (readMet().size === 0) {
-        setVisible(true);
-      }
-    }, 5000);
-    const onMet = (): void => {
+    let hide: ReturnType<typeof setTimeout> | undefined;
+    const close = (): void => {
+      rememberHintSeen();
       setVisible(false);
     };
-    metListeners.add(onMet);
+    const show = setTimeout(() => {
+      if (readMet().size === 0 && !hintSeen()) {
+        setVisible(true);
+        hide = setTimeout(close, HINT_FOR_MS);
+      }
+    }, HINT_AFTER_MS);
+    metListeners.add(close);
     return () => {
       clearTimeout(show);
-      metListeners.delete(onMet);
+      clearTimeout(hide);
+      metListeners.delete(close);
     };
   }, []);
   return (
@@ -145,7 +173,7 @@ function JungleHintInner() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 10 }}
-          className="fixed bottom-20 left-5 z-50 flex max-w-xs items-start gap-3 rounded-2xl border border-[#c9a24a]/30 bg-[#07110c]/90 px-4 py-3 text-sm text-[#d5dbcc] shadow-[0_20px_60px_rgb(0_0_0_/_0.5)] backdrop-blur-xl"
+          className="pointer-events-none fixed bottom-20 left-5 z-50 flex max-w-xs items-start gap-3 rounded-2xl border border-[#c9a24a]/30 bg-[#07110c]/90 px-4 py-3 text-sm text-[#d5dbcc] shadow-[0_20px_60px_rgb(0_0_0_/_0.5)] backdrop-blur-xl"
         >
           <span aria-hidden="true" className="text-lg">
             🐾
@@ -158,9 +186,10 @@ function JungleHintInner() {
             type="button"
             aria-label="Dismiss"
             onClick={() => {
+              rememberHintSeen();
               setVisible(false);
             }}
-            className="ml-1 text-[#8fa08a] hover:text-[#d5dbcc]"
+            className="pointer-events-auto ml-1 text-[#8fa08a] hover:text-[#d5dbcc]"
           >
             ×
           </button>

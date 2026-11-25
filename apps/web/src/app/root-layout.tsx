@@ -48,7 +48,7 @@ export function AppNav() {
               <Link
                 to={section.to}
                 onMouseEnter={playLeafTick}
-                className="relative block rounded-full px-4 py-2 text-sm text-muted transition-colors hover:text-ink"
+                className="relative block rounded-full px-3 py-2 text-sm text-muted transition-colors hover:text-ink sm:px-4"
                 activeProps={{ 'aria-current': 'page', className: 'text-ink' }}
               >
                 {section.label}
@@ -92,7 +92,10 @@ function LiveDot() {
   );
 }
 
+/** The header's theme switch. On a phone, once signed in, it moves into the account menu so
+    the navigation fits the header. */
 function ThemeToggle() {
+  const { status } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const next = theme === 'dark' ? 'light' : 'dark';
   return (
@@ -100,9 +103,25 @@ function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
       aria-label={`Switch to ${next} theme`}
-      className="grid h-9 w-9 place-items-center rounded-full text-sm text-muted transition hover:bg-surface-strong hover:text-ink"
+      className={`${status === 'authenticated' ? 'hidden sm:grid' : 'grid'} h-9 w-9 place-items-center rounded-full text-sm text-muted transition hover:bg-surface-strong hover:text-ink`}
     >
       {theme === 'dark' ? '☀' : '☾'}
+    </button>
+  );
+}
+
+/** The theme switch inside the account menu, shown only where the header hides its own. */
+function MenuThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const next = theme === 'dark' ? 'light' : 'dark';
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={toggleTheme}
+      className={buttonClass('ghost', 'w-full sm:hidden')}
+    >
+      {`Switch to ${next} theme`}
     </button>
   );
 }
@@ -185,6 +204,7 @@ function AccountMenu() {
               <p className="text-xs text-muted">{user.email}</p>
             </div>
             <DailyGoalSetting />
+            <MenuThemeToggle />
             <button
               type="button"
               role="menuitem"
@@ -223,7 +243,7 @@ export function RootLayout() {
         <div className="flex w-full max-w-6xl items-center justify-between gap-3 rounded-full border border-line bg-canvas-2/70 px-3 py-2 shadow-card backdrop-blur-2xl">
           <Link to="/" className="flex items-center gap-2 pl-2">
             <NeuronMark />
-            <h1 className="font-display text-xl">Focus Flow</h1>
+            <h1 className="sr-only font-display text-xl sm:not-sr-only">Focus Flow</h1>
           </Link>
           <AppNav />
           <div className="flex items-center gap-1">
