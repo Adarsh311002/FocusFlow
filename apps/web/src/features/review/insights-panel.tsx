@@ -192,7 +192,7 @@ function Rhythm({ data }: { readonly data: FocusSessionInsightsResponse }) {
   const soloRoom = data.split.solo.totalFocusedSeconds + data.split.room.totalFocusedSeconds;
   const roomShare = soloRoom === 0 ? null : data.split.room.totalFocusedSeconds / soloRoom;
   return (
-    <dl className="grid grid-cols-2 gap-6 md:grid-cols-4">
+    <dl className="grid grid-cols-2 gap-6 md:grid-cols-5">
       <Figure
         label="Streak"
         value={`${String(data.streak.current)}d`}
@@ -207,6 +207,15 @@ function Rhythm({ data }: { readonly data: FocusSessionInsightsResponse }) {
         label="Vs previous"
         value={change === null ? '—' : `${change >= 0 ? '+' : '−'}${percent(Math.abs(change))}`}
         hint={`${formatDuration(previous.totalFocusedSeconds)} the period before`}
+      />
+      <Figure
+        label="Intentions done"
+        value={
+          data.checkIns.withIntention === 0
+            ? '—'
+            : `${String(data.checkIns.done)}/${String(data.checkIns.withIntention)}`
+        }
+        hint={`${String(data.checkIns.progress)} progress · ${String(data.checkIns.stuck)} stuck · ${String(data.checkIns.unrecorded)} unanswered`}
       />
       <Figure
         label="Together"

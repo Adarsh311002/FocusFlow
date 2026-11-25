@@ -76,7 +76,8 @@ export function TodayStrip() {
   const todaySeconds = today?.totalFocusedSeconds ?? 0;
   const progress = today?.goalProgress ?? 0;
   const change = data.comparison.delta.totalFocusedSecondsChange;
-  const rate = data.totals.completionRate;
+  const { checkIns } = data;
+  const recorded = checkIns.withIntention - checkIns.unrecorded;
 
   return (
     <dl
@@ -113,13 +114,22 @@ export function TodayStrip() {
             : `${change >= 0 ? '▲' : '▼'} ${percent(Math.abs(change))} vs last week · ${String(data.goalDaysMet)}/7 on goal`
         }
       />
+      {/* CI5: what the user said they finished, not just minutes sat. */}
       <Figure
-        label="Finished"
-        value={rate === null ? '—' : percent(rate)}
+        label="Intentions done"
+        value={
+          checkIns.withIntention === 0
+            ? '—'
+            : `${String(checkIns.done)}/${String(checkIns.withIntention)}`
+        }
         hint={
-          rate === null
-            ? 'No ended sessions this week yet'
-            : `${String(data.totals.completedCount)} of ${String(data.totals.sessionCount)} sessions completed`
+          checkIns.withIntention === 0
+            ? 'Name what you will finish when you start'
+            : checkIns.unrecorded > 0
+              ? `${String(checkIns.unrecorded)} still to check in`
+              : recorded === 0
+                ? 'Check in after a session'
+                : `${percent(checkIns.done / recorded)} of check-ins were done`
         }
       />
     </dl>

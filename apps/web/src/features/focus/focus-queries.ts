@@ -226,6 +226,25 @@ export function useLastEndedFocusSession(): FocusSessionView | null {
   return data ?? null;
 }
 
+/**
+ * Replaces the remembered ended session with a newer view of the SAME session (a check-in
+ * answer), so the notice shows it. A different or no remembered session is left alone.
+ */
+export function useReplaceLastEnded(): (session: FocusSessionView) => void {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const userId = user?.id ?? NO_USER;
+  return useCallback(
+    (session: FocusSessionView) => {
+      const shown = queryClient.getQueryData<FocusSessionView | null>(lastEndedKey(userId));
+      if (shown?.id === session.id) {
+        queryClient.setQueryData(lastEndedKey(userId), session);
+      }
+    },
+    [queryClient, userId],
+  );
+}
+
 export function useDismissLastEnded(): () => void {
   const queryClient = useQueryClient();
   const userId = useUserId();
