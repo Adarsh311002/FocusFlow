@@ -4,6 +4,7 @@ import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { ForestPage } from '../features/forest/forest-page';
 import { LandingPage } from '../features/landing/landing-page';
 import { ReviewPage } from '../features/review/review-page';
 import { RoomPage } from '../features/rooms/room-page';
@@ -116,6 +117,21 @@ const settingsRoute = createRoute({
   component: ProtectedSettings,
 });
 
+/** Grow your forest (GF6). */
+function ProtectedForest() {
+  return (
+    <RequireAuth>
+      <ForestPage />
+    </RequireAuth>
+  );
+}
+
+const forestRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/forest',
+  component: ProtectedForest,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -127,6 +143,7 @@ const routeTree = rootRoute.addChildren([
   roomsRoute,
   roomRoute,
   settingsRoute,
+  forestRoute,
 ]);
 
 export const router = createRouter({ routeTree });

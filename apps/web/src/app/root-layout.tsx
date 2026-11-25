@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../features/auth/auth-context';
 import { authErrorMessage } from '../features/auth/auth-messages';
+import { ForestUnlocks } from '../features/forest/forest-unlocks';
 import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
 import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
@@ -22,6 +23,9 @@ const SECTIONS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/review', label: 'Review' },
   { to: '/rooms', label: 'Rooms' },
+  // GF6: on a phone the header has no room for a fourth link; the forest is reached from the
+  // dashboard card and the account menu there.
+  { to: '/forest', label: 'Forest', wideOnly: true },
 ] as const;
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -39,7 +43,10 @@ export function AppNav() {
         {SECTIONS.map((section) => {
           const active = pathname === section.to || pathname.startsWith(`${section.to}/`);
           return (
-            <li key={section.to} className="relative">
+            <li
+              key={section.to}
+              className={'wideOnly' in section ? 'relative hidden sm:block' : 'relative'}
+            >
               {active && (
                 <motion.span
                   layoutId="app-nav-active"
@@ -216,6 +223,16 @@ function AccountMenu() {
             >
               All settings
             </Link>
+            <Link
+              to="/forest"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full sm:hidden')}
+            >
+              Your forest
+            </Link>
             <MenuThemeToggle />
             <button
               type="button"
@@ -269,6 +286,7 @@ export function RootLayout() {
         <Outlet />
       </main>
       <ForestSoundToggle />
+      <ForestUnlocks />
       <WeeklyReviewRitual />
       <DailyIntentionRitual />
       <JungleAttention />

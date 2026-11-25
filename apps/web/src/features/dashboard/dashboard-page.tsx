@@ -6,6 +6,7 @@ import { ButterflyArt, Critter, FrogArt, MonkeyArt } from '../../ui/jungle/critt
 import { useAuth } from '../auth/auth-context';
 import { FocusPanel } from '../focus/focus-panel';
 import { useCachedCurrentFocusSession } from '../focus/focus-queries';
+import { ForestCard } from '../forest/forest-card';
 import { ConnectionStatus } from '../realtime/connection-status';
 import { CurrentTask } from '../tasks/current-task';
 import { TasksPanel } from '../tasks/tasks-panel';
@@ -161,6 +162,7 @@ export function DashboardPage() {
           <div className="grid items-start gap-10 lg:grid-cols-12">
             <Block index={3} className="lg:col-span-7">
               <div className="space-y-8">
+                <ForestCard />
                 <WeeklyTopThree />
                 <TasksPanel />
                 <ParkedThoughts />
