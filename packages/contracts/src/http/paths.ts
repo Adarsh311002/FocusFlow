@@ -29,6 +29,9 @@ export const mePaths = {
   currentTask: '/me/current-task',
 } as const;
 
+/** Grow your forest (GF5). */
+export const forestPaths = { self: '/forest' } as const;
+
 /** Weekly priorities (WR2). */
 export const weeklyPriorityPaths = { collection: '/weekly-priorities' } as const;
 
