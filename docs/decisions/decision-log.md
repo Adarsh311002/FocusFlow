@@ -657,6 +657,13 @@ Requested by the owner (feature roadmap, Wave 1): note a distraction during a se
 - **FQ3** Insights add `quality: { ratedCount, average, byHour[24] }` over the range's ended sessions, by local start hour (V7 rules); averages to 2 decimals, `null` where nothing was rated.
 - **FQ4** Web: five depth buttons in the check-in (optional, chosen before the outcome); the recorded answer shows "depth N/5"; Review shows "Your deepest hours" (average depth per start hour; the best hour needs at least 2 ratings).
 
+### WR1–WR5 — Weekly review and this week's three (approved and implemented 2026-11-25, Wave 1)
+- **WR1 Storage.** Table `weekly_priorities` (migration `0009`): `user_id` (cascade), `week_start` date (CHECK: a Monday), `position` 1–3, `task_id` (composite FK to the user's own task, no ON DELETE action, P1); unique per (user, week, position) and (user, week, task).
+- **WR2 API.** `GET /weekly-priorities?week=YYYY-MM-DD` → `{ week, priorities: [{ position, task: { id, title, status } }] }`; `PUT /weekly-priorities { week, taskIds (0–3, distinct) }` replaces the week's list in order (under the user's row lock). Tasks must be the caller's own and not deleted (`404 TASK_NOT_FOUND`); a task new to the list must be open (`409 TASK_NOT_OPEN`), one already in it may have been completed since. A deleted task drops out of the list; a completed one stays, shown completed.
+- **WR3 The week.** The Monday of the user's local week, computed by the client in the browser's time zone (the same zone as Review); the server only checks that the date is a Monday.
+- **WR4 The weekly review.** On the first signed-in page of each local week, a full-screen review (the shared ritual shell, like IN3): last week's focused time, sessions, intentions done and times stuck, last week's three with what got finished, then "this week's three" picked from open tasks or named new (created as tasks, not made current). "Not this week" or Esc skips. It comes before the daily intention, which waits for it; a brand-new user with no history (no session last week, no streak ever) is not asked. Remembered per user and week in `localStorage` only.
+- **WR5 Dashboard.** "This week's three" above the tasks, with what is done and a button to open the review again ("Plan your week" / "Change the three").
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:
