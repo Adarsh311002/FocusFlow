@@ -671,6 +671,15 @@ Requested by the owner (feature roadmap, Wave 1): note a distraction during a se
 - **ST4 The page.** `/settings` (linked from the account menu): "You" (name, companion), "Focus" (default length: 15/25/50/90 or 1–240 minutes; daily goal, A2) and "This device" (theme and forest sounds, kept in the browser).
 - **ST5** Every change is one `PATCH /me` answered with the updated user; the client replaces its user with the answer.
 
+### GF1–GF6 — Grow your forest (approved and implemented 2026-11-25, Wave 2)
+Requested by the owner (feature roadmap, Wave 2): the product's signature, a forest the user's focus grows.
+- **GF1 Derived, never stored.** The forest is computed on each read from the user's ended sessions (status, planned and focused time, room, check-in outcome and quality), their daily goal and the clock. No new table and no points ledger that could disagree with history; old sessions count too.
+- **GF2 Plants.** One per ended session that earned one, placed by a hash of its session id (stable, the forest only gains plants): a completed session grows a sprout (< 25 min planned), a sapling (25–49) or a tree (≥ 50); a stopped session with at least 10 focused minutes grows a sprout; less grows nothing (never a penalty). A "done" check-in blooms (CI1); quality 4–5 glows (FQ1). At most 240 newest plants are sent; totals count all.
+- **GF3 Milestones and creatures.** Eight, each bringing a creature: first completed session (fireflies), 10 completed (frog), 10 focused hours (butterfly), a 7-day streak of completed sessions (toucan), 25 "done" check-ins (owl), a quality-5 session (sloth), a completed room session (monkey), 100 hours (jaguar). Each is unlocked at the end of the session that reached it, walking sessions in the order they ended; progress `current/target` while locked.
+- **GF4 Vitality, never decay.** The last 7 local days' focus against 7 × the daily goal, clamped to [0.15, 1]: it sets the scene's light and fireflies. Nothing is ever lost; a quiet forest rests.
+- **GF5 API.** `GET /forest?tz=` → `{ totals, vitality, plants, milestones }`; days and streaks in `tz` (V5 rules, A3's streak). Read-only, PostgreSQL only, the caller's own.
+- **GF6 Web.** `/forest` (a nav link from the sm breakpoint; the account menu and a dashboard card on phones): an SVG scene in three depth rows with the unlocked creatures, the numbers, and "Who lives here" with progress. The forest query lives under `['focus-sessions', userId]`, so `focus:session:updated` regrows it. A note announces newly reached milestones ("A frog moved into your forest", "and N more"); the first read per browser only remembers what is already there (`localStorage`), so history never arrives as a burst.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

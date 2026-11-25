@@ -72,6 +72,12 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 - Both review routes validate their query strictly: an unknown key, an instant the schema refuses (without an offset, finer than millisecond precision, or outside `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` — year 0, or year 10000 reached through an offset), `from` not earlier than `to` (history), `from` later than `to`, a range over 366 days or a date before 1970 (summary), a `limit` that is not an integer in 1–100, a cursor that does not decode or does not name one of the user's sessions, and a `tz` that is not an accepted time zone name all answer `400 VALIDATION_FAILED`.
 - **Phase 4B** implements start, current, pause, resume and stop (solo only). **Phase 5** implements history and summary (read-only, PostgreSQL only; V1–V8). `NOT_SOLO_SESSION` (Phase 8): pause, resume and stop on a room session answer `409 NOT_SOLO_SESSION`; `GET /focus-sessions/current` and the history return room sessions with `context.kind = "room"` (RF11).
 
+## Forest (GF1–GF5)
+
+| Method & route | Request | Response | Rules |
+|---|---|---|---|
+| `GET /forest` | `?tz=` | `{ totals, vitality, plants, milestones }` | The caller's forest, derived from their ended sessions (nothing stored). Days and streaks in `tz`; at most 240 newest plants. |
+
 ## Weekly priorities (WR1–WR3)
 
 | Method & route | Request | Response | Rules |

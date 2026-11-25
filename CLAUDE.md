@@ -359,6 +359,9 @@ Full text: `docs/decisions/decision-log.md`.
 ### Settings (ST1–ST5, approved 2026-11-25)
 - `PATCH /me` also takes `displayName` (ST1), `avatarPreset` (ST2, a forest animal or `null`; migration `0010`) and `defaultSessionSeconds` (ST3, whole minutes 60–14,400; the start form opens at it). `/settings` (ST4) holds profile, focus defaults and this device's theme and sounds.
 
+### Grow your forest (GF1–GF6, approved 2026-11-25)
+- **GF1** Derived on read from ended sessions, never stored. **GF2** Plants per session (sprout/sapling/tree by planned length; a stopped session with ≥ 10 focused minutes grows a sprout); done blooms, quality 4–5 glows; ≤ 240 sent. **GF3** Eight milestones bring creatures, unlocked at the session that reached them. **GF4** Vitality from the last 7 days vs the goal, never below 0.15 (no decay). **GF5** `GET /forest?tz=`. **GF6** `/forest` page, dashboard card, nav link (sm+), arrival note.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
