@@ -29,6 +29,19 @@ export const mePaths = {
   currentTask: '/me/current-task',
 } as const;
 
+/** Parked thoughts (PT2). */
+export const parkedThoughtPaths = {
+  collection: '/parked-thoughts',
+  item: '/parked-thoughts/:thoughtId',
+  toTask: '/parked-thoughts/:thoughtId/task',
+} as const;
+
+/** Builds a concrete parked-thought URL path. */
+export const parkedThoughtPath = (
+  template: (typeof parkedThoughtPaths)['item' | 'toTask'],
+  thoughtId: string,
+): string => template.replace(':thoughtId', encodeURIComponent(thoughtId));
+
 /** Express-style templates; the web app fills in `:taskId` with `taskPath`. */
 export const taskPaths = {
   collection: '/tasks',

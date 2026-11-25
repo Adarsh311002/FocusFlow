@@ -50,6 +50,13 @@
       "when": 1795587758402,
       "tag": "0006_session_check_in_and_shared_intention",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795598259270,
+      "tag": "0007_parked_thoughts",
+      "breakpoints": true
     }
   ]
 }

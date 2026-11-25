@@ -12,6 +12,7 @@ import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
 import { createFocusSessionsRouter } from '../../modules/focus-sessions/http.js';
 import type { FocusSessionsDeps } from '../../modules/focus-sessions/service.js';
+import { createParkedThoughtsRouter } from '../../modules/parked-thoughts/http.js';
 import { createRoomFocusRouter } from '../../modules/room-focus/http.js';
 import type { RoomFocusService } from '../../modules/room-focus/types.js';
 import { createRateLimiter, ROOM_FOCUS_RATE } from '../../modules/room-realtime/limiter.js';
@@ -84,6 +85,10 @@ export const createApp = ({
   app.use(
     API_BASE_PATH,
     createTasksRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createParkedThoughtsRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
   );
   app.use(
     API_BASE_PATH,

@@ -23,6 +23,8 @@ export const errorCodes = [
   'NOT_CONNECTED',
   // Session check-in (CI2)
   'SESSION_NOT_ENDED',
+  // Parked thoughts (PT2)
+  'THOUGHTS_FULL',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',

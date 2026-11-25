@@ -398,3 +398,36 @@ export const roomBlocks = pgTable(
     index('ix_room_blocks_user_id').on(table.userId),
   ],
 );
+
+// Parked thoughts (PT1): a distraction noted during a session ("email Ravi") so it does not
+// break the focus. Kept until the user turns it into a task or lets it go, so it is durable
+// user data (PostgreSQL). The session it came from is optional; deleting the user removes
+// their thoughts (cascade). No ON DELETE action on the session (P1): sessions are never
+// deleted on their own.
+export const parkedThoughts = pgTable(
+  'parked_thoughts',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    sessionId: uuid(),
+    body: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_parked_thoughts', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_parked_thoughts_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_parked_thoughts_session_id',
+      columns: [table.sessionId],
+      foreignColumns: [focusSessions.id],
+    }),
+    // The same limit as a task title, so every thought can become a task unchanged.
+    check('ck_parked_thoughts_body_length', sql`char_length(${table.body}) BETWEEN 1 AND 200`),
+    // The user's list, newest first (UUIDv7 ids sort by creation), and the cascade.
+    index('ix_parked_thoughts_user_id_id').on(table.userId, table.id.desc()),
+  ],
+);
