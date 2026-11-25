@@ -362,6 +362,9 @@ Full text: `docs/decisions/decision-log.md`.
 ### Grow your forest (GF1–GF6, approved 2026-11-25)
 - **GF1** Derived on read from ended sessions, never stored. **GF2** Plants per session (sprout/sapling/tree by planned length; a stopped session with ≥ 10 focused minutes grows a sprout); done blooms, quality 4–5 glows; ≤ 240 sent. **GF3** Eight milestones bring creatures, unlocked at the session that reached them. **GF4** Vitality from the last 7 days vs the goal, never below 0.15 (no decay). **GF5** `GET /forest?tz=`. **GF6** `/forest` page, dashboard card, nav link (sm+), arrival note.
 
+### Goals, steps and estimates (GL1–GL5, SP1–SP4, ES1–ES3, approved 2026-11-25)
+- Migration `0011`. **GL** `goals` (active/completed/archived, never deleted, ≤ 50 kept) with progress; `tasks.goal_id` (own, active goal to attach; `GOAL_NOT_FOUND`, `GOAL_NOT_ACTIVE`); `GET/POST/PATCH /goals`; `/goals` page; task writes refresh goals. **SP** `task_steps` (≤ 30 per task, `STEPS_FULL`) under `/tasks/:id/steps`; task views carry `steps { total, done }`. **ES** `tasks.estimated_sessions` 1–20; task views carry `sessionsSpent` (completed or ≥ 10 focused minutes). `PATCH /tasks` takes any of title, goalId, estimatedSessions.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**

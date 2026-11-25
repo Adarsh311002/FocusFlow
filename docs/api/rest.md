@@ -72,6 +72,20 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 - Both review routes validate their query strictly: an unknown key, an instant the schema refuses (without an offset, finer than millisecond precision, or outside `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` — year 0, or year 10000 reached through an offset), `from` not earlier than `to` (history), `from` later than `to`, a range over 366 days or a date before 1970 (summary), a `limit` that is not an integer in 1–100, a cursor that does not decode or does not name one of the user's sessions, and a `tz` that is not an accepted time zone name all answer `400 VALIDATION_FAILED`.
 - **Phase 4B** implements start, current, pause, resume and stop (solo only). **Phase 5** implements history and summary (read-only, PostgreSQL only; V1–V8). `NOT_SOLO_SESSION` (Phase 8): pause, resume and stop on a room session answer `409 NOT_SOLO_SESSION`; `GET /focus-sessions/current` and the history return room sessions with `context.kind = "room"` (RF11).
 
+## Goals and steps (GL1–GL4, SP1–SP3)
+
+| Method & route | Request | Response | Rules |
+|---|---|---|---|
+| `GET /goals` | `?archived=true|false` | `{ goals }` | Active first, then completed, newest first; archived only on request. Each has `progress { openTasks, completedTasks, focusedSeconds }`. |
+| `POST /goals` | `{ title, why?, targetDate?, color? }` | `201 { goal }` | Title 1–80, why ≤ 280, color one of `leaf, moss, fern, amber, berry, sky`. At most 50 active and completed goals (`409 GOALS_FULL`). |
+| `PATCH /goals/:goalId` | `{ title?, why?, targetDate?, color?, status? }` | `{ goal }` | `status`: `active`, `completed` or `archived`. `null` clears why or date. Another user's or unknown → `404 GOAL_NOT_FOUND`. |
+| `GET /tasks/:taskId/steps` | — | `{ steps }` | Creation order. |
+| `POST /tasks/:taskId/steps` | `{ title }` | `201 { step }` | At most 30 per task (`409 STEPS_FULL`). |
+| `PATCH /tasks/:taskId/steps/:stepId` | `{ title?, done? }` | `{ step }` | |
+| `DELETE /tasks/:taskId/steps/:stepId` | — | `204` | |
+
+Tasks (GL4, ES1–ES2): `POST /tasks` also takes `goalId?` and `estimatedSessions?` (1–20); `PATCH /tasks/:taskId` takes any of `title`, `goalId` (`null` detaches) and `estimatedSessions` (`null` clears). The goal must be the caller's and active (`404 GOAL_NOT_FOUND`, `409 GOAL_NOT_ACTIVE`). `GET /tasks?goalId=` lists one goal's tasks. Every task view carries `goalId`, `estimatedSessions`, `sessionsSpent` and `steps { total, done }`.
+
 ## Forest (GF1–GF5)
 
 | Method & route | Request | Response | Rules |

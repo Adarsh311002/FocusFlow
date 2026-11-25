@@ -680,6 +680,21 @@ Requested by the owner (feature roadmap, Wave 2): the product's signature, a for
 - **GF5 API.** `GET /forest?tz=` → `{ totals, vitality, plants, milestones }`; days and streaks in `tz` (V5 rules, A3's streak). Read-only, PostgreSQL only, the caller's own.
 - **GF6 Web.** `/forest` (a nav link from the sm breakpoint; the account menu and a dashboard card on phones): an SVG scene in three depth rows with the unlocked creatures, the numbers, and "Who lives here" with progress. The forest query lives under `['focus-sessions', userId]`, so `focus:session:updated` regrows it. A note announces newly reached milestones ("A frog moved into your forest", "and N more"); the first read per browser only remembers what is already there (`localStorage`), so history never arrives as a burst.
 
+### GL1–GL5, SP1–SP4, ES1–ES3 — Goals, steps and estimates (approved and implemented 2026-11-25, Wave 3)
+Requested by the owner (feature roadmap, Wave 3): structure for bigger work. Migration `0011`.
+- **GL1 Goals.** Table `goals`: title 1–80, optional "why" (≤ 280), optional target date, a color (`leaf, moss, fern, amber, berry, sky`), `completed_at`/`archived_at` (never both, CHECK). A goal is active, completed or archived and is never deleted. At most 50 active and completed goals per user (`409 GOALS_FULL`, under the user's row lock).
+- **GL2 A task's goal.** `tasks.goal_id`, a composite key to the same user's goal; no ON DELETE action (P1). A task has at most one goal; a goal has many tasks.
+- **GL3 API.** `GET /goals` (active first, then completed, newest first; `?archived=true` adds archived ones), `POST /goals`, `PATCH /goals/:goalId` (any field; `status` moves between active, completed and archived; `null` clears why or date). Each goal carries progress: its live tasks open and completed, and the focused time of its tasks' ended sessions. Another user's or an unknown goal is `404 GOAL_NOT_FOUND`.
+- **GL4 Attaching.** `POST /tasks` and `PATCH /tasks/:taskId` take `goalId` (`null` detaches). The goal must be the user's and active (`404 GOAL_NOT_FOUND`, `409 GOAL_NOT_ACTIVE`), checked under a share lock on the goal. A goal's tasks keep it after it is completed or archived. `GET /tasks?goalId=` lists one goal's tasks. `PATCH /tasks` now takes any of `title`, `goalId`, `estimatedSessions` (at least one).
+- **GL5 Web.** `/goals` (nav from the lg breakpoint, the account menu below it): goal cards with why, target date ("in 12 days"), a progress bar of tasks done, focused time, its open tasks and a field to add one; "Mark reached", "Archive", "Make active again"; a form for a new goal. Task writes also refresh goals.
+- **SP1 Steps.** Table `task_steps` (title 1–200, `done_at`, composite key to the same user's task, cascade with the task's user); at most 30 per task (`409 STEPS_FULL`, counted under the task's row lock).
+- **SP2 API.** `GET/POST /tasks/:taskId/steps`, `PATCH/DELETE /tasks/:taskId/steps/:stepId` (`{ title?, done? }`); the task must be the caller's own and live (`404 TASK_NOT_FOUND`), an unknown step is `404 NOT_FOUND`. Creation order.
+- **SP3** Every task view carries `steps: { total, done }`.
+- **SP4 Web.** A task's "Plan" panel holds a checklist: add, tick, remove.
+- **ES1 Estimates.** `tasks.estimated_sessions` 1–20 (CHECK), optional, set on create or with `PATCH` (`null` clears).
+- **ES2 Sessions spent.** Every task view carries `sessionsSpent`: its ended sessions that completed, or stopped after at least 10 focused minutes (the forest's sprout rule, GF2). Task views read ES2 and SP3 in one grouped batch per response.
+- **ES3 Web.** The task's summary line shows its goal, "spent/estimated sessions" (warm once over the estimate) and "done/total steps"; the Plan panel sets the goal and the estimate.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:
