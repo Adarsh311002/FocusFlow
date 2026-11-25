@@ -664,6 +664,13 @@ Requested by the owner (feature roadmap, Wave 1): note a distraction during a se
 - **WR4 The weekly review.** On the first signed-in page of each local week, a full-screen review (the shared ritual shell, like IN3): last week's focused time, sessions, intentions done and times stuck, last week's three with what got finished, then "this week's three" picked from open tasks or named new (created as tasks, not made current). "Not this week" or Esc skips. It comes before the daily intention, which waits for it; a brand-new user with no history (no session last week, no streak ever) is not asked. Remembered per user and week in `localStorage` only.
 - **WR5 Dashboard.** "This week's three" above the tasks, with what is done and a button to open the review again ("Plan your week" / "Change the three").
 
+### ST1–ST5 — Settings and profile (approved and implemented 2026-11-25, Wave 1)
+- **ST1 Display name.** `PATCH /me { displayName }`, trimmed, 1–50 characters (the sign-up rule). The email is not a setting.
+- **ST2 Forest companion.** `users.avatar_preset` (migration `0010`; CHECK: `monkey, sloth, toucan, frog, owl, butterfly, jaguar`, or NULL for the initial), shown as the header avatar. `UserView.avatarPreset` is optional so older fixtures parse. Uploaded pictures wait for object storage.
+- **ST3 Default session length.** `users.default_session_seconds` (60–14,400, default 1,500, whole minutes in the request); the start form opens at it (a preset, or the custom field).
+- **ST4 The page.** `/settings` (linked from the account menu): "You" (name, companion), "Focus" (default length: 15/25/50/90 or 1–240 minutes; daily goal, A2) and "This device" (theme and forest sounds, kept in the browser).
+- **ST5** Every change is one `PATCH /me` answered with the updated user; the client replaces its user with the answer.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:

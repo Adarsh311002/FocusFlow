@@ -30,7 +30,7 @@ All routes are under `/api/v1`. Status: **Architecture**, implementing the appro
 | Method & route | Request | Response | Rules |
 |---|---|---|---|
 | `GET /me` | — | `{ user }` | `UserView`: `id, email, emailVerified, displayName, avatarUrl, currentTaskId, dailyGoalSeconds, identities: ("google")[]` |
-| `PATCH /me` | `{ dailyGoalSeconds }` | `{ user }` | The user's own settings (A2). `dailyGoalSeconds` is an integer 300–43,200 (default 7,200). Strict body with at least one field; unknown keys or out-of-range values → `400 VALIDATION_FAILED`. |
+| `PATCH /me` | `{ dailyGoalSeconds?, displayName?, avatarPreset?, defaultSessionSeconds? }` | `{ user }` | The user's own settings (A2, ST1–ST3). `dailyGoalSeconds` 300–43,200 (default 7,200); `displayName` trimmed, 1–50; `avatarPreset` one of `monkey, sloth, toucan, frog, owl, butterfly, jaguar` or `null`; `defaultSessionSeconds` whole minutes 60–14,400 (default 1,500). Strict body with at least one field; unknown keys or out-of-range values → `400 VALIDATION_FAILED`. |
 | `PUT /me/current-task` | `{ taskId: TaskId \| null }` | `{ user }` | `null` clears it. Task must be the user's, not deleted (D38) and open: another user's, a deleted or a nonexistent task → `404 TASK_NOT_FOUND`; a completed task → `409 TASK_NOT_OPEN` (D43). Repeatable. |
 | `POST /me/identities/google` | `{ idToken }` | `201 { user }` | Explicit Google linking for a signed-in user (D1, D44; Phase 1b). `409 IDENTITY_ALREADY_LINKED` if that Google account belongs to another user. Repeating for an identity already linked to this user → `200`. |
 

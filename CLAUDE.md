@@ -356,6 +356,9 @@ Full text: `docs/decisions/decision-log.md`.
 ### Weekly review (WR1–WR5, approved 2026-11-25)
 - **WR1** `weekly_priorities` (migration `0009`): Monday `week_start`, positions 1–3, own tasks. **WR2** `GET /weekly-priorities?week=`, `PUT { week, taskIds ≤ 3 }` (new tasks must be open; deleted drop out). **WR3** The client's local Monday. **WR4** Full-screen weekly review before the daily intention (skipped for brand-new users; `localStorage`). **WR5** "This week's three" on the dashboard.
 
+### Settings (ST1–ST5, approved 2026-11-25)
+- `PATCH /me` also takes `displayName` (ST1), `avatarPreset` (ST2, a forest animal or `null`; migration `0010`) and `defaultSessionSeconds` (ST3, whole minutes 60–14,400; the start form opens at it). `/settings` (ST4) holds profile, focus defaults and this device's theme and sounds.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
