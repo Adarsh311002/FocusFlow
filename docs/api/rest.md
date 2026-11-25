@@ -72,6 +72,17 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 - Both review routes validate their query strictly: an unknown key, an instant the schema refuses (without an offset, finer than millisecond precision, or outside `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` — year 0, or year 10000 reached through an offset), `from` not earlier than `to` (history), `from` later than `to`, a range over 366 days or a date before 1970 (summary), a `limit` that is not an integer in 1–100, a cursor that does not decode or does not name one of the user's sessions, and a `tz` that is not an accepted time zone name all answer `400 VALIDATION_FAILED`.
 - **Phase 4B** implements start, current, pause, resume and stop (solo only). **Phase 5** implements history and summary (read-only, PostgreSQL only; V1–V8). `NOT_SOLO_SESSION` (Phase 8): pause, resume and stop on a room session answer `409 NOT_SOLO_SESSION`; `GET /focus-sessions/current` and the history return room sessions with `context.kind = "room"` (RF11).
 
+## Parked thoughts (PT1–PT5)
+
+| Method & route | Request | Response | Rules |
+|---|---|---|---|
+| `GET /parked-thoughts` | — | `{ thoughts }` | Every open thought of the caller, newest first. |
+| `POST /parked-thoughts` | `{ body, sessionId? }` | `201 { thought }` | Body trimmed, 1–200 characters. `sessionId` must be the caller's own session (404). At most 200 open thoughts (`409 THOUGHTS_FULL`). |
+| `POST /parked-thoughts/:thoughtId/task` | — | `201 { task }` | Creates an open task with the thought's text and deletes the thought, in one transaction; a retry is 404. |
+| `DELETE /parked-thoughts/:thoughtId` | — | `204` | Lets the thought go. |
+
+Every route requires a bearer token and is scoped to the caller; another user's or an unknown thought is `404 NOT_FOUND`.
+
 ## Rooms (D8, D9, D16) — implemented in Phase 6
 
 Decisions D8, D9, D10, D16, D20, D36 and M1–M13. Rooms, memberships and room settings are PostgreSQL; presence, knocks and chat are Redis and Socket.IO (`api/socket-events.md`). Every route requires a bearer token and is scoped to the authenticated user. A room that does not exist and a room the caller may not see answer the same (`404 ROOM_NOT_FOUND`, M4); the one deliberate exception is the preview that `by-code` gives anyone holding a code. `403 NOT_HOST` is only ever answered to a member.

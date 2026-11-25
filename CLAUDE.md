@@ -345,6 +345,11 @@ Full text: `docs/decisions/decision-log.md`.
 - **RI3** `room:focus:check-in { roomId, focusRunId, userId, outcome }` to the room; the note stays private; nothing stored for the room.
 - **RI4** "How the last run went" in the Focus together panel, from the page's last known participants and the check-in events (temporary, like chat).
 
+### Park a thought (PT1–PT5, approved 2026-11-25)
+- **PT1** Table `parked_thoughts` (migration `0007`): body 1–200, optional own `session_id`, user cascade.
+- **PT2** `GET/POST /parked-thoughts`; at most 200 open per user (`409 THOUGHTS_FULL`). **PT3** `POST /parked-thoughts/:id/task` deletes the thought and creates the task in one transaction (not made current). **PT4** `DELETE /parked-thoughts/:id` → 204. All owner-scoped 404.
+- **PT5** Web: a park field in running solo and room sessions; the ended-session notice lists that session's thoughts; the dashboard lists the rest.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**

@@ -643,6 +643,14 @@ Requested by the owner: saying what you work on in front of others is the room's
 - **RI3 `room:focus:check-in`.** `{ roomId, focusRunId, userId, outcome }` goes to `room:{roomId}` after a room session's check-in commits. The note never leaves its owner. A hint like the other room events; nothing about it is stored for the room.
 - **RI4 Who finished.** When a run ends, the "Focus together" panel shows "How the last run went": the run's last known participants on this page, each with their outcome as it arrives ("not checked in yet" until then). Kept in the room's live store like chat (at most 100 check-ins per room, a reload starts empty). A room participant checks in from the room's "session ended" notice, the same component as solo (CI6).
 
+### PT1–PT5 — Park a thought (approved and implemented 2026-11-25, Wave 1)
+Requested by the owner (feature roadmap, Wave 1): note a distraction during a session without leaving it.
+- **PT1 Storage.** Table `parked_thoughts` (migration `0007`): `id`, `user_id` (cascade), optional `session_id` (plain FK, P1), `body` 1–200 characters (CHECK, the task-title limit, so any thought can become a task unchanged), `created_at`; index `(user_id, id DESC)`. Durable user data, so PostgreSQL; no Redis, no socket events.
+- **PT2 API.** `GET /parked-thoughts` (every open thought, newest first), `POST /parked-thoughts { body, sessionId? }` → `201 { thought }` (body trimmed; the session must be the caller's own, else 404; at most 200 open thoughts → `409 THOUGHTS_FULL`, checked under the user's row lock).
+- **PT3 Turn into a task.** `POST /parked-thoughts/:thoughtId/task` → `201 { task }`: the thought is deleted and an open task with its text created in one transaction, so a retry after a lost answer is 404, never a second task. The task is not made current.
+- **PT4 Let it go.** `DELETE /parked-thoughts/:thoughtId` → `204`; no history is kept. Another user's or an unknown thought is 404 on every route.
+- **PT5 Web.** A running session (solo panel and the room's Focus together panel) has a "Park it and keep going" field (Enter saves and clears; a count of what is parked for after the session). When the session ends, its thoughts are listed under the check-in with "Make it a task" and "Let it go"; every other open thought is listed under the dashboard's tasks.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:
