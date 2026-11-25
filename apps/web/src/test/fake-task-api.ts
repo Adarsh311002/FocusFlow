@@ -28,6 +28,8 @@ type FakeTask = {
 export function createFakeTaskApi(options: { pageSize?: number } = {}) {
   const tasks: FakeTask[] = [];
   let currentTaskId: string | null = null;
+  /** Parked thoughts (PT2), newest last; the list answers newest first. */
+  const thoughts: { id: string; body: string; sessionId: string | null; createdAt: string }[] = [];
   const now = () => new Date().toISOString();
 
   const user = () => ({ ...userBody, currentTaskId });
@@ -93,6 +95,31 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
       return jsonResponse(200, { user: user() });
     }
 
+    if (path === '/parked-thoughts' && request.method === 'GET') {
+      return jsonResponse(200, { thoughts: [...thoughts].reverse() });
+    }
+    if (path === '/parked-thoughts' && request.method === 'POST') {
+      const { body, sessionId } = parsedBody(request);
+      const thought = {
+        id: crypto.randomUUID(),
+        body: String(body).trim(),
+        sessionId: typeof sessionId === 'string' ? sessionId : null,
+        createdAt: now(),
+      };
+      thoughts.push(thought);
+      return jsonResponse(201, { thought });
+    }
+    if (segments[0] === 'parked-thoughts') {
+      const index = thoughts.findIndex((thought) => thought.id === segments[1]);
+      const [thought] = index < 0 ? [] : thoughts.splice(index, 1);
+      if (thought === undefined) {
+        return errorResponse(404, 'NOT_FOUND', 'Parked thought not found.');
+      }
+      return segments[2] === 'task'
+        ? jsonResponse(201, { task: view(addTask(thought.body)) })
+        : noContentResponse();
+    }
+
     if (path === taskPaths.collection && request.method === 'GET') {
       const status = url.searchParams.get('status') ?? 'open';
       const limit = Number(url.searchParams.get('limit') ?? options.pageSize ?? 50);
@@ -156,6 +183,7 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
     handle,
     addTask,
     tasks,
+    thoughts,
     currentTaskId: () => currentTaskId,
     setCurrentTaskId: (id: string | null) => {
       currentTaskId = id;

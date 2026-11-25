@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 
+import { ParkedThoughts } from '../thoughts/thoughts';
 import { focusOutcomeMessage } from './focus-outcome';
 import { useDismissLastEnded, useLastEndedFocusSession } from './focus-queries';
 import { SessionCheckIn } from './session-check-in';
@@ -18,6 +19,7 @@ export function EndedSession() {
         {focusOutcomeMessage(session)}
       </p>
       <SessionCheckIn session={session} />
+      <ParkedThoughts sessionId={session.id} title="Parked during this session" />
       <div className="flex items-center gap-3 text-sm">
         <Link to="/review" className="text-focus underline underline-offset-4">
           View in review

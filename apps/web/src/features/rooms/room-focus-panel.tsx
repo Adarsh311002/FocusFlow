@@ -12,6 +12,7 @@ import { formatClock, wholeMinutes } from '../focus/focus-time';
 import { SessionCheckIn } from '../focus/session-check-in';
 import { useRealtimeStatus } from '../realtime/realtime-provider';
 import { useTask, useTaskList } from '../tasks/task-queries';
+import { ParkedThoughts, ParkThought } from '../thoughts/thoughts';
 import { roomFocusErrorMessage } from './room-focus-messages';
 import { RoomFocusParticipants } from './room-focus-participants';
 import { useRoomFocusActions, useRoomFocusState } from './room-focus-queries';
@@ -310,6 +311,8 @@ export function RoomFocusPanel({
 
       <div ref={rootRef} aria-busy={busy} className="space-y-3">
         {action}
+        {/* PT5: a stray thought during a room session is parked too. */}
+        {mySession !== null && <ParkThought sessionId={mySession.id} />}
         {busy && (
           <p role="status" className="text-sm text-muted">
             Sending to the server…
@@ -326,6 +329,7 @@ export function RoomFocusPanel({
         <div role="status" className="space-y-2 rounded border border-line bg-surface p-3">
           <p className="text-sm">{focusOutcomeMessage(outcome)}</p>
           <SessionCheckIn session={outcome} />
+          <ParkedThoughts sessionId={outcome.id} title="Parked during this session" />
           <button
             type="button"
             onClick={() => {
