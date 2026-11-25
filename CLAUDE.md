@@ -330,6 +330,21 @@ Full text: `docs/decisions/decision-log.md`.
 - **IN5** Dashboard and Review draw `GET /focus-sessions/insights` (goal ring, streak, week vs last week, completion, goal line, top tasks, heatmap, room share; 7/30/90 days on Review).
 - **IN6** Hosts choose "Yes, remove" or "Remove and block" and can unblock from a "Blocked" list.
 
+### Session check-in (CI1–CI6, approved 2026-11-25)
+Full text: `docs/decisions/decision-log.md`.
+- **CI1** `focus_sessions.check_in_outcome` (`done`/`progress`/`stuck`), `check_in_note` (≤ 280) and `checked_in_at` (migration `0006`, CHECKs; ended sessions only). Never changes status or focused time.
+- **CI2** `PUT /focus-sessions/:sessionId/check-in { outcome, note? }` → `200 { session }`; owner-scoped 404; in progress → `409 SESSION_NOT_ENDED`; latest wins. Ended views carry `checkIn | null`.
+- **CI3** `done` completes the session's live open task and clears it as current (D43), same transaction; other outcomes never touch the task.
+- **CI4** Published as transition `checked_in`: `focus:session:updated` to the user, `room:focus:check-in` to the room for room sessions.
+- **CI5** Insights add `checkIns: { withIntention, done, progress, stuck, unrecorded }` (ended sessions with a task).
+- **CI6** Web: the "session ended" notice asks "Did you finish …?"; "Got stuck" offers a smaller next step (becomes current); Review history shows it; "Intentions done" on the dashboard and Review.
+
+### Room intentions (RI1–RI4, approved 2026-11-25)
+- **RI1** Opt-in `shareIntention` (needs `taskId`), stored as `focus_sessions.share_intention`; the web join form's checkbox is ticked by default.
+- **RI2** Participants carry `intention: string | null` read from PostgreSQL (shared, own, not deleted); the Redis ledger still stores no titles (RF14).
+- **RI3** `room:focus:check-in { roomId, focusRunId, userId, outcome }` to the room; the note stays private; nothing stored for the room.
+- **RI4** "How the last run went" in the Focus together panel, from the page's last known participants and the check-in events (temporary, like chat).
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**
