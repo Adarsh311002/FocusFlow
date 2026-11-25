@@ -6,6 +6,7 @@ import {
   expectNoErrors,
   findRoom,
   member,
+  PAGE_LOAD_HEADROOM_MS,
   type Person,
   sendChat,
   signUp,
@@ -133,7 +134,7 @@ test('journey: idle, start, pause, resume, reset, phase switch; the member only 
 test('automatic transitions: focus ends into an idle short break (never auto-started), then the break ends into Focus; a member offline across the end catches up', async ({
   browser,
 }, testInfo) => {
-  test.setTimeout(240_000);
+  test.setTimeout(240_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guest } = await roomWithMember(browser);
   try {
     await start(host.page);

@@ -14,12 +14,17 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 90_000,
+  // 90 s of test time plus PAGE_LOAD_HEADROOM_MS (support/people.ts) for dev-server page loads.
+  timeout: 150_000,
   expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
     baseURL: WEB_ORIGIN,
     channel: 'chrome',
+    // The rooms are under test, not the decorative 3D forest. Headless Chrome draws WebGL in
+    // software, and several people per test each drawing the tree starve the CPU until steps
+    // time out. With reduced motion the app skips the 3D scene (a real, supported mode).
+    reducedMotion: 'reduce',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
