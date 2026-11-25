@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -437,5 +438,50 @@ export const parkedThoughts = pgTable(
     check('ck_parked_thoughts_body_length', sql`char_length(${table.body}) BETWEEN 1 AND 200`),
     // The user's list, newest first (UUIDv7 ids sort by creation), and the cascade.
     index('ix_parked_thoughts_user_id_id').on(table.userId, table.id.desc()),
+  ],
+);
+
+// Weekly priorities (WR1): the user's top three tasks for one week, chosen in the weekly
+// review. `week_start` is the Monday of the user's local week (the client's time zone, WR3).
+// The task must be the user's own (composite key); no ON DELETE action (P1: tasks are
+// soft-deleted and disappear only with their user, whose rows cascade away first here).
+export const weeklyPriorities = pgTable(
+  'weekly_priorities',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    weekStart: date({ mode: 'string' }).notNull(),
+    position: smallint().notNull(),
+    taskId: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_weekly_priorities', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_weekly_priorities_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_weekly_priorities_task_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }),
+    check('ck_weekly_priorities_position', sql`${table.position} BETWEEN 1 AND 3`),
+    check(
+      'ck_weekly_priorities_week_start_monday',
+      sql`extract(isodow from ${table.weekStart}) = 1`,
+    ),
+    // One task per slot and each task once per week; the first also serves the reads.
+    uniqueIndex('uq_weekly_priorities_user_week_position').on(
+      table.userId,
+      table.weekStart,
+      table.position,
+    ),
+    uniqueIndex('uq_weekly_priorities_user_week_task').on(
+      table.userId,
+      table.weekStart,
+      table.taskId,
+    ),
   ],
 );

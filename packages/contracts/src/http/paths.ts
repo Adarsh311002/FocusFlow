@@ -29,6 +29,9 @@ export const mePaths = {
   currentTask: '/me/current-task',
 } as const;
 
+/** Weekly priorities (WR2). */
+export const weeklyPriorityPaths = { collection: '/weekly-priorities' } as const;
+
 /** Parked thoughts (PT2). */
 export const parkedThoughtPaths = {
   collection: '/parked-thoughts',

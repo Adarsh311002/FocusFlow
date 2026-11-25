@@ -21,6 +21,7 @@ import type { RoomsDeps } from '../../modules/rooms/service.js';
 import { createSystemRouter } from '../../modules/system/http.js';
 import { createTasksRouter } from '../../modules/tasks/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
+import { createWeeklyPrioritiesRouter } from '../../modules/weekly-priorities/http.js';
 import type { AppConfig } from '../config.js';
 import { getRequestId } from '../request-context.js';
 import { createErrorHandler, notFoundHandler } from './errors.js';
@@ -89,6 +90,10 @@ export const createApp = ({
   app.use(
     API_BASE_PATH,
     createParkedThoughtsRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createWeeklyPrioritiesRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
   );
   app.use(
     API_BASE_PATH,

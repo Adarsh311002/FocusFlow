@@ -10,6 +10,7 @@ export * from './http/room-focus';
 export * from './http/rooms';
 export * from './http/tasks';
 export * from './http/user';
+export * from './http/weekly-priorities';
 export * from './ids';
 export * from './jobs/focus-session';
 export * from './jobs/maintenance';

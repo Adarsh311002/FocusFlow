@@ -64,6 +64,13 @@
       "when": 1795599445591,
       "tag": "0008_check_in_quality",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795600381545,
+      "tag": "0009_weekly_priorities",
+      "breakpoints": true
     }
   ]
 }
