@@ -125,4 +125,4 @@ Fixed-window counters in Redis (`ff:ratelimit:{action}:{subject}`); a refused re
 | Room focus opt-in/out (Phase 8) | user | 10 / 10 s | `503` |
 | `PUT /rooms/:roomId/blocks/:userId` (remove and block, B7) | user (host) | 30 / minute | `503` |
 
-`HTTP_RATE_LIMIT=off` disables the Phase 9 limits for tests and the e2e stack; production configuration refuses it. Socket limits (chat, knock, join, timer) are unchanged. Still to do in Phase 9: a per-user socket cap (R4), tuning from load tests.
+`HTTP_RATE_LIMIT=off` disables the Phase 9 limits for tests and the e2e stack; production configuration refuses it. Socket limits (chat, knock, join, timer) are unchanged. Socket connections (Phase 9 milestone 2, S1–S3): at most 60 connection attempts per client address per minute (`RATE_LIMITED`, counted before the token check, also switched by `HTTP_RATE_LIMIT`) and at most `SOCKET_MAX_PER_USER` (default 20) live sockets per user (`TOO_MANY_CONNECTIONS`, R4); see `api/socket-events.md`. Still to do in Phase 9: tuning from load tests.

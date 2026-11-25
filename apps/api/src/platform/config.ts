@@ -109,6 +109,8 @@ const configSchema = z
 
     // HTTP rate limiting (Phase 9). Always on in production; tests and the e2e stack turn it off.
     HTTP_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
+    // Live sockets per user (R4, S2): every tab and device holds one.
+    SOCKET_MAX_PER_USER: z.coerce.number().int().min(1).max(1_000).default(20),
 
     // Rooms (Phase 6, M6, M7). How long a knock waits for the host, and the safety limit
     // of people present in one room at once (D12).

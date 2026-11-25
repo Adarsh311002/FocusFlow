@@ -37,6 +37,7 @@ describe('loadConfig', () => {
       RECONCILER_INTERVAL_MS: 30_000,
       FOCUS_GRACE_MS: 60_000,
       HTTP_RATE_LIMIT: 'on',
+      SOCKET_MAX_PER_USER: 20,
       KNOCK_TTL_MS: 120_000,
       ROOM_MAX_PRESENT: 50,
     });

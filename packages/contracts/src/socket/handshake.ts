@@ -18,7 +18,15 @@ export type HandshakeAuth = z.infer<typeof handshakeAuthSchema>;
  * - `INTERNAL`: a temporary server problem (for example the revocation check could not be
  *   completed) → retry later; the session is not ended.
  */
-export const connectErrorCodeSchema = z.enum(['UNAUTHENTICATED', 'SESSION_REVOKED', 'INTERNAL']);
+export const connectErrorCodeSchema = z.enum([
+  'UNAUTHENTICATED',
+  'SESSION_REVOKED',
+  'INTERNAL',
+  // Phase 9 (S1, S2): too many connection attempts from one address, or too many live
+  // sockets for one user. Temporary: the client retries with backoff.
+  'RATE_LIMITED',
+  'TOO_MANY_CONNECTIONS',
+]);
 export type ConnectErrorCode = z.infer<typeof connectErrorCodeSchema>;
 
 export const connectErrorDataSchema = z.object({ code: connectErrorCodeSchema });

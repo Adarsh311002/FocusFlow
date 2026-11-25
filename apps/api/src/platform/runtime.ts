@@ -57,6 +57,7 @@ import {
   createFocusChangeAnnouncer,
 } from '../modules/room-realtime/focus-announcers.js';
 import { createRoomPresenceCheck } from '../modules/room-realtime/focus-hooks.js';
+import { createRateLimiter } from '../modules/room-realtime/limiter.js';
 import { createRoomRealtime, type RoomRealtime } from '../modules/room-realtime/module.js';
 import { attachTimerFollowUps } from '../modules/room-realtime/timer-follow-ups.js';
 import {
@@ -373,6 +374,7 @@ export const createRuntime = async (
     pubClient,
     subClient,
     onConnect: onSocketConnect,
+    limiter: createRateLimiter(redis),
   });
 
   const presence = createPresence({

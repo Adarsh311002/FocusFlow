@@ -29,6 +29,13 @@ export const ROOM_FOCUS_RATE: RateRule = { action: 'room-focus', limit: 10, wind
 
 export const TIMER_RATE: RateRule = { action: 'timer', limit: 20, windowMs: 10_000 };
 
+/** Socket.IO connection attempts per client address (S1): reconnect storms stay far inside. */
+export const SOCKET_CONNECT_RATE: RateRule = {
+  action: 'socket-connect',
+  limit: 60,
+  windowMs: 60_000,
+};
+
 /** Every HTTP request of one client address, outside the health checks (Phase 9). */
 export const HTTP_GLOBAL_RATE: RateRule = { action: 'http', limit: 600, windowMs: 60_000 };
 /** Login attempts per client address: 10 per minute (credential guessing). */

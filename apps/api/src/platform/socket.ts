@@ -9,8 +9,13 @@ import { Server } from 'socket.io';
 
 import type { AuthDeps } from '../modules/auth/service.js';
 import { handleConnection } from '../modules/realtime/connection.js';
+import {
+  createConnectRateGuard,
+  createSocketCapGuard,
+} from '../modules/realtime/connection-guards.js';
 import { createHandshakeMiddleware } from '../modules/realtime/handshake.js';
 import type { AppServer, AppSocket } from '../modules/realtime/types.js';
+import type { RateLimiter } from '../modules/room-realtime/limiter.js';
 import type { AppConfig } from './config.js';
 
 /** Same limit as the REST JSON body: socket payloads in this app are small. */
@@ -31,6 +36,8 @@ type SocketServerDeps = {
   readonly pubClient: Redis;
   readonly subClient: Redis;
   readonly onConnect: readonly ((socket: AppSocket) => void)[];
+  /** Phase 9 S1/S2: the connection-rate counter. */
+  readonly limiter: RateLimiter;
 };
 
 /**
@@ -46,6 +53,7 @@ export const createSocketServer = ({
   pubClient,
   subClient,
   onConnect,
+  limiter,
 }: SocketServerDeps): AppServer => {
   const io: AppServer = new Server(httpServer, {
     path: SOCKET_IO_PATH,
@@ -56,7 +64,18 @@ export const createSocketServer = ({
     adapter: createAdapter(pubClient, subClient, { key: socketIoChannelKey(config) }),
   });
 
+  const guards = {
+    limiter,
+    redis: authDeps.redis,
+    logger,
+    rateLimitEnabled: config.HTTP_RATE_LIMIT === 'on',
+    maxSocketsPerUser: config.SOCKET_MAX_PER_USER,
+    behindProxy: config.APP_ENV === 'production',
+  };
+  // S1, then the token (R3), then S2: a flood is refused before any token is verified.
+  io.use(createConnectRateGuard(guards));
   io.use(createHandshakeMiddleware(authDeps));
+  io.use(createSocketCapGuard(guards));
   io.on('connection', (socket) => {
     handleConnection(socket, { redis: authDeps.redis, logger, onConnect });
   });
