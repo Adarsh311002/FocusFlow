@@ -47,6 +47,7 @@ export type FakeSession = {
 export type FakeCheckIn = {
   outcome: 'done' | 'progress' | 'stuck';
   note: string | null;
+  quality: number | null;
   recordedAt: string;
 };
 
@@ -328,7 +329,12 @@ export function createFakeFocusSessionApi(
     }
     const next = {
       ...session,
-      checkIn: { ...parsed.data, recordedAt: new Date(now()).toISOString() },
+      checkIn: {
+        outcome: parsed.data.outcome,
+        note: parsed.data.note,
+        quality: parsed.data.quality ?? null,
+        recordedAt: new Date(now()).toISOString(),
+      },
     };
     sessions[sessions.indexOf(session)] = next;
     return jsonResponse(200, sessionBody(next));
@@ -489,6 +495,11 @@ export function emptyInsights(query: { from: string; to: string; tz: string }) {
     otherTasks: { ...bucket, taskCount: 0 },
     noTask: bucket,
     split: { solo: bucket, room: bucket },
+    quality: {
+      ratedCount: 0,
+      average: null,
+      byHour: Array.from({ length: 24 }, () => ({ ratedCount: 0, average: null })),
+    },
     checkIns: { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 },
     comparison: {
       previousFrom: query.from,

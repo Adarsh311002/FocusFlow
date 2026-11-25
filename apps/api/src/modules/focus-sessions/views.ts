@@ -33,6 +33,7 @@ export const toFocusSessionView = (
       ? null
       : {
           outcome: row.checkInOutcome,
+          quality: row.checkInQuality,
           note: row.checkInNote,
           recordedAt: row.checkedInAt.toISOString(),
         };

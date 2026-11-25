@@ -138,13 +138,18 @@ export const saveSession = async (
 export const saveCheckIn = async (
   tx: Tx,
   sessionId: string,
-  checkIn: { readonly outcome: string; readonly note: string | null },
+  checkIn: {
+    readonly outcome: string;
+    readonly note: string | null;
+    readonly quality: number | null;
+  },
 ): Promise<FocusSessionRow> => {
   const [row] = await tx
     .update(focusSessions)
     .set({
       checkInOutcome: checkIn.outcome,
       checkInNote: checkIn.note,
+      checkInQuality: checkIn.quality,
       checkedInAt: sql`date_trunc('milliseconds', clock_timestamp())`,
     })
     .where(eq(focusSessions.id, sessionId))

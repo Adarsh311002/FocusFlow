@@ -212,6 +212,17 @@ describe('PUT /focus-sessions/:sessionId/check-in', () => {
     );
   });
 
+  it('stores an optional quality rating and refuses one outside 1–5 (FQ1)', async () => {
+    const user = await connectedUser();
+    const session = await endedSession(user);
+    const rated = sessionOf(await checkIn(user, session.id, { outcome: 'done', quality: 4 }));
+    expect(rated.status !== 'in_progress' && rated.checkIn?.quality).toBe(4);
+    const unrated = sessionOf(await checkIn(user, session.id, { outcome: 'done' }));
+    expect(unrated.status !== 'in_progress' && unrated.checkIn?.quality).toBeNull();
+    const refused = await checkIn(user, session.id, { outcome: 'done', quality: 9 });
+    expect(refused.status).toBe(400);
+  });
+
   it('completes the open task on "done" and clears it as the current task (CI3, D43)', async () => {
     const user = await connectedUser();
     const taskId = await createTask(user);

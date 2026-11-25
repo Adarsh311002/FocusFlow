@@ -126,6 +126,17 @@ export const focusSessionInsightsResponseSchema = z.object({
    * their check-in; `unrecorded` were never checked in. The four counts sum to
    * `withIntention`.
    */
+  /**
+   * FQ3: how deep the user rated their ended sessions of the range (FQ1). `byHour` has 24
+   * entries, local start hour 0–23; `average` is `null` where nothing was rated.
+   */
+  quality: z.object({
+    ratedCount: countSchema,
+    average: z.number().min(1).max(5).nullable(),
+    byHour: z
+      .array(z.object({ ratedCount: countSchema, average: z.number().min(1).max(5).nullable() }))
+      .length(24),
+  }),
   checkIns: z.object({
     withIntention: countSchema,
     done: countSchema,

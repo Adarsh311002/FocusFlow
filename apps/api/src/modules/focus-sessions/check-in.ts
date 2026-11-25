@@ -13,6 +13,8 @@ export type CheckInInput = {
   readonly outcome: CheckInOutcome;
   /** Already trimmed by the contract; `null` for no note. */
   readonly note: string | null;
+  /** FQ1: 1–5, or `undefined` when not rated. */
+  readonly quality?: number | undefined;
 };
 
 const sessionNotFound = (): AppError => new AppError('NOT_FOUND', 404, 'Focus session not found.');
@@ -48,7 +50,11 @@ export const checkInFocusSession = async (
     if (row.status === 'in_progress') {
       throw sessionNotEnded();
     }
-    const saved = await saveCheckIn(tx, row.id, input);
+    const saved = await saveCheckIn(tx, row.id, {
+      outcome: input.outcome,
+      note: input.note,
+      quality: input.quality ?? null,
+    });
     if (input.outcome === 'done' && saved.taskId !== null) {
       const completed = await markTaskCompleted(tx, userId, saved.taskId);
       if (completed !== undefined) {

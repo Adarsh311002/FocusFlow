@@ -122,7 +122,7 @@ describe('focusSessionViewSchema', () => {
         status: 'completed',
         focusedSeconds: 1_500,
         endedAt: LATER,
-        checkIn: { outcome: 'done', note: 'Shipped it', recordedAt: LATER },
+        checkIn: { outcome: 'done', note: 'Shipped it', quality: 4, recordedAt: LATER },
       }).success,
     ).toBe(true);
     expect(
@@ -190,6 +190,13 @@ describe('focusSessionViewSchema', () => {
       note: null,
     });
     expect(checkInFocusSessionRequestSchema.parse({ outcome: 'progress' }).note).toBeNull();
+    // FQ1: an optional whole rating from 1 to 5.
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'done', quality: 5 }).quality).toBe(5);
+    for (const quality of [0, 6, 2.5]) {
+      expect(checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', quality }).success).toBe(
+        false,
+      );
+    }
     expect(
       checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', note: 'x'.repeat(281) })
         .success,

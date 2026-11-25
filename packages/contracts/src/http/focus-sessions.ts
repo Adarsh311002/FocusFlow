@@ -67,8 +67,13 @@ export type CheckInOutcome = z.infer<typeof checkInOutcomeSchema>;
 /** Matches the `ck_focus_sessions_check_in_note` CHECK constraint. */
 export const CHECK_IN_NOTE_MAX_LENGTH = 280;
 
+/** FQ1: "how deep was it?", 1 (scattered) to 5 (deep). */
+export const checkInQualitySchema = z.number().int().min(1).max(5);
+
 export const focusSessionCheckInSchema = z.object({
   outcome: checkInOutcomeSchema,
+  /** FQ1: `null` when the user did not rate it. */
+  quality: checkInQualitySchema.nullable(),
   note: z.string().min(1).max(CHECK_IN_NOTE_MAX_LENGTH).nullable(),
   recordedAt: z.iso.datetime(),
 });
@@ -119,6 +124,8 @@ export type FocusSessionView = z.infer<typeof focusSessionViewSchema>;
  */
 export const checkInFocusSessionRequestSchema = z.strictObject({
   outcome: checkInOutcomeSchema,
+  /** FQ1: optional; left out means not rated. */
+  quality: checkInQualitySchema.optional(),
   note: z
     .string()
     .trim()

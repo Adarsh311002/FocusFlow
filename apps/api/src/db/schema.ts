@@ -8,6 +8,7 @@ import {
   pgTable,
   type PgTableExtraConfigValue,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
@@ -184,6 +185,8 @@ export const focusSessions = pgTable(
     checkInOutcome: text(),
     checkInNote: text(),
     checkedInAt: timestamp({ withTimezone: true }),
+    // FQ1: "how deep was it?", 1–5, optional part of the check-in.
+    checkInQuality: smallint(),
     // RI1: the participant chose to show their task's title to the room. Room sessions with
     // a task only; the title itself is read from `tasks` when the list is built (RF14).
     shareIntention: boolean().notNull().default(false),
@@ -280,6 +283,11 @@ export const focusSessions = pgTable(
     check(
       'ck_focus_sessions_check_in_ended',
       sql`${table.checkInOutcome} IS NULL OR ${table.status} <> 'in_progress'`,
+    ),
+    // FQ1.
+    check(
+      'ck_focus_sessions_check_in_quality',
+      sql`${table.checkInQuality} IS NULL OR (${table.checkInOutcome} IS NOT NULL AND ${table.checkInQuality} BETWEEN 1 AND 5)`,
     ),
     // RI1.
     check(

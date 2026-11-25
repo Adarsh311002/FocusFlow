@@ -19,6 +19,8 @@ const minute = (iso: string, extra: Partial<InsightMinute> = {}): InsightMinute 
   doneCount: 0,
   progressCount: 0,
   stuckCount: 0,
+  qualitySum: 0,
+  qualityCount: 0,
   ...extra,
 });
 
@@ -325,5 +327,21 @@ describe('buildInsights', () => {
       stuck: 0,
       unrecorded: 0,
     });
+  });
+
+  it('averages quality ratings overall and per local start hour (FQ3)', async () => {
+    const result = await run({ from: '2025-06-30', to: '2025-06-30', tz: 'Asia/Kolkata' }, [
+      // 03:30 UTC is 09:00 in Kolkata: two ratings, 5 and 4.
+      minute('2025-06-30T03:30:00Z', { qualitySum: 9, qualityCount: 2 }),
+      // 09:30 UTC is 15:00: one rating of 2.
+      minute('2025-06-30T09:30:00Z', { qualitySum: 2, qualityCount: 1 }),
+      // Unrated.
+      minute('2025-06-30T10:30:00Z'),
+    ]);
+    expect(result.quality.ratedCount).toBe(3);
+    expect(result.quality.average).toBe(3.67);
+    expect(result.quality.byHour[9]).toEqual({ ratedCount: 2, average: 4.5 });
+    expect(result.quality.byHour[15]).toEqual({ ratedCount: 1, average: 2 });
+    expect(result.quality.byHour[16]).toEqual({ ratedCount: 0, average: null });
   });
 });

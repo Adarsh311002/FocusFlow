@@ -195,6 +195,7 @@ describe('focus_sessions: valid rows', () => {
       'check_in_note',
       'checked_in_at',
       'share_intention',
+      'check_in_quality',
     ]);
   });
 });

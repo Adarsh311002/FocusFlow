@@ -140,6 +140,9 @@ export type InsightMinute = {
   readonly doneCount: number;
   readonly progressCount: number;
   readonly stuckCount: number;
+  /** FQ3: the sum and number of quality ratings (FQ1) in this group. */
+  readonly qualitySum: number;
+  readonly qualityCount: number;
 };
 
 /**
@@ -179,6 +182,8 @@ export const sumEndedSessionsByMinuteDetailed = async (
       stuckCount: sql`count(*) FILTER (WHERE ${focusSessions.checkInOutcome} = 'stuck')`.mapWith(
         Number,
       ),
+      qualitySum: sql`coalesce(sum(${focusSessions.checkInQuality}), 0)`.mapWith(Number),
+      qualityCount: sql`count(${focusSessions.checkInQuality})`.mapWith(Number),
     })
     .from(focusSessions)
     .where(

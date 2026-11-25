@@ -126,6 +126,10 @@ const toBucket = (counters: Counters): InsightsBucket => ({
   totalFocusedSeconds: counters.totalFocusedSeconds,
 });
 
+/** FQ3: a rating average to 2 decimals, or `null` with nothing rated. */
+const averageOf = (sum: number, count: number): number | null =>
+  count === 0 ? null : Math.round((sum / count) * 100) / 100;
+
 /** Rounds a ratio to 4 decimals so the JSON stays short and stable. */
 const ratio = (value: number): number => Math.round(value * 10_000) / 10_000;
 
@@ -172,6 +176,8 @@ export const buildInsights = async (
   const current = emptyCounters();
   const before = emptyCounters();
   const checkIns = { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 };
+  // FQ3: quality sums per local start hour, and overall.
+  const qualityHours = Array.from({ length: 24 }, () => ({ sum: 0, count: 0 }));
 
   for (const minute of input.minutes) {
     const local = localOf(minute.minuteStartMs);
@@ -186,6 +192,12 @@ export const buildInsights = async (
     addMinute(day, minute);
     addMinute(current, minute);
     addMinute(minute.isRoom ? room : solo, minute);
+
+    const hour = qualityHours[local.hour];
+    if (hour !== undefined) {
+      hour.sum += minute.qualitySum;
+      hour.count += minute.qualityCount;
+    }
 
     const cell = cells[local.weekday * 24 + local.hour];
     if (cell !== undefined) {
@@ -281,6 +293,17 @@ export const buildInsights = async (
     otherTasks,
     noTask: toBucket(noTask),
     split: { solo: toBucket(solo), room: toBucket(room) },
+    quality: {
+      ratedCount: qualityHours.reduce((total, hour) => total + hour.count, 0),
+      average: averageOf(
+        qualityHours.reduce((total, hour) => total + hour.sum, 0),
+        qualityHours.reduce((total, hour) => total + hour.count, 0),
+      ),
+      byHour: qualityHours.map((hour) => ({
+        ratedCount: hour.count,
+        average: averageOf(hour.sum, hour.count),
+      })),
+    },
     checkIns,
     comparison: {
       previousFrom: previous.from,
