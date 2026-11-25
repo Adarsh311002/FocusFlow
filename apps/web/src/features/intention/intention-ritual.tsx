@@ -2,16 +2,17 @@ import { TASK_TITLE_MAX_LENGTH } from '@focus-flow/contracts';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   createContext,
-  type KeyboardEvent,
   type ReactNode,
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
 import { buttonClass } from '../../ui/primitives';
+import { RitualShell } from '../../ui/ritual-shell';
 import { useAuth } from '../auth/auth-context';
 import { useTask } from '../tasks/task-queries';
 import {
@@ -30,11 +31,32 @@ import {
    AppProviders. Page tests build their own providers and so never meet it unless they ask
    for it, which keeps them about the page they test. */
 
-const PromptContext = createContext(false);
+type PromptState = {
+  readonly enabled: boolean;
+  /** The weekly review (WR4) is due or deciding: the daily intention waits for it. */
+  readonly weeklyBlocking: boolean;
+  readonly setWeeklyBlocking: (blocking: boolean) => void;
+};
 
-/** Turns the daily intention ritual on for everything inside it. */
+const PromptContext = createContext<PromptState>({
+  enabled: false,
+  weeklyBlocking: false,
+  setWeeklyBlocking: () => undefined,
+});
+
+/** Turns the rituals (daily intention, weekly review) on for everything inside it. */
 export function IntentionPromptProvider({ children }: { readonly children: ReactNode }) {
-  return <PromptContext value>{children}</PromptContext>;
+  const [weeklyBlocking, setWeeklyBlocking] = useState(false);
+  const value = useMemo(
+    () => ({ enabled: true, weeklyBlocking, setWeeklyBlocking }),
+    [weeklyBlocking],
+  );
+  return <PromptContext value={value}>{children}</PromptContext>;
+}
+
+/** Whether the rituals are on here, and the weekly review's hold on the daily one. */
+export function usePromptState(): PromptState {
+  return useContext(PromptContext);
 }
 
 const GOAL_HOURS = [1, 2, 3, 4, 6] as const;
@@ -47,17 +69,9 @@ function hoursLabel(hours: number): string {
   return hours === 1 ? '1 hour' : `${String(hours)} hours`;
 }
 
-function focusableIn(root: HTMLElement): HTMLElement[] {
-  return [
-    ...root.querySelectorAll<HTMLElement>(
-      'input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ];
-}
-
 /** Shows the ritual once per user and local day, after sign-in, on any signed-in page. */
 export function DailyIntentionRitual() {
-  const enabled = useContext(PromptContext);
+  const { enabled, weeklyBlocking } = useContext(PromptContext);
   const { status, user } = useAuth();
   // Users this mounted shell has already asked (answered or skipped) during this visit.
   const [handled, setHandled] = useState<readonly string[]>([]);
@@ -74,6 +88,7 @@ export function DailyIntentionRitual() {
 
   const due =
     enabled &&
+    !weeklyBlocking &&
     ready &&
     status === 'authenticated' &&
     user !== null &&
@@ -105,7 +120,6 @@ function RitualDialog({ onDone }: { readonly onDone: () => void }) {
   const [goalHours, setGoalHours] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
-  const dialog = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const hintId = useId();
@@ -113,19 +127,6 @@ function RitualDialog({ onDone }: { readonly onDone: () => void }) {
   const pending = adopt.isPending || setGoal.isPending;
   const chosenHours = goalHours ?? currentGoal / 3600;
   const keepTitle = currentTask.data?.status === 'open' ? currentTask.data.title : null;
-
-  // Move focus into the ritual, stop the page behind it from scrolling, and give focus back
-  // to wherever it was when the ritual closes.
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    input.current?.focus();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, []);
 
   function skip(): void {
     rememberDailyIntention(userId, 'skipped');
@@ -155,52 +156,13 @@ function RitualDialog({ onDone }: { readonly onDone: () => void }) {
     }
   }
 
-  /** Esc skips; Tab stays inside the ritual while it is open. */
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.key === 'Escape' && !pending && confirmation === null) {
-      event.preventDefault();
-      skip();
-      return;
-    }
-    if (event.key !== 'Tab' || dialog.current === null) {
-      return;
-    }
-    const items = focusableIn(dialog.current);
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (first === undefined || last === undefined) {
-      return;
-    }
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
   return (
-    <motion.div
-      ref={dialog}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      aria-describedby={hintId}
-      onKeyDown={onKeyDown}
-      className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto px-6 py-16"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0, transition: { duration: 0.8 } }}
-      transition={{ duration: 0.9, ease: EASE }}
+    <RitualShell
+      titleId={titleId}
+      describedById={hintId}
+      initialFocus={input}
+      onEscape={pending || confirmation !== null ? null : skip}
     >
-      {/* The forest dims around one question. */}
-      <div aria-hidden="true" className="absolute inset-0 bg-canvas/85 backdrop-blur-xl" />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute top-1/2 left-1/2 h-[70vh] w-[70vw] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(ellipse_at_center,var(--ff-moon),transparent_65%)] blur-2xl"
-      />
-
       <AnimatePresence mode="wait">
         {confirmation === null ? (
           <motion.form
@@ -315,6 +277,6 @@ function RitualDialog({ onDone }: { readonly onDone: () => void }) {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </RitualShell>
   );
 }

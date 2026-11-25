@@ -10,6 +10,7 @@ import { ConnectionStatus } from '../realtime/connection-status';
 import { CurrentTask } from '../tasks/current-task';
 import { TasksPanel } from '../tasks/tasks-panel';
 import { ParkedThoughts } from '../thoughts/thoughts';
+import { WeeklyTopThree } from '../weekly/weekly-top-three';
 import { TodayStrip } from './today-strip';
 import { WeekOverview } from './week-overview';
 
@@ -160,6 +161,7 @@ export function DashboardPage() {
           <div className="grid items-start gap-10 lg:grid-cols-12">
             <Block index={3} className="lg:col-span-7">
               <div className="space-y-8">
+                <WeeklyTopThree />
                 <TasksPanel />
                 <ParkedThoughts />
               </div>

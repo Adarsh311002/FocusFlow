@@ -7,6 +7,7 @@ import { authErrorMessage } from '../features/auth/auth-messages';
 import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
 import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
+import { WeeklyReviewRitual } from '../features/weekly/weekly-ritual';
 import { AmbientBackground } from '../ui/ambient-background';
 import { JungleAttention, JungleHint } from '../ui/jungle/critters';
 import { HangingCanopy } from '../ui/jungle/foliage';
@@ -257,6 +258,7 @@ export function RootLayout() {
         <Outlet />
       </main>
       <ForestSoundToggle />
+      <WeeklyReviewRitual />
       <DailyIntentionRitual />
       <JungleAttention />
       <JungleHint />
