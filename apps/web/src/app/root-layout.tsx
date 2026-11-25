@@ -23,8 +23,9 @@ const SECTIONS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/review', label: 'Review' },
   { to: '/rooms', label: 'Rooms' },
-  // GF6: on a phone the header has no room for a fourth link; the forest is reached from the
-  // dashboard card and the account menu there.
+  // Below lg the header has no room for more links; Goals and the forest are in the account
+  // menu there (and the forest also on the dashboard card).
+  { to: '/goals', label: 'Goals', wideOnly: true },
   { to: '/forest', label: 'Forest', wideOnly: true },
 ] as const;
 
@@ -45,7 +46,7 @@ export function AppNav() {
           return (
             <li
               key={section.to}
-              className={'wideOnly' in section ? 'relative hidden sm:block' : 'relative'}
+              className={'wideOnly' in section ? 'relative hidden lg:block' : 'relative'}
             >
               {active && (
                 <motion.span
@@ -229,9 +230,19 @@ function AccountMenu() {
               onClick={() => {
                 setOpen(false);
               }}
-              className={buttonClass('ghost', 'w-full sm:hidden')}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
             >
               Your forest
+            </Link>
+            <Link
+              to="/goals"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
+            >
+              Goals
             </Link>
             <MenuThemeToggle />
             <button

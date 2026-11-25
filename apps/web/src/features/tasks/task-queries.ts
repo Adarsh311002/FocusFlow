@@ -5,14 +5,19 @@ import { useCallback } from 'react';
 import { useAuth } from '../auth/auth-context';
 import { isTaskNotFound } from './task-messages';
 import {
+  addStep,
   completeTask,
   createTask,
   deleteTask,
   getTask,
+  listSteps,
   listTasks,
+  removeStep,
   renameTask,
   reopenTask,
   setCurrentTask,
+  updateStep,
+  updateTask,
 } from './tasks-client';
 
 // Server state for tasks lives in TanStack Query. Keys start with the user id, so even
@@ -29,7 +34,11 @@ const FIRST_PAGE: string | undefined = undefined;
 
 export const taskKeys = {
   all: (userId: string) => ['tasks', userId] as const,
-  list: (userId: string, status: TaskStatus) => ['tasks', userId, 'list', status] as const,
+  list: (userId: string, status: TaskStatus, goalId?: string) =>
+    goalId === undefined
+      ? (['tasks', userId, 'list', status] as const)
+      : (['tasks', userId, 'list', status, goalId] as const),
+  steps: (userId: string, taskId: TaskId) => ['tasks', userId, 'steps', taskId] as const,
   detail: (userId: string, taskId: TaskId) => ['tasks', userId, 'detail', taskId] as const,
 };
 
@@ -38,11 +47,11 @@ function useUserId(): string {
 }
 
 /** Newest-created first, one page at a time; `fetchNextPage` follows `nextCursor`. */
-export function useTaskList(status: TaskStatus) {
+export function useTaskList(status: TaskStatus, goalId?: string) {
   const userId = useUserId();
   return useInfiniteQuery({
-    queryKey: taskKeys.list(userId, status),
-    queryFn: ({ pageParam }) => listTasks({ status, cursor: pageParam }),
+    queryKey: taskKeys.list(userId, status, goalId),
+    queryFn: ({ pageParam }) => listTasks({ status, cursor: pageParam, goalId }),
     initialPageParam: FIRST_PAGE,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: userId !== NO_USER,
@@ -70,10 +79,13 @@ export function useTask(taskId: TaskId | null) {
 function useInvalidateTasks(): () => Promise<void> {
   const queryClient = useQueryClient();
   const userId = useUserId();
-  return useCallback(
-    () => queryClient.invalidateQueries({ queryKey: taskKeys.all(userId) }),
-    [queryClient, userId],
-  );
+  return useCallback(async () => {
+    // A goal's progress counts its tasks (GL3), so goals refresh with every task change.
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: taskKeys.all(userId) }),
+      queryClient.invalidateQueries({ queryKey: ['goals', userId] }),
+    ]);
+  }, [queryClient, userId]);
 }
 
 /**
@@ -107,7 +119,18 @@ function useTaskMutation<TVariables, TResult>(
 }
 
 export function useCreateTask() {
-  return useTaskMutation((title: string) => createTask(title));
+  // A plain title, or a title with its goal (GL5) and estimate (ES3).
+  return useTaskMutation(
+    (input: string | { title: string; goalId?: string; estimatedSessions?: number }) =>
+      typeof input === 'string'
+        ? createTask(input)
+        : createTask(input.title, {
+            ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
+            ...(input.estimatedSessions === undefined
+              ? {}
+              : { estimatedSessions: input.estimatedSessions }),
+          }),
+  );
 }
 
 export function useRenameTask() {
@@ -163,5 +186,40 @@ export function useSetCurrentTask() {
     (user) => {
       updateUser(user);
     },
+  );
+}
+
+/** GL4, ES1: change a task's goal or estimate (or title). Invalidates every task read. */
+export function useUpdateTask() {
+  return useTaskMutation(
+    ({ taskId, changes }: { taskId: TaskId; changes: Parameters<typeof updateTask>[1] }) =>
+      updateTask(taskId, changes),
+  );
+}
+
+/** SP2: a task's steps. */
+export function useTaskSteps(taskId: TaskId) {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: taskKeys.steps(userId, taskId),
+    queryFn: () => listSteps(taskId),
+    enabled: userId !== NO_USER,
+  });
+}
+
+/** Adds, ticks, renames or removes a step; every task read refreshes (the counts change). */
+export function useStepMutation() {
+  return useTaskMutation(
+    (
+      action:
+        | { kind: 'add'; taskId: TaskId; title: string }
+        | { kind: 'toggle'; taskId: TaskId; stepId: string; done: boolean }
+        | { kind: 'remove'; taskId: TaskId; stepId: string },
+    ): Promise<unknown> =>
+      action.kind === 'add'
+        ? addStep(action.taskId, action.title)
+        : action.kind === 'toggle'
+          ? updateStep(action.taskId, action.stepId, { done: action.done })
+          : removeStep(action.taskId, action.stepId),
   );
 }

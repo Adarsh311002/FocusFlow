@@ -17,7 +17,22 @@ type FakeTask = {
   updatedAt: string;
   completedAt: string | null;
   deletedAt: string | null;
+  /** Wave 3 (GL2, ES1). */
+  goalId?: string | null;
+  estimatedSessions?: number | null;
 };
+
+type FakeGoal = {
+  id: string;
+  title: string;
+  why: string | null;
+  targetDate: string | null;
+  color: string;
+  status: 'active' | 'completed' | 'archived';
+  createdAt: string;
+};
+
+type FakeStep = { id: string; taskId: string; title: string; done: boolean; createdAt: string };
 
 /**
  * A small in-memory stand-in for the task API, following the same rules as the real one
@@ -28,6 +43,20 @@ type FakeTask = {
 export function createFakeTaskApi(options: { pageSize?: number } = {}) {
   const tasks: FakeTask[] = [];
   let currentTaskId: string | null = null;
+  const goals: FakeGoal[] = [];
+  const steps: FakeStep[] = [];
+  const goalView = (goal: FakeGoal) => {
+    const mine = tasks.filter((task) => task.goalId === goal.id && task.deletedAt === null);
+    return {
+      ...goal,
+      endedAt: goal.status === 'active' ? null : goal.createdAt,
+      progress: {
+        openTasks: mine.filter((task) => task.completedAt === null).length,
+        completedTasks: mine.filter((task) => task.completedAt !== null).length,
+        focusedSeconds: 0,
+      },
+    };
+  };
   /** Parked thoughts (PT2), newest last; the list answers newest first. */
   const thoughts: { id: string; body: string; sessionId: string | null; createdAt: string }[] = [];
   const now = () => new Date().toISOString();
@@ -42,6 +71,13 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
       title: task.title,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
+      goalId: task.goalId ?? null,
+      estimatedSessions: task.estimatedSessions ?? null,
+      sessionsSpent: 0,
+      steps: {
+        total: steps.filter((step) => step.taskId === task.id).length,
+        done: steps.filter((step) => step.taskId === task.id && step.done).length,
+      },
     };
     return task.completedAt === null
       ? { ...base, status: 'open' }
@@ -133,6 +169,71 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
         : noContentResponse();
     }
 
+    // Goals (GL3).
+    if (path === '/goals' && request.method === 'GET') {
+      const archived = url.searchParams.get('archived') === 'true';
+      return jsonResponse(200, {
+        goals: [...goals]
+          .reverse()
+          .filter((goal) => archived || goal.status !== 'archived')
+          .map(goalView),
+      });
+    }
+    if (path === '/goals' && request.method === 'POST') {
+      const body = parsedBody(request);
+      const goal: FakeGoal = {
+        id: crypto.randomUUID(),
+        title: String(body.title).trim(),
+        why: typeof body.why === 'string' && body.why.trim() !== '' ? body.why.trim() : null,
+        targetDate: typeof body.targetDate === 'string' ? body.targetDate : null,
+        color: typeof body.color === 'string' ? body.color : 'leaf',
+        status: 'active',
+        createdAt: now(),
+      };
+      goals.push(goal);
+      return jsonResponse(201, { goal: goalView(goal) });
+    }
+    if (segments[0] === 'goals' && request.method === 'PATCH') {
+      const goal = goals.find((entry) => entry.id === segments[1]);
+      if (goal === undefined) {
+        return errorResponse(404, 'GOAL_NOT_FOUND', 'Goal not found.');
+      }
+      Object.assign(goal, parsedBody(request));
+      return jsonResponse(200, { goal: goalView(goal) });
+    }
+    // Steps (SP2).
+    if (segments[0] === 'tasks' && segments[2] === 'steps') {
+      const owner = live(segments[1]);
+      if (owner === undefined) {
+        return notFound();
+      }
+      if (request.method === 'GET') {
+        return jsonResponse(200, { steps: steps.filter((step) => step.taskId === owner.id) });
+      }
+      if (request.method === 'POST') {
+        const step: FakeStep = {
+          id: crypto.randomUUID(),
+          taskId: owner.id,
+          title: String(parsedBody(request).title).trim(),
+          done: false,
+          createdAt: now(),
+        };
+        steps.push(step);
+        return jsonResponse(201, { step });
+      }
+      const index = steps.findIndex((step) => step.id === segments[3]);
+      const step = steps[index];
+      if (step === undefined) {
+        return errorResponse(404, 'NOT_FOUND', 'Step not found.');
+      }
+      if (request.method === 'DELETE') {
+        steps.splice(index, 1);
+        return noContentResponse();
+      }
+      Object.assign(step, parsedBody(request));
+      return jsonResponse(200, { step });
+    }
+
     if (path === taskPaths.collection && request.method === 'GET') {
       const status = url.searchParams.get('status') ?? 'open';
       const limit = Number(url.searchParams.get('limit') ?? options.pageSize ?? 50);
@@ -140,7 +241,11 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
       const matching = [...tasks]
         .reverse()
         .filter((task) => task.deletedAt === null)
-        .filter((task) => (status === 'open') === (task.completedAt === null));
+        .filter((task) => (status === 'open') === (task.completedAt === null))
+        .filter((task) => {
+          const goalId = url.searchParams.get('goalId');
+          return goalId === null || task.goalId === goalId;
+        });
       const start = cursor === null ? 0 : matching.findIndex((task) => task.id === cursor) + 1;
       const page = matching.slice(start, start + limit);
       const more = start + limit < matching.length;
@@ -150,8 +255,11 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
       });
     }
     if (path === taskPaths.collection && request.method === 'POST') {
-      const { title } = parsedBody(request);
-      return jsonResponse(201, { task: view(addTask(String(title))) });
+      const { title, goalId, estimatedSessions } = parsedBody(request);
+      const task = addTask(String(title));
+      task.goalId = typeof goalId === 'string' ? goalId : null;
+      task.estimatedSessions = typeof estimatedSessions === 'number' ? estimatedSessions : null;
+      return jsonResponse(201, { task: view(task) });
     }
 
     const [, taskId, action] = segments;
@@ -173,7 +281,17 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
       return jsonResponse(200, { task: view(task) });
     }
     if (task !== undefined && action === undefined && request.method === 'PATCH') {
-      task.title = String(parsedBody(request).title);
+      const changes = parsedBody(request);
+      if (typeof changes.title === 'string') {
+        task.title = changes.title;
+      }
+      if ('goalId' in changes) {
+        task.goalId = typeof changes.goalId === 'string' ? changes.goalId : null;
+      }
+      if ('estimatedSessions' in changes) {
+        task.estimatedSessions =
+          typeof changes.estimatedSessions === 'number' ? changes.estimatedSessions : null;
+      }
       task.updatedAt = now();
       return jsonResponse(200, { task: view(task) });
     }
@@ -197,6 +315,8 @@ export function createFakeTaskApi(options: { pageSize?: number } = {}) {
     addTask,
     tasks,
     thoughts,
+    goals,
+    steps,
     currentTaskId: () => currentTaskId,
     setCurrentTaskId: (id: string | null) => {
       currentTaskId = id;

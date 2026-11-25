@@ -5,6 +5,7 @@ import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { ForestPage } from '../features/forest/forest-page';
+import { GoalsPage } from '../features/goals/goals-page';
 import { LandingPage } from '../features/landing/landing-page';
 import { ReviewPage } from '../features/review/review-page';
 import { RoomPage } from '../features/rooms/room-page';
@@ -132,6 +133,21 @@ const forestRoute = createRoute({
   component: ProtectedForest,
 });
 
+/** Goals (GL5). */
+function ProtectedGoals() {
+  return (
+    <RequireAuth>
+      <GoalsPage />
+    </RequireAuth>
+  );
+}
+
+const goalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/goals',
+  component: ProtectedGoals,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -144,6 +160,7 @@ const routeTree = rootRoute.addChildren([
   roomRoute,
   settingsRoute,
   forestRoute,
+  goalsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

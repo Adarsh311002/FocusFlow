@@ -10,6 +10,10 @@ import {
   type TaskResponse,
   taskResponseSchema,
   type TaskStatus,
+  taskStepListResponseSchema,
+  taskStepPath,
+  taskStepResponseSchema,
+  type TaskStepView,
   type TaskView,
   type UserView,
 } from '@focus-flow/contracts';
@@ -31,6 +35,8 @@ export type ListTasksParams = {
   readonly status: TaskStatus;
   readonly cursor?: string | undefined;
   readonly limit?: number | undefined;
+  /** GL4: only this goal's tasks. */
+  readonly goalId?: string | undefined;
 };
 
 export function listTasks(params: ListTasksParams): Promise<TaskListResponse> {
@@ -40,6 +46,9 @@ export function listTasks(params: ListTasksParams): Promise<TaskListResponse> {
   }
   if (params.limit !== undefined) {
     query.set('limit', String(params.limit));
+  }
+  if (params.goalId !== undefined) {
+    query.set('goalId', params.goalId);
   }
   return authedApiRequest<TaskListResponse>(
     `${taskPaths.collection}?${query.toString()}`,
@@ -56,8 +65,57 @@ export function getTask(taskId: TaskId): Promise<TaskView> {
   return taskRequest(taskPath(taskPaths.item, taskId));
 }
 
-export function createTask(title: string): Promise<TaskView> {
-  return taskRequest(taskPaths.collection, jsonBody('POST', { title }));
+export function createTask(
+  title: string,
+  options: { readonly goalId?: string; readonly estimatedSessions?: number } = {},
+): Promise<TaskView> {
+  return taskRequest(taskPaths.collection, jsonBody('POST', { title, ...options }));
+}
+
+/** `PATCH /tasks/:taskId` with any of the task's fields (title, goal, estimate). */
+export function updateTask(
+  taskId: TaskId,
+  changes: {
+    readonly title?: string;
+    readonly goalId?: string | null;
+    readonly estimatedSessions?: number | null;
+  },
+): Promise<TaskView> {
+  return taskRequest(taskPath(taskPaths.item, taskId), jsonBody('PATCH', changes));
+}
+
+// Steps (SP2).
+
+export async function listSteps(taskId: TaskId): Promise<TaskStepView[]> {
+  return (await authedApiRequest(taskStepPath(taskId), taskStepListResponseSchema)).steps;
+}
+
+export async function addStep(taskId: TaskId, title: string): Promise<TaskStepView> {
+  return (
+    await authedApiRequest(
+      taskStepPath(taskId),
+      taskStepResponseSchema,
+      jsonBody('POST', { title }),
+    )
+  ).step;
+}
+
+export async function updateStep(
+  taskId: TaskId,
+  stepId: string,
+  changes: { readonly title?: string; readonly done?: boolean },
+): Promise<TaskStepView> {
+  return (
+    await authedApiRequest(
+      taskStepPath(taskId, stepId),
+      taskStepResponseSchema,
+      jsonBody('PATCH', changes),
+    )
+  ).step;
+}
+
+export function removeStep(taskId: TaskId, stepId: string): Promise<void> {
+  return authedApiRequestNoContent(taskStepPath(taskId, stepId), { method: 'DELETE' });
 }
 
 export function renameTask(taskId: TaskId, title: string): Promise<TaskView> {
