@@ -95,6 +95,57 @@ function Heatmap({ cells }: { readonly cells: readonly InsightsHeatmapCell[] }) 
   );
 }
 
+/** FQ4: how deep the user rated their sessions, by local start hour. */
+function DeepestHours({ quality }: { readonly quality: FocusSessionInsightsResponse['quality'] }) {
+  const best = quality.byHour.reduce<{ hour: number; average: number } | null>(
+    (top, entry, hour) =>
+      entry.average !== null &&
+      entry.ratedCount >= 2 &&
+      (top === null || entry.average > top.average)
+        ? { hour, average: entry.average }
+        : top,
+    null,
+  );
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="font-display text-3xl">Your deepest hours</h4>
+        <p className="text-sm text-muted">
+          {quality.ratedCount === 0
+            ? 'Rate how deep a session was when you check in, and your deepest hours appear here.'
+            : best === null
+              ? `Average depth ${String(quality.average)}/5 over ${String(quality.ratedCount)} rated sessions.`
+              : `Deepest around ${hourLabel(best.hour)} (${String(best.average)}/5). Average ${String(quality.average)}/5.`}
+        </p>
+      </div>
+      {quality.ratedCount > 0 && (
+        <div aria-hidden="true" className="flex h-24 items-end gap-1">
+          {quality.byHour.map((entry, hour) => (
+            <div
+              key={hour}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={
+                entry.average === null
+                  ? undefined
+                  : `${hourLabel(hour)}: ${String(entry.average)}/5 (${String(entry.ratedCount)} rated)`
+              }
+            >
+              <motion.div
+                className={`rounded-t-sm ${entry.average === null ? 'bg-line' : 'bg-gradient-to-t from-focus/40 to-focus'}`}
+                initial={{ height: 0 }}
+                animate={{
+                  height: entry.average === null ? '4%' : `${String((entry.average / 5) * 100)}%`,
+                }}
+                transition={{ duration: 0.6, delay: hour * 0.01 }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Bar({
   label,
   seconds,
@@ -277,7 +328,10 @@ export function InsightsPanel() {
         <>
           <Rhythm data={insights.data} />
           <div className="grid gap-10 border-t border-line pt-8 lg:grid-cols-[1.6fr_1fr]">
-            <Heatmap cells={insights.data.heatmap} />
+            <div className="space-y-10">
+              <Heatmap cells={insights.data.heatmap} />
+              <DeepestHours quality={insights.data.quality} />
+            </div>
             <Breakdown data={insights.data} />
           </div>
         </>

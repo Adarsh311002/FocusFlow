@@ -25,6 +25,15 @@ const OUTCOMES: readonly { outcome: CheckInOutcome; label: string; hint: string 
   { outcome: 'stuck', label: 'Got stuck', hint: 'Find a smaller step' },
 ];
 
+/** FQ1: what each depth means, from scattered to deep. */
+const DEPTHS = [
+  { value: 1, label: 'Scattered' },
+  { value: 2, label: 'Distracted' },
+  { value: 3, label: 'Steady' },
+  { value: 4, label: 'Focused' },
+  { value: 5, label: 'Deep flow' },
+] as const;
+
 export const CHECK_IN_LABEL: Readonly<Record<CheckInOutcome, string>> = {
   done: 'Done',
   progress: 'Made progress',
@@ -37,10 +46,16 @@ function useCheckIn() {
   const replaceLastEnded = useReplaceLastEnded();
   const userId = user?.id ?? 'signed-out';
   return useMutation({
-    mutationFn: (variables: { session: FocusSessionView; outcome: CheckInOutcome; note: string }) =>
+    mutationFn: (variables: {
+      session: FocusSessionView;
+      outcome: CheckInOutcome;
+      note: string;
+      quality: number | null;
+    }) =>
       checkInFocusSession(variables.session.id, {
         outcome: variables.outcome,
         note: variables.note,
+        ...(variables.quality === null ? {} : { quality: variables.quality }),
       }),
     onSuccess: async (updated, variables) => {
       replaceLastEnded(updated);
@@ -62,6 +77,8 @@ function useCheckIn() {
 export function SessionCheckIn({ session }: { readonly session: FocusSessionView }) {
   const checkIn = useCheckIn();
   const [note, setNote] = useState('');
+  // FQ1: optional, chosen before the outcome button that sends the check-in.
+  const [quality, setQuality] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const noteId = useId();
   if (session.status === 'in_progress') {
@@ -76,6 +93,7 @@ export function SessionCheckIn({ session }: { readonly session: FocusSessionView
         <p className="text-sm">
           <span className="text-muted">You said: </span>
           <strong className="font-medium">{CHECK_IN_LABEL[recorded.outcome]}</strong>
+          {recorded.quality === null ? '' : ` · depth ${String(recorded.quality)}/5`}
           {recorded.note === null ? '' : ` · “${recorded.note}”`}
           <button
             type="button"
@@ -105,7 +123,7 @@ export function SessionCheckIn({ session }: { readonly session: FocusSessionView
             title={option.hint}
             onClick={() => {
               checkIn.mutate(
-                { session, outcome: option.outcome, note },
+                { session, outcome: option.outcome, note, quality },
                 {
                   onSuccess: () => {
                     setEditing(false);
@@ -116,6 +134,35 @@ export function SessionCheckIn({ session }: { readonly session: FocusSessionView
             className={buttonClass(option.outcome === 'done' ? 'primary' : 'ghost', 'px-4 py-2')}
           >
             {option.label}
+          </button>
+        ))}
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="How deep was it? (optional)"
+        className="flex items-center gap-2"
+      >
+        <span aria-hidden="true" className="text-xs text-muted">
+          How deep?
+        </span>
+        {DEPTHS.map((depth) => (
+          <button
+            key={depth.value}
+            type="button"
+            role="radio"
+            aria-checked={quality === depth.value}
+            aria-label={`${String(depth.value)}: ${depth.label}`}
+            title={depth.label}
+            onClick={() => {
+              setQuality((current) => (current === depth.value ? null : depth.value));
+            }}
+            className={`h-7 w-7 rounded-full border text-xs transition ${
+              quality !== null && depth.value <= quality
+                ? 'border-focus bg-focus text-focus-ink'
+                : 'border-line text-muted hover:border-focus/60'
+            }`}
+          >
+            {depth.value}
           </button>
         ))}
       </div>

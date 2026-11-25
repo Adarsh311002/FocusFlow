@@ -67,6 +67,15 @@ describe('the session check-in', () => {
     expect(sent?.body).toBe('{"outcome":"done","note":"Shipped the outline"}');
   });
 
+  it('sends an optional depth rating with the answer and shows it (FQ1)', async () => {
+    const { world } = await stoppedWithTask();
+    fireEvent.click(screen.getByRole('radio', { name: '4: Focused' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    expect(await screen.findByText(/depth 4\/5/)).not.toBeNull();
+    expect(checkIns(world)[0]?.body).toBe('{"outcome":"done","note":"","quality":4}');
+  });
+
   it('lets the answer be changed later', async () => {
     const { world } = await stoppedWithTask();
     fireEvent.click(screen.getByRole('button', { name: 'Made progress' }));
