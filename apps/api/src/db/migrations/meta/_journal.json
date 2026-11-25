@@ -78,6 +78,13 @@
       "when": 1795602054051,
       "tag": "0010_profile_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795610350174,
+      "tag": "0011_goals_steps_estimates",
+      "breakpoints": true
     }
   ]
 }

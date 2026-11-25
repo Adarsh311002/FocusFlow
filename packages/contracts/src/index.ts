@@ -3,6 +3,7 @@ export * from './errors';
 export * from './http/auth';
 export * from './http/focus-sessions';
 export * from './http/forest';
+export * from './http/goals';
 export * from './http/health';
 export * from './http/insights';
 export * from './http/parked-thoughts';

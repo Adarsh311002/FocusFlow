@@ -54,7 +54,18 @@ export const taskPaths = {
   item: '/tasks/:taskId',
   complete: '/tasks/:taskId/complete',
   reopen: '/tasks/:taskId/reopen',
+  /** SP2. */
+  steps: '/tasks/:taskId/steps',
 } as const;
+
+/** Steps of one task (SP2). */
+export const taskStepPath = (taskId: string, stepId?: string): string =>
+  `/tasks/${encodeURIComponent(taskId)}/steps${stepId === undefined ? '' : `/${encodeURIComponent(stepId)}`}`;
+
+/** Goals (GL3). */
+export const goalPaths = { collection: '/goals', item: '/goals/:goalId' } as const;
+
+export const goalPath = (goalId: string): string => `/goals/${encodeURIComponent(goalId)}`;
 
 export type TaskPathTemplate = Exclude<(typeof taskPaths)[keyof typeof taskPaths], '/tasks'>;
 

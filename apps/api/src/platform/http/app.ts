@@ -13,12 +13,14 @@ import type { AuthDeps } from '../../modules/auth/service.js';
 import { createFocusSessionsRouter } from '../../modules/focus-sessions/http.js';
 import type { FocusSessionsDeps } from '../../modules/focus-sessions/service.js';
 import { createForestRouter } from '../../modules/forest/http.js';
+import { createGoalsRouter } from '../../modules/goals/http.js';
 import { createParkedThoughtsRouter } from '../../modules/parked-thoughts/http.js';
 import { createRoomFocusRouter } from '../../modules/room-focus/http.js';
 import type { RoomFocusService } from '../../modules/room-focus/types.js';
 import { createRateLimiter, ROOM_FOCUS_RATE } from '../../modules/room-realtime/limiter.js';
 import { createRoomsRouter } from '../../modules/rooms/http.js';
 import type { RoomsDeps } from '../../modules/rooms/service.js';
+import { createStepsRouter } from '../../modules/steps/http.js';
 import { createSystemRouter } from '../../modules/system/http.js';
 import { createTasksRouter } from '../../modules/tasks/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
@@ -87,6 +89,14 @@ export const createApp = ({
   app.use(
     API_BASE_PATH,
     createTasksRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createStepsRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createGoalsRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
   );
   app.use(
     API_BASE_PATH,

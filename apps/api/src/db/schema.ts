@@ -81,6 +81,49 @@ export const users = pgTable(
   ],
 );
 
+// Goals (GL1): what a set of tasks is for ("Ship the beta", "Learn Spanish"). Never deleted;
+// a goal is completed or archived. Deleting the user removes their goals (cascade).
+export const goals = pgTable(
+  'goals',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    title: text().notNull(),
+    why: text(),
+    targetDate: date({ mode: 'string' }),
+    color: text().notNull().default('leaf'),
+    completedAt: timestamp({ withTimezone: true }),
+    archivedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_goals', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_goals_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // Target of tasks.goal_id's composite key: a task's goal is the same user's.
+    unique('uq_goals_id_user_id').on(table.id, table.userId),
+    check('ck_goals_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 80`),
+    check(
+      'ck_goals_why_length',
+      sql`${table.why} IS NULL OR char_length(${table.why}) BETWEEN 1 AND 280`,
+    ),
+    check(
+      'ck_goals_color',
+      sql`${table.color} IN ('leaf', 'moss', 'fern', 'amber', 'berry', 'sky')`,
+    ),
+    // A goal is active, completed or archived, never completed and archived at once.
+    check('ck_goals_one_end', sql`${table.completedAt} IS NULL OR ${table.archivedAt} IS NULL`),
+    index('ix_goals_user_id_id').on(table.userId, table.id.desc()),
+  ],
+);
+
 export const tasks = pgTable(
   'tasks',
   {
@@ -92,6 +135,10 @@ export const tasks = pgTable(
     // D38: soft delete. A deleted task is hidden from every normal read but its row stays,
     // so history that references it keeps its meaning.
     deletedAt: timestamp({ withTimezone: true }),
+    // GL2: the goal it serves, the same user's (composite key); no ON DELETE action (P1).
+    goalId: uuid(),
+    // ES1: "I think this takes N sessions".
+    estimatedSessions: smallint(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -100,6 +147,17 @@ export const tasks = pgTable(
   },
   (table) => [
     primaryKey({ name: 'pk_tasks', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_tasks_goal_id',
+      columns: [table.goalId, table.userId],
+      foreignColumns: [goals.id, goals.userId],
+    }),
+    check(
+      'ck_tasks_estimated_sessions',
+      sql`${table.estimatedSessions} IS NULL OR ${table.estimatedSessions} BETWEEN 1 AND 20`,
+    ),
+    // A goal's tasks.
+    index('ix_tasks_goal_id').on(table.goalId),
     foreignKey({
       name: 'fk_tasks_user_id',
       columns: [table.userId],
@@ -495,5 +553,35 @@ export const weeklyPriorities = pgTable(
       table.weekStart,
       table.taskId,
     ),
+  ],
+);
+
+// Steps (SP1): a small checklist inside a task. The task is the same user's (composite key);
+// steps go with the task's user (cascade) and are hidden with a soft-deleted task.
+export const taskSteps = pgTable(
+  'task_steps',
+  {
+    id: uuid().notNull(),
+    taskId: uuid().notNull(),
+    userId: uuid().notNull(),
+    title: text().notNull(),
+    doneAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_task_steps', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_task_steps_task_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_task_steps_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_task_steps_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 200`),
+    // A task's steps in creation order (UUIDv7).
+    index('ix_task_steps_task_id_id').on(table.taskId, table.id),
   ],
 );

@@ -1,8 +1,4 @@
-import {
-  TASK_TITLE_MAX_LENGTH,
-  type TaskView,
-  updateTaskRequestSchema,
-} from '@focus-flow/contracts';
+import { TASK_TITLE_MAX_LENGTH, taskTitleSchema, type TaskView } from '@focus-flow/contracts';
 import { useState } from 'react';
 
 import { INVALID_TITLE, taskErrorMessage } from './task-messages';
@@ -54,14 +50,14 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
   }
 
   function saveRename(): void {
-    const fields = updateTaskRequestSchema.safeParse({ title: draft });
+    const fields = taskTitleSchema.safeParse(draft);
     if (!fields.success) {
       setInvalid(true);
       return;
     }
     run(() => {
       rename.mutate(
-        { taskId: task.id, title: fields.data.title },
+        { taskId: task.id, title: fields.data },
         {
           onSuccess: () => {
             setEditing(false);

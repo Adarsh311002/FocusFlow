@@ -25,6 +25,11 @@ export const errorCodes = [
   'SESSION_NOT_ENDED',
   // Parked thoughts (PT2)
   'THOUGHTS_FULL',
+  // Goals and steps (GL3, SP2)
+  'GOAL_NOT_FOUND',
+  'GOAL_NOT_ACTIVE',
+  'GOALS_FULL',
+  'STEPS_FULL',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',

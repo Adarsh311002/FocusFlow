@@ -11,6 +11,14 @@ export type UserId = z.infer<typeof userIdSchema>;
 export const taskIdSchema = z.uuid().brand<'TaskId'>();
 export type TaskId = z.infer<typeof taskIdSchema>;
 
+/** A goal (GL1). */
+export const goalIdSchema = z.uuid().brand<'GoalId'>();
+export type GoalId = z.infer<typeof goalIdSchema>;
+
+/** A step inside a task (SP1). */
+export const taskStepIdSchema = z.uuid().brand<'TaskStepId'>();
+export type TaskStepId = z.infer<typeof taskStepIdSchema>;
+
 /** A parked thought (PT1). */
 export const parkedThoughtIdSchema = z.uuid().brand<'ParkedThoughtId'>();
 export type ParkedThoughtId = z.infer<typeof parkedThoughtIdSchema>;

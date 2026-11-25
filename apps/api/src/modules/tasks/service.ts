@@ -1,7 +1,7 @@
 import type { ListTasksQuery } from '@focus-flow/contracts';
 import { uuidv7 } from 'uuidv7';
 
-import type { Db } from '../../db/client.js';
+import type { Db, Executor } from '../../db/client.js';
 import { AppError } from '../../platform/http/errors.js';
 import type { UserRow } from '../auth/queries.js';
 import { decodeTaskCursor, encodeTaskCursor } from './cursor.js';
@@ -11,13 +11,14 @@ import {
   findOwnedTaskIncludingDeleted,
   insertTask,
   listLiveTasks,
+  lockGoalForShare,
   lockOwnedTaskForShare,
   markTaskCompleted,
   markTaskDeleted,
   markTaskOpen,
   setUserCurrentTask,
   type TaskRow,
-  updateTaskTitle,
+  updateTaskFields,
 } from './queries.js';
 
 export type TasksDeps = {
@@ -37,8 +38,45 @@ const requireFound = (row: TaskRow | undefined): TaskRow => {
   return row;
 };
 
-export const createTask = (deps: TasksDeps, userId: string, title: string): Promise<TaskRow> =>
-  insertTask(deps.db, { id: uuidv7(), userId, title });
+/** GL4: a goal a task is attached to must be the user's own and active (locked FOR SHARE). */
+const requireActiveGoal = async (tx: Executor, userId: string, goalId: string): Promise<void> => {
+  const goal = await lockGoalForShare(tx, userId, goalId);
+  if (goal === undefined) {
+    throw new AppError('GOAL_NOT_FOUND', 404, 'Goal not found.');
+  }
+  if (goal.completedAt !== null || goal.archivedAt !== null) {
+    throw new AppError('GOAL_NOT_ACTIVE', 409, 'Only an active goal can take tasks.');
+  }
+};
+
+export type TaskOptions = {
+  readonly goalId?: string | undefined;
+  readonly estimatedSessions?: number | undefined;
+};
+
+export const createTask = (
+  deps: TasksDeps,
+  userId: string,
+  title: string,
+  options: TaskOptions = {},
+): Promise<TaskRow> =>
+  options.goalId === undefined
+    ? insertTask(deps.db, {
+        id: uuidv7(),
+        userId,
+        title,
+        estimatedSessions: options.estimatedSessions ?? null,
+      })
+    : deps.db.transaction(async (tx) => {
+        await requireActiveGoal(tx, userId, options.goalId ?? '');
+        return insertTask(tx, {
+          id: uuidv7(),
+          userId,
+          title,
+          goalId: options.goalId ?? null,
+          estimatedSessions: options.estimatedSessions ?? null,
+        });
+      });
 
 export const getTask = async (deps: TasksDeps, userId: string, taskId: string): Promise<TaskRow> =>
   requireFound(await findLiveTask(deps.db, userId, taskId));
@@ -55,7 +93,14 @@ export const listTasks = async (
 ): Promise<TaskPage> => {
   const afterId = query.cursor === undefined ? undefined : decodeTaskCursor(query.cursor);
   // One extra row tells whether another page exists without a separate COUNT.
-  const rows = await listLiveTasks(deps.db, userId, query.status, afterId, query.limit + 1);
+  const rows = await listLiveTasks(
+    deps.db,
+    userId,
+    query.status,
+    afterId,
+    query.limit + 1,
+    query.goalId,
+  );
   const page = rows.slice(0, query.limit);
   const last = page.at(-1);
   return {
@@ -64,13 +109,26 @@ export const listTasks = async (
   };
 };
 
-/** Completed tasks may be renamed; deleted ones may not. */
-export const renameTask = async (
+/**
+ * Completed tasks may be changed too; deleted ones may not. A goal being attached must be
+ * active (GL4); `null` detaches it or clears the estimate.
+ */
+export const updateTask = (
   deps: TasksDeps,
   userId: string,
   taskId: string,
-  title: string,
-): Promise<TaskRow> => requireFound(await updateTaskTitle(deps.db, userId, taskId, title));
+  changes: {
+    readonly title?: string | undefined;
+    readonly goalId?: string | null | undefined;
+    readonly estimatedSessions?: number | null | undefined;
+  },
+): Promise<TaskRow> =>
+  deps.db.transaction(async (tx) => {
+    if (changes.goalId !== undefined && changes.goalId !== null) {
+      await requireActiveGoal(tx, userId, changes.goalId);
+    }
+    return requireFound(await updateTaskFields(tx, userId, taskId, changes));
+  });
 
 /**
  * Open → completed, and D43: if it was the user's current task, it stops being current in
