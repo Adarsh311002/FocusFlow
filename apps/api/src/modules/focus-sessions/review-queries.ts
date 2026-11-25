@@ -136,6 +136,10 @@ export type InsightMinute = {
   readonly abandonedCount: number;
   readonly completedFocusedSeconds: number;
   readonly totalFocusedSeconds: number;
+  /** CI5: sessions of this group by their check-in outcome. */
+  readonly doneCount: number;
+  readonly progressCount: number;
+  readonly stuckCount: number;
 };
 
 /**
@@ -167,6 +171,14 @@ export const sumEndedSessionsByMinuteDetailed = async (
           Number,
         ),
       totalFocusedSeconds: sql`coalesce(sum(${focusSessions.focusedSeconds}), 0)`.mapWith(Number),
+      doneCount: sql`count(*) FILTER (WHERE ${focusSessions.checkInOutcome} = 'done')`.mapWith(
+        Number,
+      ),
+      progressCount:
+        sql`count(*) FILTER (WHERE ${focusSessions.checkInOutcome} = 'progress')`.mapWith(Number),
+      stuckCount: sql`count(*) FILTER (WHERE ${focusSessions.checkInOutcome} = 'stuck')`.mapWith(
+        Number,
+      ),
     })
     .from(focusSessions)
     .where(

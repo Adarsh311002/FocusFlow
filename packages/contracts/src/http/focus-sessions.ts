@@ -57,6 +57,23 @@ export const focusSessionTaskSchema = z.object({
 });
 export type FocusSessionTask = z.infer<typeof focusSessionTaskSchema>;
 
+/**
+ * The user's own account of an ended session (CI1): they finished what they set out to do,
+ * made progress, or got stuck. Kept apart from the session's status, which is about time.
+ */
+export const checkInOutcomeSchema = z.enum(['done', 'progress', 'stuck']);
+export type CheckInOutcome = z.infer<typeof checkInOutcomeSchema>;
+
+/** Matches the `ck_focus_sessions_check_in_note` CHECK constraint. */
+export const CHECK_IN_NOTE_MAX_LENGTH = 280;
+
+export const focusSessionCheckInSchema = z.object({
+  outcome: checkInOutcomeSchema,
+  note: z.string().min(1).max(CHECK_IN_NOTE_MAX_LENGTH).nullable(),
+  recordedAt: z.iso.datetime(),
+});
+export type FocusSessionCheckIn = z.infer<typeof focusSessionCheckInSchema>;
+
 const focusSessionViewBase = {
   id: focusSessionIdSchema,
   context: focusSessionContextSchema,
@@ -78,15 +95,38 @@ export const focusSessionViewSchema = z.discriminatedUnion('status', [
     status: z.literal('in_progress'),
     runningSince: z.iso.datetime().nullable(),
   }),
-  z.object({ ...focusSessionViewBase, status: z.literal('completed'), endedAt: z.iso.datetime() }),
+  z.object({
+    ...focusSessionViewBase,
+    status: z.literal('completed'),
+    endedAt: z.iso.datetime(),
+    /** CI1: `null` until the user checks in. Only an ended session can carry one. */
+    checkIn: focusSessionCheckInSchema.nullable(),
+  }),
   z.object({
     ...focusSessionViewBase,
     status: z.literal('abandoned'),
     endedAt: z.iso.datetime(),
     abandonReason: abandonReasonSchema,
+    checkIn: focusSessionCheckInSchema.nullable(),
   }),
 ]);
 export type FocusSessionView = z.infer<typeof focusSessionViewSchema>;
+
+/**
+ * `PUT /focus-sessions/:sessionId/check-in` (CI2). A later check-in replaces the earlier
+ * one. The note is trimmed; a blank note is no note. `done` also completes the session's
+ * task when it is still open (CI3).
+ */
+export const checkInFocusSessionRequestSchema = z.strictObject({
+  outcome: checkInOutcomeSchema,
+  note: z
+    .string()
+    .trim()
+    .max(CHECK_IN_NOTE_MAX_LENGTH)
+    .optional()
+    .transform((note) => (note === undefined || note === '' ? null : note)),
+});
+export type CheckInFocusSessionRequest = z.input<typeof checkInFocusSessionRequestSchema>;
 
 // Inbound schemas are strict: unknown keys (for example a `userId`) are rejected
 // (docs/architecture/contracts.md, rule 7).
@@ -117,6 +157,8 @@ export const resumeFocusSessionResponseSchema = focusSessionResponseSchema;
 export type ResumeFocusSessionResponse = FocusSessionResponse;
 export const stopFocusSessionResponseSchema = focusSessionResponseSchema;
 export type StopFocusSessionResponse = FocusSessionResponse;
+export const checkInFocusSessionResponseSchema = focusSessionResponseSchema;
+export type CheckInFocusSessionResponse = FocusSessionResponse;
 
 /** `GET /focus-sessions/current`: the in-progress session, or `null`. */
 export const currentFocusSessionResponseSchema = z.object({

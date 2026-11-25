@@ -56,9 +56,12 @@ export const createRoomFocusRouter = (deps: RoomFocusRouterDeps): Router => {
       await limitWrites(userId);
       const { roomId } = parseRequestInput(roomFocusParamsSchema, req.params);
       // A body-less POST is valid: express leaves `req.body` undefined.
-      const { taskId } = parseRequestInput(optInRoomFocusRequestSchema, req.body ?? {});
+      const { taskId, shareIntention } = parseRequestInput(
+        optInRoomFocusRequestSchema,
+        req.body ?? {},
+      );
       parseRequestInput(noQuerySchema, req.query);
-      const { session, created } = await service.optIn(userId, roomId, taskId);
+      const { session, created } = await service.optIn(userId, roomId, taskId, shareIntention);
       res.status(created ? 201 : 200).json({ session });
     })().catch(next);
   });

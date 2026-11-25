@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { focusSessionViewSchema } from '../http/focus-sessions';
 import type { AuthSessionId, UserId } from '../ids';
 import { type Ack, type AckError, ackErrorSchema } from './ack';
-import type { RoomFocusParticipantsEvent } from './room-focus';
+import type { RoomFocusCheckInEvent, RoomFocusParticipantsEvent } from './room-focus';
 import type {
   RoomTimerCommandRequest,
   RoomTimerCommandResult,
@@ -94,6 +94,7 @@ export type ServerToClientEvents = {
   'room:resync': (event: RoomResyncEvent) => void;
   'room:timer:state': (event: RoomTimerStateEvent) => void;
   'room:focus:participants': (event: RoomFocusParticipantsEvent) => void;
+  'room:focus:check-in': (event: RoomFocusCheckInEvent) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

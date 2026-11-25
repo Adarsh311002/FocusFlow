@@ -74,6 +74,7 @@ export const focusParticipant = (
     optedInAtMs: 1_000,
     connected: true,
     disconnectedAtMs: null,
+    intention: null,
     ...overrides,
   });
 

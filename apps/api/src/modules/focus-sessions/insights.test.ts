@@ -16,6 +16,9 @@ const minute = (iso: string, extra: Partial<InsightMinute> = {}): InsightMinute 
   abandonedCount: 0,
   completedFocusedSeconds: 1_500,
   totalFocusedSeconds: 1_500,
+  doneCount: 0,
+  progressCount: 0,
+  stuckCount: 0,
   ...extra,
 });
 
@@ -285,5 +288,42 @@ describe('buildInsights', () => {
     );
     expect(result.otherTasks).toMatchObject({ taskCount: 2, totalFocusedSeconds: 60 + 120 });
     expect(result.noTask).toMatchObject({ sessionCount: 1, totalFocusedSeconds: 30 });
+  });
+
+  it('counts check-ins of sessions with an intention only, in the range only (CI5)', async () => {
+    const task = '01900000-0000-7000-8000-000000000001';
+    const result = await run({ from: '2025-06-30', to: '2025-06-30', tz: 'UTC' }, [
+      // Five ended sessions with a task: two done, one progress, one stuck, one never checked in.
+      minute('2025-06-30T09:00:00Z', {
+        taskId: task,
+        completedCount: 3,
+        abandonedCount: 2,
+        doneCount: 2,
+        progressCount: 1,
+        stuckCount: 1,
+      }),
+      // Without a task: never part of the intention figures, even when checked in.
+      minute('2025-06-30T10:00:00Z', { doneCount: 1 }),
+      // The previous period: ignored.
+      minute('2025-06-29T10:00:00Z', { taskId: task, doneCount: 1 }),
+    ]);
+    expect(result.checkIns).toEqual({
+      withIntention: 5,
+      done: 2,
+      progress: 1,
+      stuck: 1,
+      unrecorded: 1,
+    });
+  });
+
+  it('reports zero check-ins when nothing had an intention', async () => {
+    const result = await run({ from: '2025-06-30', to: '2025-06-30', tz: 'UTC' }, []);
+    expect(result.checkIns).toEqual({
+      withIntention: 0,
+      done: 0,
+      progress: 0,
+      stuck: 0,
+      unrecorded: 0,
+    });
   });
 });

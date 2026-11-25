@@ -4,6 +4,7 @@ import { errorCodeSchema } from '../errors';
 import { focusSessionIdSchema } from '../ids';
 import {
   abandonReasonSchema,
+  checkInFocusSessionRequestSchema,
   currentFocusSessionResponseSchema,
   FOCUS_SESSION_LIST_DEFAULT_LIMIT,
   FOCUS_SESSION_LIST_MAX_LIMIT,
@@ -121,6 +122,7 @@ describe('focusSessionViewSchema', () => {
         status: 'completed',
         focusedSeconds: 1_500,
         endedAt: LATER,
+        checkIn: { outcome: 'done', note: 'Shipped it', recordedAt: LATER },
       }).success,
     ).toBe(true);
     expect(
@@ -130,6 +132,7 @@ describe('focusSessionViewSchema', () => {
         endedAt: LATER,
         abandonReason: 'grace_expired',
         task: { id: TASK_ID, title: 'Write report', deleted: true },
+        checkIn: null,
       }).success,
     ).toBe(true);
   });
@@ -153,6 +156,7 @@ describe('focusSessionViewSchema', () => {
         status: 'abandoned',
         endedAt: LATER,
         abandonReason: 'timer_lost',
+        checkIn: null,
       }).success,
     ).toBe(true);
     expect(
@@ -162,6 +166,36 @@ describe('focusSessionViewSchema', () => {
         status: 'in_progress',
         runningSince: null,
       }).success,
+    ).toBe(false);
+  });
+
+  it('requires a check-in field on an ended session, outcome in its set (CI1)', () => {
+    const ended = { ...base, status: 'completed', focusedSeconds: 1_500, endedAt: LATER };
+    expect(focusSessionViewSchema.safeParse(ended).success).toBe(false);
+    expect(
+      focusSessionViewSchema.safeParse({
+        ...ended,
+        checkIn: { outcome: 'great', note: null, recordedAt: LATER },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('trims a check-in note, treats a blank one as none and refuses unknown keys', () => {
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'stuck', note: '  hm  ' })).toEqual({
+      outcome: 'stuck',
+      note: 'hm',
+    });
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'done', note: '   ' })).toEqual({
+      outcome: 'done',
+      note: null,
+    });
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'progress' }).note).toBeNull();
+    expect(
+      checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', note: 'x'.repeat(281) })
+        .success,
+    ).toBe(false);
+    expect(
+      checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', taskId: TASK_ID }).success,
     ).toBe(false);
   });
 

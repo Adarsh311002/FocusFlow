@@ -21,6 +21,8 @@ export const errorCodes = [
   // Focus sessions (Phase 4B, docs/api/rest.md)
   'SESSION_IN_PROGRESS',
   'NOT_CONNECTED',
+  // Session check-in (CI2)
+  'SESSION_NOT_ENDED',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',

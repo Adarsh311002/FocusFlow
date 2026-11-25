@@ -43,6 +43,13 @@
       "when": 1795077621061,
       "tag": "0005_room_blocks_and_daily_goal",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795587758402,
+      "tag": "0006_session_check_in_and_shared_intention",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,15 @@ export const toFocusSessionView = (
     focusedSeconds: row.focusedSeconds,
     startedAt: row.startedAt.toISOString(),
   };
+  // CI1: the CHECK constraints keep the three columns together and off in-progress rows.
+  const checkIn =
+    row.checkInOutcome === null || row.checkedInAt === null
+      ? null
+      : {
+          outcome: row.checkInOutcome,
+          note: row.checkInNote,
+          recordedAt: row.checkedInAt.toISOString(),
+        };
   switch (row.status) {
     case 'in_progress':
       return focusSessionViewSchema.parse({
@@ -39,6 +48,7 @@ export const toFocusSessionView = (
         ...base,
         status: 'completed',
         endedAt: row.endedAt?.toISOString(),
+        checkIn,
       });
     default:
       return focusSessionViewSchema.parse({
@@ -46,6 +56,7 @@ export const toFocusSessionView = (
         status: row.status,
         endedAt: row.endedAt?.toISOString(),
         abandonReason: row.abandonReason,
+        checkIn,
       });
   }
 };

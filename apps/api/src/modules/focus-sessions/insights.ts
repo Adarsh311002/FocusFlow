@@ -171,6 +171,7 @@ export const buildInsights = async (
   const room = emptyCounters();
   const current = emptyCounters();
   const before = emptyCounters();
+  const checkIns = { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 };
 
   for (const minute of input.minutes) {
     const local = localOf(minute.minuteStartMs);
@@ -195,6 +196,14 @@ export const buildInsights = async (
     if (minute.taskId === null) {
       addMinute(noTask, minute);
     } else {
+      // CI5: only sessions with an intention (a task) are counted.
+      const ended = minute.completedCount + minute.abandonedCount;
+      const recorded = minute.doneCount + minute.progressCount + minute.stuckCount;
+      checkIns.withIntention += ended;
+      checkIns.done += minute.doneCount;
+      checkIns.progress += minute.progressCount;
+      checkIns.stuck += minute.stuckCount;
+      checkIns.unrecorded += ended - recorded;
       const counters = taskTotals.get(minute.taskId) ?? emptyCounters();
       addMinute(counters, minute);
       taskTotals.set(minute.taskId, counters);
@@ -272,6 +281,7 @@ export const buildInsights = async (
     otherTasks,
     noTask: toBucket(noTask),
     split: { solo: toBucket(solo), room: toBucket(room) },
+    checkIns,
     comparison: {
       previousFrom: previous.from,
       previousTo: previous.to,

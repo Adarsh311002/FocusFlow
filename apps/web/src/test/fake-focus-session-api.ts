@@ -3,6 +3,7 @@ import {
   API_BASE_PATH,
   authPaths,
   calendarDatesFrom,
+  checkInFocusSessionRequestSchema,
   focusSessionInsightsResponseSchema,
   focusSessionListResponseSchema,
   focusSessionPaths,
@@ -33,9 +34,21 @@ export type FakeSession = {
   startedAt: string;
 } & (
   | { status: 'in_progress'; runningSince: string | null }
-  | { status: 'completed'; endedAt: string }
-  | { status: 'abandoned'; endedAt: string; abandonReason: AbandonReason }
+  | { status: 'completed'; endedAt: string; checkIn: FakeCheckIn | null }
+  | {
+      status: 'abandoned';
+      endedAt: string;
+      abandonReason: AbandonReason;
+      checkIn: FakeCheckIn | null;
+    }
 );
+
+/** CI1: the user's check-in on an ended session. */
+export type FakeCheckIn = {
+  outcome: 'done' | 'progress' | 'stuck';
+  note: string | null;
+  recordedAt: string;
+};
 
 export type FakeSummaryDay = {
   date: string;
@@ -64,11 +77,13 @@ export function fakeSession(overrides: Partial<FakeSession> = {}): FakeSession {
     startedAt: '2026-03-09T10:00:00.000Z',
     status: 'completed' as const,
     endedAt: '2026-03-09T10:25:00.000Z',
+    checkIn: null,
   };
   const session = { ...base, ...overrides } as FakeSession;
   if (session.status === 'in_progress') {
     // An in-progress session has no end yet; drop the default's.
     Reflect.deleteProperty(session, 'endedAt');
+    Reflect.deleteProperty(session, 'checkIn');
   }
   return session;
 }
@@ -167,6 +182,7 @@ export function createFakeFocusSessionApi(
       plannedSeconds: session.plannedSeconds,
       startedAt: session.startedAt,
       endedAt: new Date(now()).toISOString(),
+      checkIn: null,
     };
     if (outcome.status === 'completed') {
       return replace(session, {
@@ -297,6 +313,27 @@ export function createFakeFocusSessionApi(
     return jsonResponse(200, sessionBody(session));
   }
 
+  /** CI2: records a check-in on an ended session; `done` is all the fake needs to know. */
+  function checkIn(sessionId: string, body: unknown): Response {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (session === undefined) {
+      return errorResponse(404, 'NOT_FOUND', 'Focus session not found.');
+    }
+    if (session.status === 'in_progress') {
+      return errorResponse(409, 'SESSION_NOT_ENDED', 'Not ended.');
+    }
+    const parsed = checkInFocusSessionRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return errorResponse(400, 'VALIDATION_FAILED', 'Invalid check-in.');
+    }
+    const next = {
+      ...session,
+      checkIn: { ...parsed.data, recordedAt: new Date(now()).toISOString() },
+    };
+    sessions[sessions.indexOf(session)] = next;
+    return jsonResponse(200, sessionBody(next));
+  }
+
   function handle(request: RecordedRequest): Response {
     const url = new URL(request.url, 'http://localhost');
     const path = url.pathname.slice(API_BASE_PATH.length);
@@ -318,6 +355,9 @@ export function createFakeFocusSessionApi(
     }
     if (path === mePaths.self) {
       return jsonResponse(200, { user: userBody });
+    }
+    if (root === 'focus-sessions' && action === 'check-in' && request.method === 'PUT') {
+      return checkIn(sessionId ?? '', request.body === null ? undefined : JSON.parse(request.body));
     }
     if (path === focusSessionPaths.insights && request.method === 'GET') {
       // A quiet, valid answer: the dashboard and Review draw insights, but these tests are
@@ -449,6 +489,7 @@ export function emptyInsights(query: { from: string; to: string; tz: string }) {
     otherTasks: { ...bucket, taskCount: 0 },
     noTask: bucket,
     split: { solo: bucket, room: bucket },
+    checkIns: { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 },
     comparison: {
       previousFrom: query.from,
       previousTo: query.to,

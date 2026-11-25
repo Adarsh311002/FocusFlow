@@ -259,6 +259,7 @@ describe('room focus events', () => {
     optedInAtMs: 1_000,
     connected: false,
     disconnectedAtMs: 2_000,
+    intention: null,
   };
 
   it('delivers validated room:focus:participants events and drops malformed ones', () => {

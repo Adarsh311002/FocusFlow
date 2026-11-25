@@ -52,9 +52,11 @@ export const focusSessionPaths = {
   pause: '/focus-sessions/:sessionId/pause',
   resume: '/focus-sessions/:sessionId/resume',
   stop: '/focus-sessions/:sessionId/stop',
+  checkIn: '/focus-sessions/:sessionId/check-in',
 } as const;
 
-export type FocusSessionPathTemplate = (typeof focusSessionPaths)['pause' | 'resume' | 'stop'];
+export type FocusSessionPathTemplate = (typeof focusSessionPaths)[
+  'pause' | 'resume' | 'stop' | 'checkIn'];
 
 /** Builds a concrete focus-session URL path from one of the per-session templates. */
 export const focusSessionPath = (

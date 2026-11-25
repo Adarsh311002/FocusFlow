@@ -11,7 +11,16 @@ export const roomFocusParamsSchema = z.strictObject({ roomId: roomIdSchema });
 export type RoomFocusParams = z.infer<typeof roomFocusParamsSchema>;
 
 /** `POST /rooms/:roomId/focus-participation`: opt into the room's current focus run. */
-export const optInRoomFocusRequestSchema = z.strictObject({ taskId: taskIdSchema.optional() });
+export const optInRoomFocusRequestSchema = z
+  .strictObject({
+    taskId: taskIdSchema.optional(),
+    /** RI1: show the task's title to the room. Needs a task; off when left out. */
+    shareIntention: z.boolean().optional(),
+  })
+  .refine((request) => request.shareIntention !== true || request.taskId !== undefined, {
+    message: 'Sharing an intention needs a task.',
+    path: ['shareIntention'],
+  });
 export type OptInRoomFocusRequest = z.infer<typeof optInRoomFocusRequestSchema>;
 
 /** `201` from opt-in; `200` from opt-out (repeats included). */

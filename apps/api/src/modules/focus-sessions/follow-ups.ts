@@ -41,7 +41,7 @@ export const followUpChange = async (
       sessionId,
       runningSinceMs: change.runningStretch.runningSinceMs,
     });
-  } else if (change.transition !== 'started') {
+  } else if (change.transition !== 'started' && change.transition !== 'checked_in') {
     await deps.markers.clear(change.userId, { kind: 'session', sessionId });
   }
 };

@@ -17,7 +17,9 @@ export type FocusSessionTransition =
   | 'completed'
   // Settled by the server (lifecycle jobs): abandoned with that reason.
   | 'grace_expired'
-  | 'expired';
+  | 'expired'
+  // CI4: the user checked in on an ended session; nothing about its time changed.
+  | 'checked_in';
 
 export type FocusSessionChange = {
   readonly userId: string;

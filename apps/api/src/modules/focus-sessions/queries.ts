@@ -131,6 +131,30 @@ export const saveSession = async (
   return row;
 };
 
+/**
+ * CI2: records the user's check-in on an ended session (the row is locked by
+ * `lockOwnedSession`). `checked_in_at` is the database clock, like every stored instant (E9).
+ */
+export const saveCheckIn = async (
+  tx: Tx,
+  sessionId: string,
+  checkIn: { readonly outcome: string; readonly note: string | null },
+): Promise<FocusSessionRow> => {
+  const [row] = await tx
+    .update(focusSessions)
+    .set({
+      checkInOutcome: checkIn.outcome,
+      checkInNote: checkIn.note,
+      checkedInAt: sql`date_trunc('milliseconds', clock_timestamp())`,
+    })
+    .where(eq(focusSessions.id, sessionId))
+    .returning();
+  if (row === undefined) {
+    throw new Error('saveCheckIn: update returned no row');
+  }
+  return row;
+};
+
 /** The referenced task for a session's view; soft-deleted tasks are still returned (D38). */
 export const findSessionTask = async (
   db: Executor,

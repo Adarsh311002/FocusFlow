@@ -179,6 +179,14 @@ export const focusSessions = pgTable(
     runningSince: timestamp({ withTimezone: true }),
     startedAt: timestamp({ withTimezone: true }).notNull(),
     endedAt: timestamp({ withTimezone: true }),
+    // CI1: the user's own account of an ended session ("did you finish it?"), all three set
+    // together; the note is optional. Never part of the focus-time arithmetic.
+    checkInOutcome: text(),
+    checkInNote: text(),
+    checkedInAt: timestamp({ withTimezone: true }),
+    // RI1: the participant chose to show their task's title to the room. Room sessions with
+    // a task only; the title itself is read from `tasks` when the list is built (RF14).
+    shareIntention: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -255,6 +263,28 @@ export const focusSessions = pgTable(
     check(
       'ck_focus_sessions_completed_focused',
       sql`${table.status} <> 'completed' OR ${table.focusedSeconds} = ${table.plannedSeconds}`,
+    ),
+    // CI1.
+    check(
+      'ck_focus_sessions_check_in_outcome',
+      sql`${table.checkInOutcome} IN ('done', 'progress', 'stuck')`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_presence',
+      sql`(${table.checkInOutcome} IS NULL) = (${table.checkedInAt} IS NULL)`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_note',
+      sql`${table.checkInNote} IS NULL OR (${table.checkInOutcome} IS NOT NULL AND char_length(${table.checkInNote}) BETWEEN 1 AND 280)`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_ended',
+      sql`${table.checkInOutcome} IS NULL OR ${table.status} <> 'in_progress'`,
+    ),
+    // RI1.
+    check(
+      'ck_focus_sessions_share_intention',
+      sql`NOT ${table.shareIntention} OR (${table.roomId} IS NOT NULL AND ${table.taskId} IS NOT NULL)`,
     ),
     // At most one in-progress session per user. It also serves every scan of in-progress
     // sessions (the reconciler sweep, stale cleanup), since it holds only those rows.

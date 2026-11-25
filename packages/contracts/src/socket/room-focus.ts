@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { checkInOutcomeSchema } from '../http/focus-sessions';
+import { TASK_TITLE_MAX_LENGTH } from '../http/tasks';
 import { focusRunIdSchema, focusSessionIdSchema, roomIdSchema, userIdSchema } from '../ids';
 
 // Room focus runs (Phase 8; docs/architecture/focus-timing-protocol.md, "Focus runs"). A run
@@ -18,8 +20,26 @@ export const roomFocusParticipantSchema = z.object({
   connected: z.boolean(),
   /** Set while disconnected: the instant the grace period started (Redis TIME). */
   disconnectedAtMs: z.number().int().nonnegative().nullable(),
+  /**
+   * RI2: what the person is working on, when they chose to share it (RI1) and the task is
+   * still theirs and not deleted; otherwise `null`. Read from PostgreSQL, never Redis (RF14).
+   */
+  intention: z.string().min(1).max(TASK_TITLE_MAX_LENGTH).nullable(),
 });
 export type RoomFocusParticipant = z.infer<typeof roomFocusParticipantSchema>;
+
+/**
+ * RI3: `room:focus:check-in`, sent to `room:{roomId}` when a participant of one of the room's
+ * runs checks in. Carries the outcome only; the note stays private. A hint for the "who
+ * finished" view of the page, never stored by the room.
+ */
+export const roomFocusCheckInEventSchema = z.object({
+  roomId: roomIdSchema,
+  focusRunId: focusRunIdSchema,
+  userId: userIdSchema,
+  outcome: checkInOutcomeSchema,
+});
+export type RoomFocusCheckInEvent = z.infer<typeof roomFocusCheckInEventSchema>;
 
 /** The caller's own participation in the current run, or `null`. */
 export const roomFocusMeSchema = z.object({

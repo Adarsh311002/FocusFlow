@@ -121,6 +121,18 @@ export const focusSessionInsightsResponseSchema = z.object({
   noTask: insightsBucketSchema,
   /** Solo sessions against room focus sessions (A8). */
   split: z.object({ solo: insightsBucketSchema, room: insightsBucketSchema }),
+  /**
+   * CI5: how the user's intentions went. Ended sessions of the range that had a task, by
+   * their check-in; `unrecorded` were never checked in. The four counts sum to
+   * `withIntention`.
+   */
+  checkIns: z.object({
+    withIntention: countSchema,
+    done: countSchema,
+    progress: countSchema,
+    stuck: countSchema,
+    unrecorded: countSchema,
+  }),
   comparison: z.object({
     previousFrom: calendarDateSchema,
     previousTo: calendarDateSchema,

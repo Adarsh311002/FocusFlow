@@ -53,6 +53,7 @@ import { recoverRoomFocusAfterRedisLoss } from '../modules/room-focus/recovery.j
 import { createRoomFocusService } from '../modules/room-focus/service.js';
 import {
   attachFocusAnnouncers,
+  attachRoomCheckInAnnouncements,
   createFocusChangeAnnouncer,
 } from '../modules/room-realtime/focus-announcers.js';
 import { createRoomPresenceCheck } from '../modules/room-realtime/focus-hooks.js';
@@ -426,6 +427,7 @@ export const createRuntime = async (
     markers: focusSessionMarkers,
   });
   attachSessionNotifications(focusSessionChanges, socketEmitter);
+  attachRoomCheckInAnnouncements(focusSessionChanges, socketEmitter, logger);
   const hintDeps = {
     db,
     markers: focusSessionMarkers,
