@@ -89,6 +89,10 @@ export function RoomFocusParticipants({
                 )}
               </span>
               <StateLabel participant={participant} nowMs={nowMs} />
+              {participant.intention !== null && (
+                // RI2: shared by the person when they joined (RI1).
+                <span className="w-full text-muted italic">{`working on “${participant.intention}”`}</span>
+              )}
             </li>
           ))}
         </ul>

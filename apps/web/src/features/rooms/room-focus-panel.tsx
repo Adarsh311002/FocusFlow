@@ -9,11 +9,13 @@ import {
   useLastEndedFocusSession,
 } from '../focus/focus-queries';
 import { formatClock, wholeMinutes } from '../focus/focus-time';
+import { SessionCheckIn } from '../focus/session-check-in';
 import { useRealtimeStatus } from '../realtime/realtime-provider';
 import { useTask, useTaskList } from '../tasks/task-queries';
 import { roomFocusErrorMessage } from './room-focus-messages';
 import { RoomFocusParticipants } from './room-focus-participants';
 import { useRoomFocusActions, useRoomFocusState } from './room-focus-queries';
+import { RoomLastRun } from './room-last-run';
 import { useRoomLive } from './room-live-store';
 import { PHASE_LABEL, remainingSecondsAt, STATUS_LABEL } from './timer-display';
 import { ConfirmGroup } from './timer-panel';
@@ -114,6 +116,7 @@ export function RoomFocusPanel({
   const dismissEnded = useDismissLastEnded();
   const { nowMs } = useTimerClock();
   const [taskChoice, setTaskChoice] = useState<string | null>(null);
+  const [shareIntention, setShareIntention] = useState(true);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
 
   // The person's own in-progress session of this room: what `current` says once it has been
@@ -171,7 +174,7 @@ export function RoomFocusPanel({
 
   function submitJoin(): void {
     actions.clearError();
-    void actions.join(taskChoice === null ? null : (taskChoice as TaskId));
+    void actions.join(taskChoice === null ? null : (taskChoice as TaskId), shareIntention);
   }
 
   const phaseLine =
@@ -252,6 +255,20 @@ export function RoomFocusPanel({
         }}
       >
         <TaskPicker value={taskChoice} onChange={setTaskChoice} disabled={busy} />
+        {taskChoice !== null && (
+          // RI1: saying it out loud is the room's strongest pull; it stays the person's choice.
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={shareIntention}
+              disabled={busy}
+              onChange={(event) => {
+                setShareIntention(event.target.checked);
+              }}
+            />
+            Show what I am working on to the room
+          </label>
+        )}
         <button
           ref={joinRef}
           type="submit"
@@ -308,6 +325,7 @@ export function RoomFocusPanel({
       {outcome !== null && (
         <div role="status" className="space-y-2 rounded border border-line bg-surface p-3">
           <p className="text-sm">{focusOutcomeMessage(outcome)}</p>
+          <SessionCheckIn session={outcome} />
           <button
             type="button"
             onClick={() => {
@@ -343,6 +361,14 @@ export function RoomFocusPanel({
         nowMs={nowMs}
         stale={!liveList}
       />
+      {liveList && (
+        <RoomLastRun
+          roomId={roomId}
+          selfId={currentUserId}
+          runId={live.focusRunId}
+          participants={live.participants}
+        />
+      )}
     </section>
   );
 }

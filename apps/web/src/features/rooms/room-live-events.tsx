@@ -46,6 +46,9 @@ export function RoomLiveEvents({ client, userId }: { client: RealtimeClient; use
             .getState()
             .focusParticipantsReceived(event.payload);
           return;
+        case 'room:focus:check-in':
+          getRoomLiveStore(event.payload.roomId).getState().focusCheckInReceived(event.payload);
+          return;
         case 'room:chat:message':
           getRoomLiveStore(event.payload.roomId).getState().chatReceived(event.payload);
           return;
