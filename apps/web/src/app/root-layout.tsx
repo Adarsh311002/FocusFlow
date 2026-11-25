@@ -7,6 +7,7 @@ import { authErrorMessage } from '../features/auth/auth-messages';
 import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
 import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
+import { avatarGlyph } from '../features/settings/settings-page';
 import { WeeklyReviewRitual } from '../features/weekly/weekly-ritual';
 import { AmbientBackground } from '../ui/ambient-background';
 import { JungleAttention, JungleHint } from '../ui/jungle/critters';
@@ -188,7 +189,7 @@ function AccountMenu() {
         }}
         className="grid h-9 w-9 place-items-center rounded-full bg-focus font-display text-lg text-focus-ink transition hover:brightness-110"
       >
-        {user.displayName.charAt(0).toUpperCase()}
+        {avatarGlyph(user)}
       </button>
       <AnimatePresence>
         {open && (
@@ -205,6 +206,16 @@ function AccountMenu() {
               <p className="text-xs text-muted">{user.email}</p>
             </div>
             <DailyGoalSetting />
+            <Link
+              to="/settings"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full')}
+            >
+              All settings
+            </Link>
             <MenuThemeToggle />
             <button
               type="button"

@@ -8,6 +8,7 @@ import { LandingPage } from '../features/landing/landing-page';
 import { ReviewPage } from '../features/review/review-page';
 import { RoomPage } from '../features/rooms/room-page';
 import { RoomsPage } from '../features/rooms/rooms-page';
+import { SettingsPage } from '../features/settings/settings-page';
 import { SystemStatus } from '../features/system/system-status';
 import { RootLayout } from './root-layout';
 
@@ -100,6 +101,21 @@ const roomRoute = createRoute({
   component: ProtectedRoom,
 });
 
+/** Settings (ST4): profile, focus defaults and this device. */
+function ProtectedSettings() {
+  return (
+    <RequireAuth>
+      <SettingsPage />
+    </RequireAuth>
+  );
+}
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: ProtectedSettings,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -110,6 +126,7 @@ const routeTree = rootRoute.addChildren([
   reviewRoute,
   roomsRoute,
   roomRoute,
+  settingsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

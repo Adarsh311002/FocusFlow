@@ -29,7 +29,13 @@ export function StartSessionForm() {
   const currentTask = useTask(currentTaskId);
   const start = useStartFocusSession();
 
-  const [choice, setChoice] = useState<Choice>({ kind: 'preset', minutes: DEFAULT_PRESET });
+  // ST3: the form opens at the user's default length (a preset, or the custom field).
+  const [choice, setChoice] = useState<Choice>(() => {
+    const minutes = (user?.defaultSessionSeconds ?? DEFAULT_PRESET * 60) / 60;
+    return (PRESET_MINUTES as readonly number[]).includes(minutes)
+      ? { kind: 'preset', minutes }
+      : { kind: 'custom', text: String(minutes) };
+  });
   const [taskChoice, setTaskChoice] = useState<string | null>(null);
   const [durationError, setDurationError] = useState<string | null>(null);
   const [intention, setIntention] = useState('');
