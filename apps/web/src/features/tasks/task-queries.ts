@@ -223,3 +223,12 @@ export function useStepMutation() {
           : removeStep(action.taskId, action.stepId),
   );
 }
+
+/** Adds several steps in order (the AI suggestions, AI7); the lists refresh once at the end. */
+export function useAddSteps() {
+  return useTaskMutation(async (action: { taskId: TaskId; titles: readonly string[] }) => {
+    for (const title of action.titles) {
+      await addStep(action.taskId, title);
+    }
+  });
+}

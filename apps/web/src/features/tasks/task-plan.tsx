@@ -7,6 +7,7 @@ import {
 import { useId, useState } from 'react';
 
 import { buttonClass, INPUT_CLASS } from '../../ui/primitives';
+import { HelpMeStart } from '../ai/help-me-start';
 import { GOAL_COLORS, useGoals } from '../goals/goals-data';
 import { useStepMutation, useTaskSteps, useUpdateTask } from './task-queries';
 
@@ -138,6 +139,8 @@ export function TaskPlan({ task }: { readonly task: TaskView }) {
           </select>
         </div>
       </div>
+
+      {task.status === 'open' && <HelpMeStart task={task} steps={list} />}
 
       <div className="space-y-2">
         <p className="text-xs text-muted">Steps</p>
