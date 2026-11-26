@@ -65,6 +65,7 @@ The socket joins the Socket.IO room before the presence list is read, so no even
 | `room:settings:updated` | `{ roomId, timerSettings, effectiveFrom: "next_phase" }` | Room |
 | `room:focus:participants` | `{ roomId, focusRunId, participants: Participant[], participantsVersion }` (a client applies it only for the same `focusRunId` and a higher `participantsVersion`, G2) | Room |
 | `room:focus:check-in` | `{ roomId, focusRunId, userId, outcome }` (RI3: a participant of one of the room's runs checked in; outcome only, the note stays private; a hint, nothing stored) | Room |
+| `buddy:nudge` | `{ fromUserId, displayName }` (BD4: an accepted buddy nudged you; at most once an hour per pair) | User |
 | `room:knock:received` | `{ roomId, requester: { userId, displayName, avatarUrl }, expiresAtMs }` | `user:{hostId}` |
 | `room:knock:removed` | `{ roomId, userId, reason: "approved" \| "rejected" \| "cancelled" }` | `user:{hostId}` |
 | `room:knock:resolved` | `{ roomId, outcome: "approved" \| "rejected" }` | `user:{requesterId}` only |

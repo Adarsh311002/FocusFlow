@@ -72,6 +72,21 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 - Both review routes validate their query strictly: an unknown key, an instant the schema refuses (without an offset, finer than millisecond precision, or outside `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]` — year 0, or year 10000 reached through an offset), `from` not earlier than `to` (history), `from` later than `to`, a range over 366 days or a date before 1970 (summary), a `limit` that is not an integer in 1–100, a cursor that does not decode or does not name one of the user's sessions, and a `tz` that is not an accepted time zone name all answer `400 VALIDATION_FAILED`.
 - **Phase 4B** implements start, current, pause, resume and stop (solo only). **Phase 5** implements history and summary (read-only, PostgreSQL only; V1–V8). `NOT_SOLO_SESSION` (Phase 8): pause, resume and stop on a room session answer `409 NOT_SOLO_SESSION`; `GET /focus-sessions/current` and the history return room sessions with `context.kind = "room"` (RF11).
 
+## Focusing with others (BD3–BD4, SC2–SC3, RR1)
+
+| Method & route | Request | Response | Rules |
+|---|---|---|---|
+| `GET /buddies` | `?tz=` | `{ code, buddies, incoming, outgoing }` | Buddies show name, avatar, `focusingNow`, `currentStreak`, `weekFocusedSeconds` only. |
+| `POST /buddies` | `{ code }` | `{ status: "requested" | "buddies" }` | Unknown or own code → `404 BUDDY_CODE_UNKNOWN`; ≤ 50 links (`409 BUDDIES_FULL`). |
+| `POST /buddies/:userId/accept` | — | `204` | Only a request they sent you (`404 NOT_BUDDIES`). |
+| `POST /buddies/:userId/nudge` | — | `204` | Accepted buddies only; once an hour per pair (`429 RATE_LIMITED`). Sends `buddy:nudge`. |
+| `DELETE /buddies/:userId` | — | `204` | Unfriend, decline or cancel; idempotent. |
+| `GET /rooms/:roomId/schedules` | — | `{ schedules }` | Members; each with `nextStartsAt`. |
+| `POST /rooms/:roomId/schedules` | `{ title, startsAt, durationMinutes, repeatsWeekly? }` | `201 { schedule }` | Host only; future start; ≤ 20 per room (`409 SCHEDULES_FULL`). |
+| `DELETE /rooms/:roomId/schedules/:scheduleId` | — | `204` | Host only. |
+| `GET /me/upcoming-sessions` | — | `{ sessions }` | The next 24 hours across the caller's rooms. |
+| `GET /rooms/:roomId/recap` | `?tz=` | `{ from, to, totals, roomStreak, people }` | Members; the last 7 local days. |
+
 ## Goals and steps (GL1–GL4, SP1–SP3)
 
 | Method & route | Request | Response | Rules |

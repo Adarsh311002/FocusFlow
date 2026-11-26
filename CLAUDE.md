@@ -365,6 +365,9 @@ Full text: `docs/decisions/decision-log.md`.
 ### Goals, steps and estimates (GL1–GL5, SP1–SP4, ES1–ES3, approved 2026-11-25)
 - Migration `0011`. **GL** `goals` (active/completed/archived, never deleted, ≤ 50 kept) with progress; `tasks.goal_id` (own, active goal to attach; `GOAL_NOT_FOUND`, `GOAL_NOT_ACTIVE`); `GET/POST/PATCH /goals`; `/goals` page; task writes refresh goals. **SP** `task_steps` (≤ 30 per task, `STEPS_FULL`) under `/tasks/:id/steps`; task views carry `steps { total, done }`. **ES** `tasks.estimated_sessions` 1–20; task views carry `sessionsSpent` (completed or ≥ 10 focused minutes). `PATCH /tasks` takes any of title, goalId, estimatedSessions.
 
+### Focusing with others (BD1–BD5, SC1–SC4, RR1–RR3, approved 2026-11-26)
+- Migration `0012`. **BD** personal buddy codes and `buddy_links`; buddies see only name, avatar, focusing now, streak and 7-day focus; `GET/POST /buddies`, accept, delete; `buddy:nudge` once an hour per pair; `/buddies` page and a nudge note. **SC** `room_schedules` (host plans once or weekly, ≤ 20 per room); `GET /me/upcoming-sessions`; reminder note from 15 minutes before. **RR** `GET /rooms/:id/recap?tz=` (7 days, who focused, room streak) on the room page.
+
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
 - Security headers, rate limiting and `/readyz` caching belong to the later production-hardening phase. **Rate limiting must be in place before the auth API is publicly exposed.**

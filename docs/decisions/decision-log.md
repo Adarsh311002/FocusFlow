@@ -695,6 +695,21 @@ Requested by the owner (feature roadmap, Wave 3): structure for bigger work. Mig
 - **ES2 Sessions spent.** Every task view carries `sessionsSpent`: its ended sessions that completed, or stopped after at least 10 focused minutes (the forest's sprout rule, GF2). Task views read ES2 and SP3 in one grouped batch per response.
 - **ES3 Web.** The task's summary line shows its goal, "spent/estimated sessions" (warm once over the estimate) and "done/total steps"; the Plan panel sets the goal and the estimate.
 
+### BD1–BD5, SC1–SC4, RR1–RR3 — Focusing with others (approved and implemented 2026-11-26, Wave 4)
+Requested by the owner (feature roadmap, Wave 4). Migration `0012`.
+- **BD1 Buddy codes and links.** Each user gets a personal 8-character buddy code (room-code alphabet, `users.buddy_code`, unique, made on first use). Table `buddy_links` (requester, addressee, `accepted_at`), one row per pair whichever way it was asked (unique index on the ordered pair), cascade with either user.
+- **BD2 What buddies see.** Display name, forest companion, whether a session of theirs is in progress, their current streak (A3's rule) and their focus over the last 7 days. Never tasks, notes, check-ins or rooms.
+- **BD3 API.** `GET /buddies?tz=` (your code, buddies, incoming and outgoing requests), `POST /buddies { code }` (asks; makes you buddies at once when they had asked you; your own or an unknown code is `404 BUDDY_CODE_UNKNOWN`; at most 50 links, `409 BUDDIES_FULL`), `POST /buddies/:userId/accept` (`404 NOT_BUDDIES` without a request), `DELETE /buddies/:userId` (unfriend, decline or cancel; idempotent).
+- **BD4 Nudges.** `POST /buddies/:userId/nudge` to an accepted buddy sends `buddy:nudge { fromUserId, displayName }` to their tabs through the Redis emitter; at most one per pair per hour (`429 RATE_LIMITED`; refused when Redis cannot count).
+- **BD5 Web.** `/buddies` (account menu): your code with Copy, a field for theirs, requests to accept or decline, buddies with "Focusing now", streak and week, Nudge (off while they focus) and Remove. A nudge shows as a short note on any page.
+- **SC1 Schedules.** Table `room_schedules` (title 1–60, `starts_at`, 5–240 minutes, `repeats_weekly`), cascade with the room; at most 20 per room (`409 SCHEDULES_FULL`).
+- **SC2 API.** `GET /rooms/:roomId/schedules` (members; each with `nextStartsAt`, the next start not yet over, weekly ones repeating), `POST` and `DELETE /rooms/:roomId/schedules/:scheduleId` (host only, `403 NOT_HOST`; a start in the past is `400`). Non-members get `404 ROOM_NOT_FOUND` (M4).
+- **SC3** `GET /me/upcoming-sessions`: the starts of the next 24 hours across every room the user hosts or belongs to.
+- **SC4 Web.** "Planned together" on the room page (the host plans and removes; members see). A reminder note on every page from 15 minutes before a planned start until it ends, with a link to the room (read every minute; dismissible). No push notifications yet.
+- **RR1 Recap API.** `GET /rooms/:roomId/recap?tz=` (members): the room's last 7 local days: focused time, completed sessions, intentions done, and who focused (current members, most time first).
+- **RR2 Room streak.** Consecutive local days, up to today, with a completed session in the room.
+- **RR3 Web.** "This week here" on the room page; under the focus-session keys, so a session ending refreshes it.
+
 ## Accepted architecture direction
 
 The following are accepted as the design direction but were not approved as individual product decisions. They may be refined during implementation if they stay consistent with the decisions above:
