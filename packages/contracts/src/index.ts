@@ -11,6 +11,7 @@ export * from './http/paths';
 export * from './http/room-focus';
 export * from './http/rooms';
 export * from './http/tasks';
+export * from './http/together';
 export * from './http/user';
 export * from './http/weekly-priorities';
 export * from './ids';

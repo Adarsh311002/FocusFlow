@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { API_BASE_PATH, authPaths } from '@focus-flow/contracts';
+import { API_BASE_PATH, authPaths, type BuddyNudgeEvent } from '@focus-flow/contracts';
 import express, { type ErrorRequestHandler, type Express } from 'express';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
@@ -17,12 +17,17 @@ import { createGoalsRouter } from '../../modules/goals/http.js';
 import { createParkedThoughtsRouter } from '../../modules/parked-thoughts/http.js';
 import { createRoomFocusRouter } from '../../modules/room-focus/http.js';
 import type { RoomFocusService } from '../../modules/room-focus/types.js';
-import { createRateLimiter, ROOM_FOCUS_RATE } from '../../modules/room-realtime/limiter.js';
+import {
+  BUDDY_NUDGE_RATE,
+  createRateLimiter,
+  ROOM_FOCUS_RATE,
+} from '../../modules/room-realtime/limiter.js';
 import { createRoomsRouter } from '../../modules/rooms/http.js';
 import type { RoomsDeps } from '../../modules/rooms/service.js';
 import { createStepsRouter } from '../../modules/steps/http.js';
 import { createSystemRouter } from '../../modules/system/http.js';
 import { createTasksRouter } from '../../modules/tasks/http.js';
+import { createTogetherRouter } from '../../modules/together/http.js';
 import { createUsersRouter } from '../../modules/users/http.js';
 import { createWeeklyPrioritiesRouter } from '../../modules/weekly-priorities/http.js';
 import type { AppConfig } from '../config.js';
@@ -40,6 +45,8 @@ type AppDeps = {
   focusSessions: Omit<FocusSessionsDeps, 'db'>;
   rooms: Omit<RoomsDeps, 'db'>;
   roomFocus: RoomFocusService;
+  /** BD4: sends `buddy:nudge` to a user's tabs (the socket emitter). */
+  notifyNudge: (userId: string, event: BuddyNudgeEvent) => void;
 };
 
 export const createApp = ({
@@ -51,6 +58,7 @@ export const createApp = ({
   focusSessions,
   rooms,
   roomFocus,
+  notifyNudge,
 }: AppDeps): Express => {
   const roomFocusLimiter = createRateLimiter(redis);
   const limits = createHttpRateLimits({
@@ -109,6 +117,17 @@ export const createApp = ({
   app.use(
     API_BASE_PATH,
     createForestRouter({ db: authDeps.db, authenticate: requireAuth(authDeps) }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createTogetherRouter({
+      db: authDeps.db,
+      authenticate: requireAuth(authDeps),
+      notify: notifyNudge,
+      // BD4: one nudge per buddy per hour; when Redis cannot count, the nudge is refused.
+      allowNudge: (from, to) =>
+        roomFocusLimiter.consume(BUDDY_NUDGE_RATE, `${from}:${to}`).catch(() => false),
+    }),
   );
   app.use(
     API_BASE_PATH,

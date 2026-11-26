@@ -62,6 +62,18 @@ export const taskPaths = {
 export const taskStepPath = (taskId: string, stepId?: string): string =>
   `/tasks/${encodeURIComponent(taskId)}/steps${stepId === undefined ? '' : `/${encodeURIComponent(stepId)}`}`;
 
+/** Wave 4: buddies (BD3), room schedules (SC2), upcoming sessions (SC3), room recap (RR1). */
+export const togetherPaths = {
+  buddies: '/buddies',
+  buddy: '/buddies/:userId',
+  acceptBuddy: '/buddies/:userId/accept',
+  nudgeBuddy: '/buddies/:userId/nudge',
+  schedules: '/rooms/:roomId/schedules',
+  schedule: '/rooms/:roomId/schedules/:scheduleId',
+  upcoming: '/me/upcoming-sessions',
+  recap: '/rooms/:roomId/recap',
+} as const;
+
 /** Goals (GL3). */
 export const goalPaths = { collection: '/goals', item: '/goals/:goalId' } as const;
 

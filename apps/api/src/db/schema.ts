@@ -45,6 +45,8 @@ export const users = pgTable(
     avatarPreset: text(),
     // ST3: the session length the start form opens with.
     defaultSessionSeconds: integer().notNull().default(1500),
+    // BD1: the personal code others enter to ask to be focus buddies; made on first use.
+    buddyCode: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -70,6 +72,7 @@ export const users = pgTable(
     check('ck_users_email_lowercase', sql`${table.email} = lower(${table.email})`),
     check('ck_users_display_name_length', sql`char_length(${table.displayName}) BETWEEN 1 AND 50`),
     check('ck_users_daily_goal_seconds', sql`${table.dailyGoalSeconds} BETWEEN 300 AND 43200`),
+    uniqueIndex('uq_users_buddy_code').on(table.buddyCode),
     check(
       'ck_users_avatar_preset',
       sql`${table.avatarPreset} IN ('monkey', 'sloth', 'toucan', 'frog', 'owl', 'butterfly', 'jaguar')`,
@@ -583,5 +586,72 @@ export const taskSteps = pgTable(
     check('ck_task_steps_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 200`),
     // A task's steps in creation order (UUIDv7).
     index('ix_task_steps_task_id_id').on(table.taskId, table.id),
+  ],
+);
+
+// Focus buddies (BD1): a request from one user to another, accepted or still pending. One
+// row per pair whichever way it was asked (the unique index on the ordered pair); deleting
+// either user removes it.
+export const buddyLinks = pgTable(
+  'buddy_links',
+  {
+    id: uuid().notNull(),
+    requesterId: uuid().notNull(),
+    addresseeId: uuid().notNull(),
+    acceptedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_buddy_links', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_buddy_links_requester_id',
+      columns: [table.requesterId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_buddy_links_addressee_id',
+      columns: [table.addresseeId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_buddy_links_not_self', sql`${table.requesterId} <> ${table.addresseeId}`),
+    uniqueIndex('uq_buddy_links_pair').using(
+      'btree',
+      sql`least(${table.requesterId}, ${table.addresseeId})`,
+      sql`greatest(${table.requesterId}, ${table.addresseeId})`,
+    ),
+    index('ix_buddy_links_addressee_id').on(table.addresseeId),
+    index('ix_buddy_links_requester_id').on(table.requesterId),
+  ],
+);
+
+// Scheduled room sessions (SC1): a time the host plans for the room to focus together, once
+// or every week. Removed with the room (cascade); the creator is kept for history.
+export const roomSchedules = pgTable(
+  'room_schedules',
+  {
+    id: uuid().notNull(),
+    roomId: uuid().notNull(),
+    createdBy: uuid().notNull(),
+    title: text().notNull(),
+    startsAt: timestamp({ withTimezone: true }).notNull(),
+    durationMinutes: smallint().notNull(),
+    repeatsWeekly: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_schedules', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_room_schedules_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_schedules_created_by',
+      columns: [table.createdBy],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_room_schedules_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 60`),
+    check('ck_room_schedules_duration', sql`${table.durationMinutes} BETWEEN 5 AND 240`),
+    index('ix_room_schedules_room_id').on(table.roomId),
   ],
 );

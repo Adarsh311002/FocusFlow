@@ -36,6 +36,9 @@ export const SOCKET_CONNECT_RATE: RateRule = {
   windowMs: 60_000,
 };
 
+/** BD4: one nudge per buddy pair per hour. */
+export const BUDDY_NUDGE_RATE: RateRule = { action: 'buddy-nudge', limit: 1, windowMs: 3_600_000 };
+
 /** Every HTTP request of one client address, outside the health checks (Phase 9). */
 export const HTTP_GLOBAL_RATE: RateRule = { action: 'http', limit: 600, windowMs: 60_000 };
 /** Login attempts per client address: 10 per minute (credential guessing). */

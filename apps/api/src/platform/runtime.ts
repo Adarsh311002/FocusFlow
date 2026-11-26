@@ -45,7 +45,12 @@ import {
   type Presence,
 } from '../modules/presence/presence.js';
 import { createPresenceStore } from '../modules/presence/store.js';
-import { type AppServer, type AppSocket, sessionRoom } from '../modules/realtime/types.js';
+import {
+  type AppServer,
+  type AppSocket,
+  sessionRoom,
+  userRoom,
+} from '../modules/realtime/types.js';
 import { createReconciler, type Reconciler } from '../modules/reconciler/reconciler.js';
 import { createRoomGraceProcessor, createRoomGraceScheduler } from '../modules/room-focus/jobs.js';
 import { createRunLedger } from '../modules/room-focus/ledger.js';
@@ -363,6 +368,10 @@ export const createRuntime = async (
     },
     rooms: { live: roomRealtime.live, logger, focus: roomFocus },
     roomFocus,
+    // BD4: a nudge reaches every tab of the buddy through the Redis emitter.
+    notifyNudge: (userId, event) => {
+      socketEmitter.to(userRoom(userId)).emit('buddy:nudge', event);
+    },
   });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];

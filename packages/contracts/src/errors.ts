@@ -30,6 +30,11 @@ export const errorCodes = [
   'GOAL_NOT_ACTIVE',
   'GOALS_FULL',
   'STEPS_FULL',
+  // Wave 4 (BD3, SC2)
+  'BUDDY_CODE_UNKNOWN',
+  'BUDDIES_FULL',
+  'NOT_BUDDIES',
+  'SCHEDULES_FULL',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',
