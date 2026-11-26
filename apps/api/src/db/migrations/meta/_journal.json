@@ -92,6 +92,13 @@
       "when": 1795613210911,
       "tag": "0012_buddies_and_schedules",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795672598799,
+      "tag": "0013_ai_jobs",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,2058 @@
+{
+  "id": "0d8d3d7a-3e20-4662-a356-34439373e664",
+  "prevId": "b98a7f20-6ddc-4b9c-88ca-3e349791edde",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.ai_jobs": {
+      "name": "ai_jobs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "week_start": {
+          "name": "week_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "input": {
+          "name": "input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure": {
+          "name": "failure",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "uq_ai_jobs_user_id_kind_active": {
+          "name": "uq_ai_jobs_user_id_kind_active",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"ai_jobs\".\"status\" IN ('queued', 'running')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_ai_jobs_user_id_kind_created_at": {
+          "name": "ix_ai_jobs_user_id_kind_created_at",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_ai_jobs_user_id": {
+          "name": "fk_ai_jobs_user_id",
+          "tableFrom": "ai_jobs",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_ai_jobs_task_id_user_id": {
+          "name": "fk_ai_jobs_task_id_user_id",
+          "tableFrom": "ai_jobs",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id", "user_id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_ai_jobs": {
+          "name": "pk_ai_jobs",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_ai_jobs_kind": {
+          "name": "ck_ai_jobs_kind",
+          "value": "\"ai_jobs\".\"kind\" IN ('first_step', 'weekly_reflection')"
+        },
+        "ck_ai_jobs_status": {
+          "name": "ck_ai_jobs_status",
+          "value": "\"ai_jobs\".\"status\" IN ('queued', 'running', 'succeeded', 'failed')"
+        },
+        "ck_ai_jobs_subject": {
+          "name": "ck_ai_jobs_subject",
+          "value": "(\"ai_jobs\".\"kind\" = 'first_step' AND \"ai_jobs\".\"task_id\" IS NOT NULL AND \"ai_jobs\".\"week_start\" IS NULL) OR (\"ai_jobs\".\"kind\" = 'weekly_reflection' AND \"ai_jobs\".\"week_start\" IS NOT NULL AND \"ai_jobs\".\"task_id\" IS NULL)"
+        },
+        "ck_ai_jobs_outcome": {
+          "name": "ck_ai_jobs_outcome",
+          "value": "(\"ai_jobs\".\"status\" = 'succeeded') = (\"ai_jobs\".\"result\" IS NOT NULL AND \"ai_jobs\".\"source\" IS NOT NULL) AND (\"ai_jobs\".\"status\" = 'failed') = (\"ai_jobs\".\"failure\" IS NOT NULL)"
+        },
+        "ck_ai_jobs_source": {
+          "name": "ck_ai_jobs_source",
+          "value": "\"ai_jobs\".\"source\" IS NULL OR \"ai_jobs\".\"source\" IN ('model', 'mock')"
+        },
+        "ck_ai_jobs_failure": {
+          "name": "ck_ai_jobs_failure",
+          "value": "\"ai_jobs\".\"failure\" IS NULL OR \"ai_jobs\".\"failure\" IN ('unavailable', 'declined', 'invalid_output', 'timed_out')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.auth_identities": {
+      "name": "auth_identities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_subject": {
+          "name": "provider_subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_at_link": {
+          "name": "email_at_link",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_auth_identities_provider_subject": {
+          "name": "uq_auth_identities_provider_subject",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_auth_identities_user_id": {
+          "name": "ix_auth_identities_user_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_auth_identities_user_id": {
+          "name": "fk_auth_identities_user_id",
+          "tableFrom": "auth_identities",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_auth_identities": {
+          "name": "pk_auth_identities",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_auth_identities_provider": {
+          "name": "ck_auth_identities_provider",
+          "value": "\"auth_identities\".\"provider\" IN ('google')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.auth_sessions": {
+      "name": "auth_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_token_hash": {
+          "name": "current_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_token_hash": {
+          "name": "previous_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "previous_valid_until": {
+          "name": "previous_valid_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rotated_at": {
+          "name": "rotated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_auth_sessions_user_id": {
+          "name": "ix_auth_sessions_user_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_auth_sessions_user_id": {
+          "name": "fk_auth_sessions_user_id",
+          "tableFrom": "auth_sessions",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_auth_sessions": {
+          "name": "pk_auth_sessions",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.buddy_links": {
+      "name": "buddy_links",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requester_id": {
+          "name": "requester_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "addressee_id": {
+          "name": "addressee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_buddy_links_pair": {
+          "name": "uq_buddy_links_pair",
+          "columns": [
+            {
+              "expression": "least(\"requester_id\", \"addressee_id\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "greatest(\"requester_id\", \"addressee_id\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_buddy_links_addressee_id": {
+          "name": "ix_buddy_links_addressee_id",
+          "columns": [
+            {
+              "expression": "addressee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_buddy_links_requester_id": {
+          "name": "ix_buddy_links_requester_id",
+          "columns": [
+            {
+              "expression": "requester_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_buddy_links_requester_id": {
+          "name": "fk_buddy_links_requester_id",
+          "tableFrom": "buddy_links",
+          "tableTo": "users",
+          "columnsFrom": ["requester_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_buddy_links_addressee_id": {
+          "name": "fk_buddy_links_addressee_id",
+          "tableFrom": "buddy_links",
+          "tableTo": "users",
+          "columnsFrom": ["addressee_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_buddy_links": {
+          "name": "pk_buddy_links",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_buddy_links_not_self": {
+          "name": "ck_buddy_links_not_self",
+          "value": "\"buddy_links\".\"requester_id\" <> \"buddy_links\".\"addressee_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.focus_sessions": {
+      "name": "focus_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "abandon_reason": {
+          "name": "abandon_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "focus_run_id": {
+          "name": "focus_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "planned_seconds": {
+          "name": "planned_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "focused_seconds": {
+          "name": "focused_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "running_since": {
+          "name": "running_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "check_in_outcome": {
+          "name": "check_in_outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "check_in_note": {
+          "name": "check_in_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "checked_in_at": {
+          "name": "checked_in_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "check_in_quality": {
+          "name": "check_in_quality",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "share_intention": {
+          "name": "share_intention",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_focus_sessions_user_id_in_progress": {
+          "name": "uq_focus_sessions_user_id_in_progress",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"focus_sessions\".\"status\" = 'in_progress'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_focus_sessions_user_id_started_at": {
+          "name": "ix_focus_sessions_user_id_started_at",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_focus_sessions_room_run_in_progress": {
+          "name": "ix_focus_sessions_room_run_in_progress",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "focus_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"focus_sessions\".\"status\" = 'in_progress'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_focus_sessions_user_id": {
+          "name": "fk_focus_sessions_user_id",
+          "tableFrom": "focus_sessions",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_focus_sessions_room_id": {
+          "name": "fk_focus_sessions_room_id",
+          "tableFrom": "focus_sessions",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fk_focus_sessions_task_id": {
+          "name": "fk_focus_sessions_task_id",
+          "tableFrom": "focus_sessions",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id", "user_id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_focus_sessions": {
+          "name": "pk_focus_sessions",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_focus_sessions_status": {
+          "name": "ck_focus_sessions_status",
+          "value": "\"focus_sessions\".\"status\" IN ('in_progress', 'completed', 'abandoned')"
+        },
+        "ck_focus_sessions_abandon_reason": {
+          "name": "ck_focus_sessions_abandon_reason",
+          "value": "\"focus_sessions\".\"abandon_reason\" IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost')"
+        },
+        "ck_focus_sessions_room_run": {
+          "name": "ck_focus_sessions_room_run",
+          "value": "(\"focus_sessions\".\"room_id\" IS NULL) = (\"focus_sessions\".\"focus_run_id\" IS NULL)"
+        },
+        "ck_focus_sessions_running_since_solo": {
+          "name": "ck_focus_sessions_running_since_solo",
+          "value": "\"focus_sessions\".\"room_id\" IS NULL OR \"focus_sessions\".\"running_since\" IS NULL"
+        },
+        "ck_focus_sessions_planned_seconds": {
+          "name": "ck_focus_sessions_planned_seconds",
+          "value": "\"focus_sessions\".\"planned_seconds\" BETWEEN 60 AND 14400"
+        },
+        "ck_focus_sessions_focused_seconds": {
+          "name": "ck_focus_sessions_focused_seconds",
+          "value": "\"focus_sessions\".\"focused_seconds\" BETWEEN 0 AND \"focus_sessions\".\"planned_seconds\""
+        },
+        "ck_focus_sessions_ended_at": {
+          "name": "ck_focus_sessions_ended_at",
+          "value": "(\"focus_sessions\".\"status\" = 'in_progress') = (\"focus_sessions\".\"ended_at\" IS NULL)"
+        },
+        "ck_focus_sessions_abandon_reason_presence": {
+          "name": "ck_focus_sessions_abandon_reason_presence",
+          "value": "(\"focus_sessions\".\"status\" = 'abandoned') = (\"focus_sessions\".\"abandon_reason\" IS NOT NULL)"
+        },
+        "ck_focus_sessions_running_since": {
+          "name": "ck_focus_sessions_running_since",
+          "value": "\"focus_sessions\".\"running_since\" IS NULL OR \"focus_sessions\".\"status\" = 'in_progress'"
+        },
+        "ck_focus_sessions_ended_after_started": {
+          "name": "ck_focus_sessions_ended_after_started",
+          "value": "\"focus_sessions\".\"ended_at\" IS NULL OR \"focus_sessions\".\"ended_at\" >= \"focus_sessions\".\"started_at\""
+        },
+        "ck_focus_sessions_running_since_after_started": {
+          "name": "ck_focus_sessions_running_since_after_started",
+          "value": "\"focus_sessions\".\"running_since\" IS NULL OR \"focus_sessions\".\"running_since\" >= \"focus_sessions\".\"started_at\""
+        },
+        "ck_focus_sessions_completed_focused": {
+          "name": "ck_focus_sessions_completed_focused",
+          "value": "\"focus_sessions\".\"status\" <> 'completed' OR \"focus_sessions\".\"focused_seconds\" = \"focus_sessions\".\"planned_seconds\""
+        },
+        "ck_focus_sessions_check_in_outcome": {
+          "name": "ck_focus_sessions_check_in_outcome",
+          "value": "\"focus_sessions\".\"check_in_outcome\" IN ('done', 'progress', 'stuck')"
+        },
+        "ck_focus_sessions_check_in_presence": {
+          "name": "ck_focus_sessions_check_in_presence",
+          "value": "(\"focus_sessions\".\"check_in_outcome\" IS NULL) = (\"focus_sessions\".\"checked_in_at\" IS NULL)"
+        },
+        "ck_focus_sessions_check_in_note": {
+          "name": "ck_focus_sessions_check_in_note",
+          "value": "\"focus_sessions\".\"check_in_note\" IS NULL OR (\"focus_sessions\".\"check_in_outcome\" IS NOT NULL AND char_length(\"focus_sessions\".\"check_in_note\") BETWEEN 1 AND 280)"
+        },
+        "ck_focus_sessions_check_in_ended": {
+          "name": "ck_focus_sessions_check_in_ended",
+          "value": "\"focus_sessions\".\"check_in_outcome\" IS NULL OR \"focus_sessions\".\"status\" <> 'in_progress'"
+        },
+        "ck_focus_sessions_check_in_quality": {
+          "name": "ck_focus_sessions_check_in_quality",
+          "value": "\"focus_sessions\".\"check_in_quality\" IS NULL OR (\"focus_sessions\".\"check_in_outcome\" IS NOT NULL AND \"focus_sessions\".\"check_in_quality\" BETWEEN 1 AND 5)"
+        },
+        "ck_focus_sessions_share_intention": {
+          "name": "ck_focus_sessions_share_intention",
+          "value": "NOT \"focus_sessions\".\"share_intention\" OR (\"focus_sessions\".\"room_id\" IS NOT NULL AND \"focus_sessions\".\"task_id\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.goals": {
+      "name": "goals",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "why": {
+          "name": "why",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_date": {
+          "name": "target_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "color": {
+          "name": "color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'leaf'"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_goals_user_id_id": {
+          "name": "ix_goals_user_id_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_goals_user_id": {
+          "name": "fk_goals_user_id",
+          "tableFrom": "goals",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_goals": {
+          "name": "pk_goals",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {
+        "uq_goals_id_user_id": {
+          "name": "uq_goals_id_user_id",
+          "nullsNotDistinct": false,
+          "columns": ["id", "user_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "ck_goals_title_length": {
+          "name": "ck_goals_title_length",
+          "value": "char_length(\"goals\".\"title\") BETWEEN 1 AND 80"
+        },
+        "ck_goals_why_length": {
+          "name": "ck_goals_why_length",
+          "value": "\"goals\".\"why\" IS NULL OR char_length(\"goals\".\"why\") BETWEEN 1 AND 280"
+        },
+        "ck_goals_color": {
+          "name": "ck_goals_color",
+          "value": "\"goals\".\"color\" IN ('leaf', 'moss', 'fern', 'amber', 'berry', 'sky')"
+        },
+        "ck_goals_one_end": {
+          "name": "ck_goals_one_end",
+          "value": "\"goals\".\"completed_at\" IS NULL OR \"goals\".\"archived_at\" IS NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.parked_thoughts": {
+      "name": "parked_thoughts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_parked_thoughts_user_id_id": {
+          "name": "ix_parked_thoughts_user_id_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_parked_thoughts_user_id": {
+          "name": "fk_parked_thoughts_user_id",
+          "tableFrom": "parked_thoughts",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_parked_thoughts_session_id": {
+          "name": "fk_parked_thoughts_session_id",
+          "tableFrom": "parked_thoughts",
+          "tableTo": "focus_sessions",
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_parked_thoughts": {
+          "name": "pk_parked_thoughts",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_parked_thoughts_body_length": {
+          "name": "ck_parked_thoughts_body_length",
+          "value": "char_length(\"parked_thoughts\".\"body\") BETWEEN 1 AND 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.room_blocks": {
+      "name": "room_blocks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_room_blocks_room_id_user_id": {
+          "name": "uq_room_blocks_room_id_user_id",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_room_blocks_user_id": {
+          "name": "ix_room_blocks_user_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_room_blocks_room_id": {
+          "name": "fk_room_blocks_room_id",
+          "tableFrom": "room_blocks",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_room_blocks_user_id": {
+          "name": "fk_room_blocks_user_id",
+          "tableFrom": "room_blocks",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_room_blocks": {
+          "name": "pk_room_blocks",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.room_members": {
+      "name": "room_members",
+      "schema": "",
+      "columns": {
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "joined_at": {
+          "name": "joined_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_room_members_user_id_joined_at": {
+          "name": "ix_room_members_user_id_joined_at",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "joined_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_room_members_room_id": {
+          "name": "fk_room_members_room_id",
+          "tableFrom": "room_members",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_room_members_user_id": {
+          "name": "fk_room_members_user_id",
+          "tableFrom": "room_members",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_room_members": {
+          "name": "pk_room_members",
+          "columns": ["room_id", "user_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.room_schedules": {
+      "name": "room_schedules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration_minutes": {
+          "name": "duration_minutes",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "repeats_weekly": {
+          "name": "repeats_weekly",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_room_schedules_room_id": {
+          "name": "ix_room_schedules_room_id",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_room_schedules_room_id": {
+          "name": "fk_room_schedules_room_id",
+          "tableFrom": "room_schedules",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_room_schedules_created_by": {
+          "name": "fk_room_schedules_created_by",
+          "tableFrom": "room_schedules",
+          "tableTo": "users",
+          "columnsFrom": ["created_by"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_room_schedules": {
+          "name": "pk_room_schedules",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_room_schedules_title_length": {
+          "name": "ck_room_schedules_title_length",
+          "value": "char_length(\"room_schedules\".\"title\") BETWEEN 1 AND 60"
+        },
+        "ck_room_schedules_duration": {
+          "name": "ck_room_schedules_duration",
+          "value": "\"room_schedules\".\"duration_minutes\" BETWEEN 5 AND 240"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.rooms": {
+      "name": "rooms",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "host_id": {
+          "name": "host_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_private": {
+          "name": "is_private",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "focus_seconds": {
+          "name": "focus_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1500
+        },
+        "short_break_seconds": {
+          "name": "short_break_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 300
+        },
+        "long_break_seconds": {
+          "name": "long_break_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 900
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_rooms_code": {
+          "name": "uq_rooms_code",
+          "columns": [
+            {
+              "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_rooms_host_id": {
+          "name": "ix_rooms_host_id",
+          "columns": [
+            {
+              "expression": "host_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_rooms_host_id": {
+          "name": "fk_rooms_host_id",
+          "tableFrom": "rooms",
+          "tableTo": "users",
+          "columnsFrom": ["host_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_rooms": {
+          "name": "pk_rooms",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_rooms_code": {
+          "name": "ck_rooms_code",
+          "value": "\"rooms\".\"code\" ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$'"
+        },
+        "ck_rooms_name": {
+          "name": "ck_rooms_name",
+          "value": "char_length(\"rooms\".\"name\") BETWEEN 1 AND 60"
+        },
+        "ck_rooms_focus_seconds": {
+          "name": "ck_rooms_focus_seconds",
+          "value": "\"rooms\".\"focus_seconds\" BETWEEN 60 AND 14400"
+        },
+        "ck_rooms_short_break_seconds": {
+          "name": "ck_rooms_short_break_seconds",
+          "value": "\"rooms\".\"short_break_seconds\" BETWEEN 60 AND 3600"
+        },
+        "ck_rooms_long_break_seconds": {
+          "name": "ck_rooms_long_break_seconds",
+          "value": "\"rooms\".\"long_break_seconds\" BETWEEN 60 AND 7200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.task_steps": {
+      "name": "task_steps",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "done_at": {
+          "name": "done_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_task_steps_task_id_id": {
+          "name": "ix_task_steps_task_id_id",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_task_steps_task_id": {
+          "name": "fk_task_steps_task_id",
+          "tableFrom": "task_steps",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id", "user_id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_task_steps_user_id": {
+          "name": "fk_task_steps_user_id",
+          "tableFrom": "task_steps",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_task_steps": {
+          "name": "pk_task_steps",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_task_steps_title_length": {
+          "name": "ck_task_steps_title_length",
+          "value": "char_length(\"task_steps\".\"title\") BETWEEN 1 AND 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.tasks": {
+      "name": "tasks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal_id": {
+          "name": "goal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimated_sessions": {
+          "name": "estimated_sessions",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_tasks_goal_id": {
+          "name": "ix_tasks_goal_id",
+          "columns": [
+            {
+              "expression": "goal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ix_tasks_user_id_id": {
+          "name": "ix_tasks_user_id_id",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_tasks_goal_id": {
+          "name": "fk_tasks_goal_id",
+          "tableFrom": "tasks",
+          "tableTo": "goals",
+          "columnsFrom": ["goal_id", "user_id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fk_tasks_user_id": {
+          "name": "fk_tasks_user_id",
+          "tableFrom": "tasks",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_tasks": {
+          "name": "pk_tasks",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {
+        "uq_tasks_id_user_id": {
+          "name": "uq_tasks_id_user_id",
+          "nullsNotDistinct": false,
+          "columns": ["id", "user_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "ck_tasks_estimated_sessions": {
+          "name": "ck_tasks_estimated_sessions",
+          "value": "\"tasks\".\"estimated_sessions\" IS NULL OR \"tasks\".\"estimated_sessions\" BETWEEN 1 AND 20"
+        },
+        "ck_tasks_title_length": {
+          "name": "ck_tasks_title_length",
+          "value": "char_length(\"tasks\".\"title\") BETWEEN 1 AND 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_verified_at": {
+          "name": "email_verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avatar_url": {
+          "name": "avatar_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "current_task_id": {
+          "name": "current_task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "daily_goal_seconds": {
+          "name": "daily_goal_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 7200
+        },
+        "avatar_preset": {
+          "name": "avatar_preset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "default_session_seconds": {
+          "name": "default_session_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1500
+        },
+        "buddy_code": {
+          "name": "buddy_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_users_email": {
+          "name": "uq_users_email",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_users_buddy_code": {
+          "name": "uq_users_buddy_code",
+          "columns": [
+            {
+              "expression": "buddy_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_users_current_task_id": {
+          "name": "fk_users_current_task_id",
+          "tableFrom": "users",
+          "tableTo": "tasks",
+          "columnsFrom": ["current_task_id", "id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_users": {
+          "name": "pk_users",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_users_email_lowercase": {
+          "name": "ck_users_email_lowercase",
+          "value": "\"users\".\"email\" = lower(\"users\".\"email\")"
+        },
+        "ck_users_display_name_length": {
+          "name": "ck_users_display_name_length",
+          "value": "char_length(\"users\".\"display_name\") BETWEEN 1 AND 50"
+        },
+        "ck_users_daily_goal_seconds": {
+          "name": "ck_users_daily_goal_seconds",
+          "value": "\"users\".\"daily_goal_seconds\" BETWEEN 300 AND 43200"
+        },
+        "ck_users_avatar_preset": {
+          "name": "ck_users_avatar_preset",
+          "value": "\"users\".\"avatar_preset\" IN ('monkey', 'sloth', 'toucan', 'frog', 'owl', 'butterfly', 'jaguar')"
+        },
+        "ck_users_default_session_seconds": {
+          "name": "ck_users_default_session_seconds",
+          "value": "\"users\".\"default_session_seconds\" BETWEEN 60 AND 14400"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.weekly_priorities": {
+      "name": "weekly_priorities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week_start": {
+          "name": "week_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "uq_weekly_priorities_user_week_position": {
+          "name": "uq_weekly_priorities_user_week_position",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "week_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_weekly_priorities_user_week_task": {
+          "name": "uq_weekly_priorities_user_week_task",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "week_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fk_weekly_priorities_user_id": {
+          "name": "fk_weekly_priorities_user_id",
+          "tableFrom": "weekly_priorities",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_weekly_priorities_task_id": {
+          "name": "fk_weekly_priorities_task_id",
+          "tableFrom": "weekly_priorities",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id", "user_id"],
+          "columnsTo": ["id", "user_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pk_weekly_priorities": {
+          "name": "pk_weekly_priorities",
+          "columns": ["id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ck_weekly_priorities_position": {
+          "name": "ck_weekly_priorities_position",
+          "value": "\"weekly_priorities\".\"position\" BETWEEN 1 AND 3"
+        },
+        "ck_weekly_priorities_week_start_monday": {
+          "name": "ck_weekly_priorities_week_start_monday",
+          "value": "extract(isodow from \"weekly_priorities\".\"week_start\") = 1"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

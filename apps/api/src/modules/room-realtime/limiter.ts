@@ -39,6 +39,19 @@ export const SOCKET_CONNECT_RATE: RateRule = {
 /** BD4: one nudge per buddy pair per hour. */
 export const BUDDY_NUDGE_RATE: RateRule = { action: 'buddy-nudge', limit: 1, windowMs: 3_600_000 };
 
+/** AI6: new "Help me start" requests per user (each one is a model call). */
+export const AI_FIRST_STEP_RATE: RateRule = {
+  action: 'ai-first-step',
+  limit: 20,
+  windowMs: 3_600_000,
+};
+/** AI6: new weekly reflections per user per day. */
+export const AI_REFLECTION_RATE: RateRule = {
+  action: 'ai-reflection',
+  limit: 6,
+  windowMs: 86_400_000,
+};
+
 /** Every HTTP request of one client address, outside the health checks (Phase 9). */
 export const HTTP_GLOBAL_RATE: RateRule = { action: 'http', limit: 600, windowMs: 60_000 };
 /** Login attempts per client address: 10 per minute (credential guessing). */

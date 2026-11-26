@@ -47,6 +47,8 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
   BUDDIES_FULL: 409,
   NOT_BUDDIES: 404,
   SCHEDULES_FULL: 409,
+  AI_JOB_NOT_FOUND: 404,
+  AI_JOB_BUSY: 409,
   ROOM_NOT_FOUND: 404,
   NOT_A_MEMBER: 403,
   NOT_JOINED: 409,

@@ -1,5 +1,6 @@
 export * from './dates';
 export * from './errors';
+export * from './http/ai';
 export * from './http/auth';
 export * from './http/focus-sessions';
 export * from './http/forest';
@@ -15,6 +16,7 @@ export * from './http/together';
 export * from './http/user';
 export * from './http/weekly-priorities';
 export * from './ids';
+export * from './jobs/ai';
 export * from './jobs/focus-session';
 export * from './jobs/maintenance';
 export * from './jobs/room-timer';

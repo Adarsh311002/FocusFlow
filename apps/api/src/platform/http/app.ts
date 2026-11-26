@@ -7,6 +7,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import pinoHttp from 'pino-http';
 
+import { createAiRouter } from '../../modules/ai/http.js';
 import { createAuthRouter } from '../../modules/auth/http.js';
 import { requireAuth } from '../../modules/auth/middleware.js';
 import type { AuthDeps } from '../../modules/auth/service.js';
@@ -18,6 +19,8 @@ import { createParkedThoughtsRouter } from '../../modules/parked-thoughts/http.j
 import { createRoomFocusRouter } from '../../modules/room-focus/http.js';
 import type { RoomFocusService } from '../../modules/room-focus/types.js';
 import {
+  AI_FIRST_STEP_RATE,
+  AI_REFLECTION_RATE,
   BUDDY_NUDGE_RATE,
   createRateLimiter,
   ROOM_FOCUS_RATE,
@@ -47,6 +50,8 @@ type AppDeps = {
   roomFocus: RoomFocusService;
   /** BD4: sends `buddy:nudge` to a user's tabs (the socket emitter). */
   notifyNudge: (userId: string, event: BuddyNudgeEvent) => void;
+  /** AI3: ensures the queue job of an `ai_jobs` row. */
+  scheduleAiJob: (jobId: string) => Promise<unknown>;
 };
 
 export const createApp = ({
@@ -59,6 +64,7 @@ export const createApp = ({
   rooms,
   roomFocus,
   notifyNudge,
+  scheduleAiJob,
 }: AppDeps): Express => {
   const roomFocusLimiter = createRateLimiter(redis);
   const limits = createHttpRateLimits({
@@ -127,6 +133,20 @@ export const createApp = ({
       // BD4: one nudge per buddy per hour; when Redis cannot count, the nudge is refused.
       allowNudge: (from, to) =>
         roomFocusLimiter.consume(BUDDY_NUDGE_RATE, `${from}:${to}`).catch(() => false),
+    }),
+  );
+  app.use(
+    API_BASE_PATH,
+    createAiRouter({
+      db: authDeps.db,
+      authenticate: requireAuth(authDeps),
+      logger,
+      schedule: scheduleAiJob,
+      // AI6: every new job is a model call; when Redis cannot count, it is refused.
+      allow: (userId, kind) =>
+        roomFocusLimiter
+          .consume(kind === 'first_step' ? AI_FIRST_STEP_RATE : AI_REFLECTION_RATE, userId)
+          .catch(() => false),
     }),
   );
   app.use(

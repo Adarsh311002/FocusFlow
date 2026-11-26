@@ -304,6 +304,8 @@ describe('shutdown order', () => {
       'focus-session queue',
       'room-timer worker',
       'room-timer queue',
+      'ai worker',
+      'ai queue',
       'redis connections',
     ]);
   });

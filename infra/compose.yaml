@@ -1,6 +1,6 @@
 # Local development datastores for Focus Flow v2.
 #
-# Only PostgreSQL and Redis run in Docker (I9): the API and the web app run
+# PostgreSQL, Redis and the Python AI service run in Docker (I9): the API and the web app run
 # natively on the host for fast reloads and working debuggers on Windows.
 # Ports are published on the loopback interface only, so nothing is reachable
 # from the network. Credentials come from infra/.env (see .env.example) and are
@@ -58,6 +58,34 @@ services:
         - CMD
         - redis-cli
         - ping
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # The Python AI service (Wave 5, AI1). Python is not needed on the host: it is built here.
+  # Defaults to the mock provider (no key, nothing sent anywhere); services/ai/.env
+  # (git-ignored, see .env.example) switches it to Claude with your own API key.
+  ai:
+    build:
+      context: ../services/ai
+      target: runtime
+    container_name: focusflow-ai
+    restart: unless-stopped
+    environment:
+      AI_PROVIDER: mock
+      AI_INTERNAL_TOKEN: local-dev-internal-token-change-me
+    env_file:
+      - path: ../services/ai/.env
+        required: false
+    ports:
+      - '127.0.0.1:${AI_PORT:-8000}:8000'
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
       interval: 10s
       timeout: 3s
       retries: 5

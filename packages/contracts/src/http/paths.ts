@@ -146,3 +146,12 @@ export const roomPath = (
 
 export const roomByCodePath = (code: string): string =>
   roomPaths.byCode.replace(':code', encodeURIComponent(code));
+
+/** Wave 5: AI features (AI2). */
+export const aiPaths = {
+  firstStep: '/ai/first-step',
+  weeklyReflection: '/ai/weekly-reflection',
+  job: '/ai/jobs/:jobId',
+} as const;
+
+export const aiJobPath = (jobId: string): string => `/ai/jobs/${encodeURIComponent(jobId)}`;

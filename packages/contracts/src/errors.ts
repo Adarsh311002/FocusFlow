@@ -35,6 +35,9 @@ export const errorCodes = [
   'BUDDIES_FULL',
   'NOT_BUDDIES',
   'SCHEDULES_FULL',
+  // AI features (AI2)
+  'AI_JOB_NOT_FOUND',
+  'AI_JOB_BUSY',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',

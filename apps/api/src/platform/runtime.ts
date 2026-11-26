@@ -8,6 +8,8 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 
 import { createDb, type Db } from '../db/client.js';
+import { createAiClient } from '../modules/ai/client.js';
+import { createAiQueue, createAiScheduler, createAiWorker } from '../modules/ai/jobs.js';
 import type { AuthDeps } from '../modules/auth/service.js';
 import {
   createFocusSessionChanges,
@@ -305,6 +307,9 @@ export const createRuntime = async (
     logger,
   });
   const roomTimerQueue = createRoomTimerQueue(queueConnection, config);
+  // AI jobs (Wave 5, AI3): every role enqueues; only workers call the Python service.
+  const aiQueue = createAiQueue(queueConnection, config);
+  const scheduleAiJob = createAiScheduler(aiQueue);
   const roomTimerScheduler = createRoomTimerScheduler(roomTimerQueue);
   // Schedule first, then emit (RT13); both only log their failures.
   // Room focus runs (Phase 8): the run ledger, the grace jobs (on the focus-session queue)
@@ -372,6 +377,7 @@ export const createRuntime = async (
     notifyNudge: (userId, event) => {
       socketEmitter.to(userRoom(userId)).emit('buddy:nudge', event);
     },
+    scheduleAiJob,
   });
   const server = createServer(app);
   const onSocketConnect: ((socket: AppSocket) => void)[] = [];
@@ -476,6 +482,25 @@ export const createRuntime = async (
           config,
           logger,
           service: roomTimerService,
+        });
+
+  const aiWorkerConnection = runsWorkers
+    ? createRedisConnection(config, logger, 'bullmq')
+    : undefined;
+  const aiWorker =
+    aiWorkerConnection === undefined
+      ? undefined
+      : createAiWorker({
+          connection: aiWorkerConnection,
+          config,
+          db,
+          logger,
+          client: createAiClient({
+            baseUrl: config.AI_SERVICE_URL,
+            token: config.AI_INTERNAL_TOKEN,
+            timeoutMs: config.AI_REQUEST_TIMEOUT_MS,
+            logger,
+          }),
         });
 
   const reconciler = createReconciler({
@@ -583,6 +608,15 @@ export const createRuntime = async (
           },
         ]),
     { name: 'room-timer queue', run: () => roomTimerQueue.close() },
+    ...(aiWorker === undefined
+      ? []
+      : [
+          {
+            name: 'ai worker',
+            run: () => aiWorker.close(aiWorkerConnection?.status !== 'ready'),
+          },
+        ]),
+    { name: 'ai queue', run: () => aiQueue.close() },
     {
       name: 'redis connections',
       run: () =>
@@ -594,6 +628,7 @@ export const createRuntime = async (
           ...(workerConnection === undefined ? [] : [workerConnection]),
           ...(focusWorkerConnection === undefined ? [] : [focusWorkerConnection]),
           ...(roomTimerWorkerConnection === undefined ? [] : [roomTimerWorkerConnection]),
+          ...(aiWorkerConnection === undefined ? [] : [aiWorkerConnection]),
         ),
     },
   ];
@@ -621,6 +656,9 @@ export const createRuntime = async (
     await ensureSchedule();
     roomTimerWorker?.run().catch((error: unknown) => {
       logger.error({ err: error, instanceId }, 'The room-timer worker stopped unexpectedly');
+    });
+    aiWorker?.run().catch((error: unknown) => {
+      logger.error({ err: error, instanceId }, 'The AI worker stopped unexpectedly');
     });
     focusSessionWorker?.run().catch((error: unknown) => {
       logger.error({ err: error, instanceId }, 'The focus-session worker stopped unexpectedly');

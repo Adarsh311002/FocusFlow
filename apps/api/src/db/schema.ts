@@ -6,6 +6,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   type PgTableExtraConfigValue,
   primaryKey,
@@ -653,5 +654,70 @@ export const roomSchedules = pgTable(
     check('ck_room_schedules_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 60`),
     check('ck_room_schedules_duration', sql`${table.durationMinutes} BETWEEN 5 AND 240`),
     index('ix_room_schedules_room_id').on(table.roomId),
+  ],
+);
+
+// AI jobs (Wave 5, AI1): one row per "Help me start" or weekly reflection request. Node
+// writes every row; the worker moves it from queued to running to succeeded or failed. At
+// most one job of each kind is under way per user (the partial unique index, AI3).
+export const aiJobs = pgTable(
+  'ai_jobs',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    kind: text().notNull(),
+    status: text().notNull().default('queued'),
+    taskId: uuid(),
+    weekStart: date({ mode: 'string' }),
+    /** The request's options (for a reflection: the time zone). */
+    input: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb().$type<Record<string, unknown>>(),
+    source: text(),
+    failure: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_ai_jobs', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_ai_jobs_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_ai_jobs_task_id_user_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }),
+    check('ck_ai_jobs_kind', sql`${table.kind} IN ('first_step', 'weekly_reflection')`),
+    check(
+      'ck_ai_jobs_status',
+      sql`${table.status} IN ('queued', 'running', 'succeeded', 'failed')`,
+    ),
+    check(
+      'ck_ai_jobs_subject',
+      sql`(${table.kind} = 'first_step' AND ${table.taskId} IS NOT NULL AND ${table.weekStart} IS NULL) OR (${table.kind} = 'weekly_reflection' AND ${table.weekStart} IS NOT NULL AND ${table.taskId} IS NULL)`,
+    ),
+    check(
+      'ck_ai_jobs_outcome',
+      sql`(${table.status} = 'succeeded') = (${table.result} IS NOT NULL AND ${table.source} IS NOT NULL) AND (${table.status} = 'failed') = (${table.failure} IS NOT NULL)`,
+    ),
+    check(
+      'ck_ai_jobs_source',
+      sql`${table.source} IS NULL OR ${table.source} IN ('model', 'mock')`,
+    ),
+    check(
+      'ck_ai_jobs_failure',
+      sql`${table.failure} IS NULL OR ${table.failure} IN ('unavailable', 'declined', 'invalid_output', 'timed_out')`,
+    ),
+    uniqueIndex('uq_ai_jobs_user_id_kind_active')
+      .on(table.userId, table.kind)
+      .where(sql`${table.status} IN ('queued', 'running')`),
+    index('ix_ai_jobs_user_id_kind_created_at').on(
+      table.userId,
+      table.kind,
+      table.createdAt.desc(),
+    ),
   ],
 );
