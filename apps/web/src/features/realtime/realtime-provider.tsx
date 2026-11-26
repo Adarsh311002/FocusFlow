@@ -67,3 +67,8 @@ export function useOptionalRealtimeStatus(): RealtimeStatus | null {
   const client = useContext(RealtimeContext);
   return useSyncExternalStore(client?.subscribe ?? NO_SUBSCRIPTION, client?.getStatus ?? NO_STATUS);
 }
+
+/** The live connection, or `null` outside a provider (optional listeners such as nudges). */
+export function useOptionalRealtimeClient(): RealtimeClient | null {
+  return useContext(RealtimeContext);
+}

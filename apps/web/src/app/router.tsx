@@ -12,6 +12,7 @@ import { RoomPage } from '../features/rooms/room-page';
 import { RoomsPage } from '../features/rooms/rooms-page';
 import { SettingsPage } from '../features/settings/settings-page';
 import { SystemStatus } from '../features/system/system-status';
+import { BuddiesPage } from '../features/together/buddies-page';
 import { RootLayout } from './root-layout';
 
 const rootRoute = createRootRoute({ component: RootLayout });
@@ -148,6 +149,21 @@ const goalsRoute = createRoute({
   component: ProtectedGoals,
 });
 
+/** Focus buddies (BD5). */
+function ProtectedBuddies() {
+  return (
+    <RequireAuth>
+      <BuddiesPage />
+    </RequireAuth>
+  );
+}
+
+const buddiesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/buddies',
+  component: ProtectedBuddies,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -161,6 +177,7 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   forestRoute,
   goalsRoute,
+  buddiesRoute,
 ]);
 
 export const router = createRouter({ routeTree });

@@ -9,6 +9,7 @@ import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-qu
 import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
 import { avatarGlyph } from '../features/settings/settings-page';
+import { TogetherNotices } from '../features/together/together-notices';
 import { WeeklyReviewRitual } from '../features/weekly/weekly-ritual';
 import { AmbientBackground } from '../ui/ambient-background';
 import { JungleAttention, JungleHint } from '../ui/jungle/critters';
@@ -225,6 +226,16 @@ function AccountMenu() {
               All settings
             </Link>
             <Link
+              to="/buddies"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full')}
+            >
+              Focus buddies
+            </Link>
+            <Link
               to="/forest"
               role="menuitem"
               onClick={() => {
@@ -298,6 +309,7 @@ export function RootLayout() {
       </main>
       <ForestSoundToggle />
       <ForestUnlocks />
+      <TogetherNotices />
       <WeeklyReviewRitual />
       <DailyIntentionRitual />
       <JungleAttention />
