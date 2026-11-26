@@ -87,6 +87,17 @@ There is no "complete" endpoint: completion is decided by the server (see `archi
 | `GET /me/upcoming-sessions` | — | `{ sessions }` | The next 24 hours across the caller's rooms. |
 | `GET /rooms/:roomId/recap` | `?tz=` | `{ from, to, totals, roomStreak, people }` | Members; the last 7 local days. |
 
+## AI features (AI2–AI6)
+
+| Method & route | Request | Response | Rules |
+|---|---|---|---|
+| `POST /ai/first-step` | `{ taskId }` | `202 { job }` (new) or `200 { job }` (already running) | An open task of the caller's (`404 TASK_NOT_FOUND`, `409 TASK_NOT_OPEN`); another first-step job still running → `409 AI_JOB_BUSY`; 20 new per hour (`429 RATE_LIMITED`). |
+| `POST /ai/weekly-reflection` | `{ week, tz }` | `202 { job }` or `200 { job }` | `week` is a local Monday not after today in `tz` (else `400`); 6 new per day. |
+| `GET /ai/weekly-reflection` | `?week=` | `{ job \| null }` | The newest reflection asked for that week. |
+| `GET /ai/jobs/:jobId` | — | `{ job }` | Owner-scoped (`404 AI_JOB_NOT_FOUND`). Poll while `status` is `queued` or `running`. |
+
+A job is `{ id, kind, status, createdAt, finishedAt, failure, source, result }` plus `taskId` (first step) or `weekStart` (reflection). `failure` is `unavailable`, `declined`, `invalid_output` or `timed_out`; `source` is `model` or `mock`. Reading a job repairs one left behind (AI3).
+
 ## Goals and steps (GL1–GL4, SP1–SP3)
 
 | Method & route | Request | Response | Rules |

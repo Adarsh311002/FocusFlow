@@ -44,6 +44,7 @@ Do not change the architectural direction again unless a genuine contradiction a
 - LangChain
 - LangGraph
 - LLM provider(s) behind the Python AI service
+- Implemented in Wave 5 as `services/ai` (AI1–AI8); Python runs in Docker, not on the host
 
 ### Other planned technologies
 - Docker / Docker Compose for local development
@@ -367,6 +368,12 @@ Full text: `docs/decisions/decision-log.md`.
 
 ### Focusing with others (BD1–BD5, SC1–SC4, RR1–RR3, approved 2026-11-26)
 - Migration `0012`. **BD** personal buddy codes and `buddy_links`; buddies see only name, avatar, focusing now, streak and 7-day focus; `GET/POST /buddies`, accept, delete; `buddy:nudge` once an hour per pair; `/buddies` page and a nudge note. **SC** `room_schedules` (host plans once or weekly, ≤ 20 per room); `GET /me/upcoming-sessions`; reminder note from 15 minutes before. **RR** `GET /rooms/:id/recap?tz=` (7 days, who focused, room streak) on the room page.
+
+### AI features (AI1–AI8, approved 2026-11-26, Wave 5; technical defaults awaiting review)
+Full text: `docs/decisions/decision-log.md`. Migration `0013`.
+- **AI1** `services/ai` (uv, FastAPI, LangGraph generate → check → one retry, Pydantic, the official `anthropic` SDK) runs in Docker from `infra/compose.yaml`, internal only (`X-Internal-Token`). `AI_PROVIDER=mock` by default (no key, nothing sent); `anthropic` uses Claude (`claude-opus-5-5`, effort low, structured output, refusal fallbacks) with the owner's own key in `services/ai/.env`.
+- **AI2** `POST /ai/first-step`, `POST`/`GET /ai/weekly-reflection`, `GET /ai/jobs/:jobId` (`AI_JOB_NOT_FOUND`, `AI_JOB_BUSY`). **AI3** `ai_jobs` is the record (one active job per user and kind); queue `ai` only wakes the worker; reads repair (re-enqueue after 20 s, `timed_out` after 5 min). **AI4** Node sends a bounded context per call (resolves D28); Python has no database access. **AI5** failures `unavailable`/`declined`/`invalid_output`/`timed_out`. **AI6** 20 first steps an hour, 6 reflections a day per user.
+- **AI7** "Help me start" in an open task's Plan panel. **AI8** "Your week, reflected" on Review (polled, no socket event; a mock answer is marked as a sample).
 
 ### Tracked follow-ups (not part of Phase 2)
 - Phase 1 signup/login request schemas use `z.object` (unknown keys stripped) rather than `z.strictObject`; fix in a separate small hardening PR.
