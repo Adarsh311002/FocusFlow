@@ -18,6 +18,14 @@ export function EndedSession() {
         {session.task === null ? '' : `${session.task.title}. `}
         {focusOutcomeMessage(session)}
       </p>
+      {session.deepFocus !== undefined && (
+        // DF6: how deep it was, alongside the check-in.
+        <p className="text-sm text-muted">
+          {session.deepFocus.distractions === 0
+            ? 'Deep Focus: not a single distraction.'
+            : `Deep Focus: you left ${String(session.deepFocus.distractions)} ${session.deepFocus.distractions === 1 ? 'time' : 'times'} and came back.`}
+        </p>
+      )}
       <SessionCheckIn session={session} />
       <ParkedThoughts sessionId={session.id} title="Parked during this session" />
       <div className="flex items-center gap-3 text-sm">

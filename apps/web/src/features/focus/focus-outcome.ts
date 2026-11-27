@@ -38,6 +38,8 @@ export function focusOutcomeMessage(session: EndedSessionView): string {
       return `The host reset the timer, so the focus run ended: ${recorded} recorded.`;
     case 'phase_changed':
       return `The host switched the timer to another phase, so the focus run ended: ${recorded} recorded.`;
+    case 'focus_broken':
+      return `Focus broken: you were away from Deep Focus for more than 10 seconds, so the session reset. ${recorded} recorded.`;
     case 'timer_lost':
       return 'The room timer was lost on the server, so your focus session was ended. No time was recorded.';
   }

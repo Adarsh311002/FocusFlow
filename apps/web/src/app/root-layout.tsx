@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../features/auth/auth-context';
 import { authErrorMessage } from '../features/auth/auth-messages';
+import { DeepFocusLayer, useDeepFocusActive } from '../features/deep-focus/deep-focus-layer';
 import { ForestUnlocks } from '../features/forest/forest-unlocks';
 import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
 import { DailyIntentionRitual } from '../features/intention/intention-ritual';
@@ -24,8 +25,10 @@ const SECTIONS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/review', label: 'Review' },
   { to: '/rooms', label: 'Rooms' },
-  // Below lg the header has no room for more links; Goals and the forest are in the account
-  // menu there (and the forest also on the dashboard card).
+  { to: '/deep-focus', label: 'Deep Focus', wideOnly: true },
+  // Below lg the header has no room for more links; Deep Focus, Goals and the forest are in
+  // the account menu there (Deep Focus also linked from the start form, the forest from the
+  // dashboard card).
   { to: '/goals', label: 'Goals', wideOnly: true },
   { to: '/forest', label: 'Forest', wideOnly: true },
 ] as const;
@@ -236,6 +239,16 @@ function AccountMenu() {
               Focus buddies
             </Link>
             <Link
+              to="/deep-focus"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
+            >
+              Deep Focus
+            </Link>
+            <Link
               to="/forest"
               role="menuitem"
               onClick={() => {
@@ -282,6 +295,8 @@ function AccountMenu() {
 /** App chrome: ambient background, a floating capsule bar and the active route. */
 export function RootLayout() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // DF5: while Deep Focus runs, the app's pop-ups and rituals wait until it ends.
+  const deepFocus = useDeepFocusActive();
   if (pathname === '/') {
     // The landing page is its own full-bleed world with its own navigation.
     return <Outlet />;
@@ -290,7 +305,8 @@ export function RootLayout() {
     <div className="ff-grain relative min-h-screen text-ink">
       <AmbientBackground />
       <HangingCanopy variant="app" />
-      <header className="sticky top-0 z-40 flex justify-center px-4 pt-4">
+      {/* DF5: under Deep Focus the page behind is out of reach (keyboard and screen readers). */}
+      <header inert={deepFocus} className="sticky top-0 z-40 flex justify-center px-4 pt-4">
         <div className="flex w-full max-w-6xl items-center justify-between gap-3 rounded-full border border-line bg-canvas-2/70 px-3 py-2 shadow-card backdrop-blur-2xl">
           <Link to="/" className="flex items-center gap-2 pl-2">
             <NeuronMark />
@@ -304,16 +320,21 @@ export function RootLayout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl px-6 pt-10 pb-20">
+      <main inert={deepFocus} className="mx-auto w-full max-w-6xl px-6 pt-10 pb-20">
         <Outlet />
       </main>
       <ForestSoundToggle />
-      <ForestUnlocks />
-      <TogetherNotices />
-      <WeeklyReviewRitual />
-      <DailyIntentionRitual />
-      <JungleAttention />
-      <JungleHint />
+      <TogetherNotices held={deepFocus} />
+      {!deepFocus && (
+        <>
+          <ForestUnlocks />
+          <WeeklyReviewRitual />
+          <DailyIntentionRitual />
+          <JungleAttention />
+          <JungleHint />
+        </>
+      )}
+      <DeepFocusLayer />
     </div>
   );
 }

@@ -72,6 +72,8 @@ export function sessionStatusLabel(session: FocusSessionView): string {
           return 'Phase changed';
         case 'timer_lost':
           return 'Timer lost';
+        case 'focus_broken':
+          return 'Deep Focus broken';
       }
   }
 }

@@ -32,6 +32,8 @@ export type FakeSession = {
   plannedSeconds: number;
   focusedSeconds: number;
   startedAt: string;
+  /** DF1: only on a Deep Focus session. */
+  deepFocus?: { distractions: number; pausesUsed: number };
 } & (
   | { status: 'in_progress'; runningSince: string | null }
   | { status: 'completed'; endedAt: string; checkIn: FakeCheckIn | null }
@@ -96,7 +98,8 @@ export const emptySummary = (days: readonly string[] = []): FakeSummary => ({
   days: days.map((date) => ({ date, completedFocusedSeconds: 0, totalFocusedSeconds: 0 })),
 });
 
-export type FakeAction = 'start' | 'current' | 'pause' | 'resume' | 'stop' | 'history';
+export type FakeAction =
+  'start' | 'current' | 'pause' | 'resume' | 'stop' | 'history' | 'break' | 'distraction';
 
 /** What the fake needs to know about a task; the task fake's rows can be mapped onto it. */
 export type FakeTaskLookup = (
@@ -174,9 +177,13 @@ export function createFakeFocusSessionApi(
     session: InProgress,
     outcome:
       | { status: 'completed' }
-      | { status: 'abandoned'; reason: 'stopped' | 'grace_expired' | 'expired' },
+      | {
+          status: 'abandoned';
+          reason: 'stopped' | 'grace_expired' | 'expired' | 'focus_broken';
+        },
   ): FakeSession {
     const base = {
+      ...(session.deepFocus === undefined ? {} : { deepFocus: session.deepFocus }),
       id: session.id,
       context: session.context,
       task: session.task,
@@ -282,18 +289,44 @@ export function createFakeFocusSessionApi(
       startedAt,
       status: 'in_progress',
       runningSince: startedAt,
+      ...(parsed.data.deepFocus === true ? { deepFocus: { distractions: 0, pausesUsed: 0 } } : {}),
     };
     sessions.unshift(session);
     return jsonResponse(201, sessionBody(session));
   }
 
-  function transition(action: 'pause' | 'resume' | 'stop', sessionId: string): Response {
+  function transition(
+    action: 'pause' | 'resume' | 'stop' | 'break' | 'distraction',
+    sessionId: string,
+  ): Response {
     const session = sessions.find((candidate) => candidate.id === sessionId);
     if (session === undefined) {
       return errorResponse(404, 'NOT_FOUND', 'Focus session not found.');
     }
+    if ((action === 'break' || action === 'distraction') && session.deepFocus === undefined) {
+      return errorResponse(409, 'NOT_DEEP_FOCUS', 'This is not a Deep Focus session.');
+    }
     if (session.status !== 'in_progress') {
       return jsonResponse(200, sessionBody(session)); // E11: an ended session is unchanged.
+    }
+    if (action === 'break') {
+      return jsonResponse(
+        200,
+        sessionBody(ended(session, { status: 'abandoned', reason: 'focus_broken' })),
+      );
+    }
+    if (action === 'distraction' && session.deepFocus !== undefined) {
+      session.deepFocus = {
+        ...session.deepFocus,
+        distractions: session.deepFocus.distractions + 1,
+      };
+      return jsonResponse(200, sessionBody(session));
+    }
+    if (action === 'pause' && session.runningSince !== null && session.deepFocus !== undefined) {
+      if (session.deepFocus.pausesUsed >= 1) {
+        return errorResponse(409, 'PAUSE_USED', 'The one pause has been used.');
+      }
+      session.deepFocus = { ...session.deepFocus, pausesUsed: session.deepFocus.pausesUsed + 1 };
     }
     if (action === 'stop') {
       return jsonResponse(
@@ -414,7 +447,11 @@ export function createFakeFocusSessionApi(
     if (
       root === 'focus-sessions' &&
       sessionId !== undefined &&
-      (action === 'pause' || action === 'resume' || action === 'stop') &&
+      (action === 'pause' ||
+        action === 'resume' ||
+        action === 'stop' ||
+        action === 'break' ||
+        action === 'distraction') &&
       request.method === 'POST'
     ) {
       return consume(action) ?? transition(action, sessionId);
@@ -501,6 +538,14 @@ export function emptyInsights(query: { from: string; to: string; tz: string }) {
       byHour: Array.from({ length: 24 }, () => ({ ratedCount: 0, average: null })),
     },
     checkIns: { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 },
+    deepFocus: {
+      sessions: 0,
+      completed: 0,
+      broken: 0,
+      distractionFree: 0,
+      distractions: 0,
+      unbrokenRun: 0,
+    },
     comparison: {
       previousFrom: query.from,
       previousTo: query.to,

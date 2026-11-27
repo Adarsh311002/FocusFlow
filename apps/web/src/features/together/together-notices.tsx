@@ -14,20 +14,24 @@ const NUDGE_FOR_MS = 10_000;
 /** SC4: a session is announced from this long before it starts until it ends. */
 export const REMIND_BEFORE_MS = 15 * 60_000;
 
-export function TogetherNotices() {
+/**
+ * `held` (DF5): a Deep Focus session is running. A nudge that arrives meanwhile is kept and
+ * shown once it ends; the reminder banner waits too.
+ */
+export function TogetherNotices({ held = false }: { readonly held?: boolean }) {
   const { status } = useAuth();
   if (status !== 'authenticated') {
     return null;
   }
   return (
     <>
-      <NudgeNote />
-      <UpcomingBanner />
+      <NudgeNote held={held} />
+      {!held && <UpcomingBanner />}
     </>
   );
 }
 
-function NudgeNote() {
+function NudgeNote({ held }: { readonly held: boolean }) {
   const client = useOptionalRealtimeClient();
   const [nudge, setNudge] = useState<BuddyNudgeEvent | null>(null);
 
@@ -41,7 +45,7 @@ function NudgeNote() {
   }, [client]);
 
   useEffect(() => {
-    if (nudge === null) {
+    if (nudge === null || held) {
       return undefined;
     }
     const timer = setTimeout(() => {
@@ -50,11 +54,11 @@ function NudgeNote() {
     return () => {
       clearTimeout(timer);
     };
-  }, [nudge]);
+  }, [nudge, held]);
 
   return (
     <AnimatePresence>
-      {nudge !== null && (
+      {nudge !== null && !held && (
         <motion.div
           role="status"
           initial={{ opacity: 0, y: -16 }}

@@ -28,6 +28,8 @@ const BY_CODE: Partial<Record<ApiErrorCode, string>> = {
   TASK_NOT_OPEN: 'That task is already completed. Reopen it or pick another task.',
   VALIDATION_FAILED: 'That focus session is not valid. Check the length and try again.',
   NOT_FOUND: 'That focus session no longer exists.',
+  PAUSE_USED: 'You have already used the one pause of this Deep Focus session.',
+  NOT_DEEP_FOCUS: 'This is not a Deep Focus session.',
   NETWORK: 'Focus Flow could not reach the server. Check your connection and try again.',
   MALFORMED_RESPONSE: 'The server sent an unexpected response. Please try again.',
 };

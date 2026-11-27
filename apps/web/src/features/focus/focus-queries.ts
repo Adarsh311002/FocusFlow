@@ -19,8 +19,10 @@ import { useRealtimeClient, useRealtimeStatus } from '../realtime/realtime-provi
 import { listFocusSessions } from '../review/review-client';
 import { focusSessionKeys } from '../review/review-queries';
 import {
+  breakFocusSession,
   getCurrentFocusSession,
   pauseFocusSession,
+  recordFocusDistraction,
   resumeFocusSession,
   sessionInProgressFrom,
   startFocusSession,
@@ -389,7 +391,8 @@ export function useStartFocusSession() {
         return existing;
       }
     },
-    (request) => `${String(request.plannedSeconds)}:${request.taskId ?? ''}`,
+    (request) =>
+      `${String(request.plannedSeconds)}:${request.taskId ?? ''}:${request.deepFocus === true ? 'deep' : ''}`,
     true,
   );
 }
@@ -411,6 +414,22 @@ export function useResumeFocusSession() {
 export function useStopFocusSession() {
   return useFocusMutation(
     (id: FocusSessionId) => stopFocusSession(id),
+    (id) => id,
+  );
+}
+
+/** DF2: ends a Deep Focus session the user left for longer than the warning. */
+export function useBreakFocusSession() {
+  return useFocusMutation(
+    (id: FocusSessionId) => breakFocusSession(id),
+    (id) => id,
+  );
+}
+
+/** DF3: counts one return within the warning. */
+export function useRecordFocusDistraction() {
+  return useFocusMutation(
+    (id: FocusSessionId) => recordFocusDistraction(id),
     (id) => id,
   );
 }

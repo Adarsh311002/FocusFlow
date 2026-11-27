@@ -146,6 +146,38 @@ function DeepestHours({ quality }: { readonly quality: FocusSessionInsightsRespo
   );
 }
 
+/** DF6: how the range's Deep Focus sessions went. */
+function DeepFocusStats({ deep }: { readonly deep: FocusSessionInsightsResponse['deepFocus'] }) {
+  const stats = [
+    { label: 'Deep Focus sessions', value: String(deep.sessions) },
+    { label: 'Completed with no distraction', value: String(deep.distractionFree) },
+    { label: 'Broken', value: String(deep.broken) },
+    { label: 'Unbroken in a row', value: String(deep.unbrokenRun) },
+  ];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="font-display text-3xl">Deep Focus</h4>
+        <p className="text-sm text-muted">
+          {deep.sessions === 0
+            ? 'Try the Deep Focus tab: full screen, no tab switching.'
+            : `${String(deep.completed)} of ${String(deep.sessions)} completed, ${String(deep.distractions)} ${deep.distractions === 1 ? 'distraction' : 'distractions'} in all.`}
+        </p>
+      </div>
+      {deep.sessions > 0 && (
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {stats.map((stat) => (
+            <div key={stat.label} className="rounded-2xl border border-line bg-surface p-4">
+              <dt className="text-xs text-muted">{stat.label}</dt>
+              <dd className="font-display mt-1 text-3xl">{stat.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function Bar({
   label,
   seconds,
@@ -331,6 +363,7 @@ export function InsightsPanel() {
             <div className="space-y-10">
               <Heatmap cells={insights.data.heatmap} />
               <DeepestHours quality={insights.data.quality} />
+              <DeepFocusStats deep={insights.data.deepFocus} />
             </div>
             <Breakdown data={insights.data} />
           </div>

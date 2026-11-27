@@ -40,6 +40,13 @@ export function SessionItem({
           {session.task?.deleted === true && (
             <span className="ml-2 text-xs text-muted">(deleted)</span>
           )}
+          {session.deepFocus !== undefined && (
+            <span className="ml-2 align-middle text-xs text-focus">
+              {session.deepFocus.distractions === 0
+                ? 'Deep Focus'
+                : `Deep Focus · ${String(session.deepFocus.distractions)} left`}
+            </span>
+          )}
         </p>
         <span className="rounded-full border border-line px-3 py-1 text-[10px] tracking-[0.2em] text-muted uppercase">
           {status}

@@ -1,8 +1,18 @@
-import { TASK_TITLE_MAX_LENGTH, type TaskId, type TaskView } from '@focus-flow/contracts';
-import { useState } from 'react';
+import {
+  type StartFocusSessionRequest,
+  TASK_TITLE_MAX_LENGTH,
+  type TaskId,
+  type TaskView,
+} from '@focus-flow/contracts';
+import { Link } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
 
 import { buttonClass, INPUT_CLASS } from '../../ui/primitives';
 import { useAuth } from '../auth/auth-context';
+import { claimDeepFocus, enterFullscreen, exitFullscreen } from '../deep-focus/browser';
+import { SettleIn } from '../deep-focus/settle-in';
+import { SoundPicker } from '../deep-focus/sound-picker';
+import { stopAllSounds } from '../deep-focus/sounds';
 import { useAdoptIntention } from '../intention/intention-queries';
 import { useTask, useTaskList } from '../tasks/task-queries';
 import { focusErrorMessage } from './focus-messages';
@@ -21,8 +31,11 @@ type Choice = { kind: 'preset'; minutes: number } | { kind: 'custom'; text: stri
  * task selector preselects the user's current task purely as a convenience. The server
  * never infers the task (E3), so the choice is always sent explicitly. If the chosen task
  * changed meanwhile, the server's 404/409 is shown as is.
+ *
+ * With `deep` it starts a Deep Focus session instead (DF1, DF5), on the /deep-focus page:
+ * focus sounds to choose, full screen, and the settle-in breath before the session starts.
  */
-export function StartSessionForm() {
+export function StartSessionForm({ deep = false }: { readonly deep?: boolean }) {
   const { user } = useAuth();
   const currentTaskId = user?.currentTaskId ?? null;
   const openTasks = useTaskList('open');
@@ -40,6 +53,19 @@ export function StartSessionForm() {
   const [durationError, setDurationError] = useState<string | null>(null);
   const [intention, setIntention] = useState('');
   const adopt = useAdoptIntention();
+  // DF5: the breath before a Deep Focus session starts.
+  const [settling, setSettling] = useState<StartFocusSessionRequest | null>(null);
+  // The sounds chosen here go on into the session; leaving the page without starting one
+  // silences them.
+  const startingDeep = useRef(false);
+  useEffect(
+    () => () => {
+      if (deep && !startingDeep.current) {
+        stopAllSounds();
+      }
+    },
+    [deep],
+  );
 
   // The first page of open tasks, plus the current task when it is open but on a later page.
   const options: TaskView[] = openTasks.data?.pages.flatMap((page) => page.tasks) ?? [];
@@ -54,13 +80,25 @@ export function StartSessionForm() {
   const wanted = taskChoice ?? currentTaskId ?? '';
   const selectedTaskId = options.some((task) => task.id === wanted) ? wanted : '';
 
+  function cancelSettling(): void {
+    setSettling(null);
+    exitFullscreen();
+  }
+
   async function submit(): Promise<void> {
+    if (deep) {
+      // It needs this very click: browsers refuse full screen without one.
+      enterFullscreen();
+    }
     const parsed =
       choice.kind === 'preset'
         ? ({ ok: true, plannedSeconds: choice.minutes * 60 } as const)
         : parseDurationMinutes(choice.text);
     if (!parsed.ok) {
       setDurationError(parsed.error);
+      if (deep) {
+        cancelSettling();
+      }
       return;
     }
     setDurationError(null);
@@ -73,14 +111,38 @@ export function StartSessionForm() {
         taskId = (await adopt.mutateAsync(named)).id;
         setIntention('');
       } catch {
+        if (deep) {
+          cancelSettling();
+        }
         return; // Shown below; nothing was started.
       }
     }
-    start.mutate(
+    const request: StartFocusSessionRequest =
       taskId === null
         ? { plannedSeconds: parsed.plannedSeconds }
-        : { plannedSeconds: parsed.plannedSeconds, taskId },
-    );
+        : { plannedSeconds: parsed.plannedSeconds, taskId };
+    if (deep) {
+      setSettling({ ...request, deepFocus: true });
+      return;
+    }
+    start.mutate(request);
+  }
+
+  function startDeep(request: StartFocusSessionRequest): void {
+    setSettling(null);
+    startingDeep.current = true;
+    start.mutate(request, {
+      onSuccess: (session) => {
+        // This tab watches the session (another tab of the app would be hidden).
+        if (session.deepFocus !== undefined) {
+          claimDeepFocus(session.id);
+        }
+      },
+      onError: () => {
+        startingDeep.current = false;
+        exitFullscreen();
+      },
+    });
   }
 
   const naming = intention.trim() !== '';
@@ -188,13 +250,38 @@ export function StartSessionForm() {
         </select>
       </div>
 
+      {deep ? (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted">
+            Focus sounds (choose any, they play together)
+          </p>
+          <SoundPicker tone="light" />
+        </div>
+      ) : (
+        <p className="text-xs text-muted">
+          Want no way out?{' '}
+          <Link to="/deep-focus" className="text-focus underline underline-offset-4">
+            Try Deep Focus
+          </Link>
+          : full screen, no tab switching.
+        </p>
+      )}
+
       <button
         type="submit"
         disabled={pending}
         className={buttonClass('primary', 'w-full py-3 text-base')}
       >
-        {pending ? 'Starting…' : 'Start focus'}
+        {pending ? 'Starting…' : deep ? 'Start Deep Focus' : 'Start focus'}
       </button>
+      {settling !== null && (
+        <SettleIn
+          onDone={() => {
+            startDeep(settling);
+          }}
+          onCancel={cancelSettling}
+        />
+      )}
       {!naming && selectedTaskId === '' && (
         <p className="text-xs text-muted">
           No intention yet. You can start anyway, but naming one thing makes the time count.

@@ -14,6 +14,7 @@ import { RootLayout } from '../app/root-layout';
 import { AuthProvider, useAuth } from '../features/auth/auth-context';
 import { RequireAuth } from '../features/auth/require-auth';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { DeepFocusPage } from '../features/deep-focus/deep-focus-page';
 import { useFocusSessionEvents } from '../features/focus/focus-queries';
 import type { RealtimeClient } from '../features/realtime/realtime-client';
 import { RealtimeProvider } from '../features/realtime/realtime-provider';
@@ -93,7 +94,7 @@ export function createFocusWorld(options: { now?: (() => number) | undefined } =
  */
 export function renderFocusApp(
   options: {
-    initialPath?: '/dashboard' | '/review';
+    initialPath?: '/dashboard' | '/review' | '/deep-focus';
     strict?: boolean;
     /** A real realtime client over a fake socket, instead of the stub. */
     client?: RealtimeClient;
@@ -118,13 +119,22 @@ export function renderFocusApp(
       </RequireAuth>
     ),
   });
+  const deepFocusRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/deep-focus',
+    component: () => (
+      <RequireAuth>
+        <DeepFocusPage />
+      </RequireAuth>
+    ),
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/login',
     component: () => <p>{FOCUS_LOGIN_TEXT}</p>,
   });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([dashboardRoute, reviewRoute, loginRoute]),
+    routeTree: rootRoute.addChildren([dashboardRoute, reviewRoute, deepFocusRoute, loginRoute]),
     history: createMemoryHistory({ initialEntries: [options.initialPath ?? '/dashboard'] }),
   });
   const realtime = createStubRealtimeClient();

@@ -4,6 +4,7 @@ import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { DeepFocusPage } from '../features/deep-focus/deep-focus-page';
 import { ForestPage } from '../features/forest/forest-page';
 import { GoalsPage } from '../features/goals/goals-page';
 import { LandingPage } from '../features/landing/landing-page';
@@ -119,6 +120,21 @@ const settingsRoute = createRoute({
   component: ProtectedSettings,
 });
 
+/** Deep Focus (DF1–DF5): its own tab. */
+function ProtectedDeepFocus() {
+  return (
+    <RequireAuth>
+      <DeepFocusPage />
+    </RequireAuth>
+  );
+}
+
+const deepFocusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/deep-focus',
+  component: ProtectedDeepFocus,
+});
+
 /** Grow your forest (GF6). */
 function ProtectedForest() {
   return (
@@ -175,6 +191,7 @@ const routeTree = rootRoute.addChildren([
   roomsRoute,
   roomRoute,
   settingsRoute,
+  deepFocusRoute,
   forestRoute,
   goalsRoute,
   buddiesRoute,
