@@ -140,6 +140,8 @@ export type InsightsInput = {
   /** Every UTC minute in which a completed session started, over all history. */
   readonly completedMinutes: readonly number[];
   readonly dailyGoalSeconds: number;
+  /** DF6: the latest ended Deep Focus sessions in a row that were not broken. */
+  readonly deepUnbrokenRun: number;
   /** The current instant, only used to find "today" in `tz` for the streak. */
   readonly nowMs: number;
   /** Looks up the titles of the tasks that appear in the breakdown. */
@@ -176,6 +178,14 @@ export const buildInsights = async (
   const current = emptyCounters();
   const before = emptyCounters();
   const checkIns = { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 };
+  const deepFocus = {
+    sessions: 0,
+    completed: 0,
+    broken: 0,
+    distractionFree: 0,
+    distractions: 0,
+    unbrokenRun: input.deepUnbrokenRun,
+  };
   // FQ3: quality sums per local start hour, and overall.
   const qualityHours = Array.from({ length: 24 }, () => ({ sum: 0, count: 0 }));
 
@@ -192,6 +202,11 @@ export const buildInsights = async (
     addMinute(day, minute);
     addMinute(current, minute);
     addMinute(minute.isRoom ? room : solo, minute);
+    deepFocus.sessions += minute.deepCount;
+    deepFocus.completed += minute.deepCompletedCount;
+    deepFocus.broken += minute.deepBrokenCount;
+    deepFocus.distractionFree += minute.deepDistractionFreeCount;
+    deepFocus.distractions += minute.deepDistractions;
 
     const hour = qualityHours[local.hour];
     if (hour !== undefined) {
@@ -305,6 +320,7 @@ export const buildInsights = async (
       })),
     },
     checkIns,
+    deepFocus,
     comparison: {
       previousFrom: previous.from,
       previousTo: previous.to,

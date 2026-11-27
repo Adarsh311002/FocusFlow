@@ -21,13 +21,18 @@ const minute = (iso: string, extra: Partial<InsightMinute> = {}): InsightMinute 
   stuckCount: 0,
   qualitySum: 0,
   qualityCount: 0,
+  deepCount: 0,
+  deepCompletedCount: 0,
+  deepBrokenCount: 0,
+  deepDistractionFreeCount: 0,
+  deepDistractions: 0,
   ...extra,
 });
 
 const run = (
   query: { from: string; to: string; tz: string },
   minutes: InsightMinute[],
-  options: { completed?: number[]; nowMs?: number; goal?: number } = {},
+  options: { completed?: number[]; nowMs?: number; goal?: number; deepRun?: number } = {},
 ) =>
   buildInsights({
     query,
@@ -35,6 +40,7 @@ const run = (
     completedMinutes:
       options.completed ?? minutes.filter((m) => m.completedCount > 0).map((m) => m.minuteStartMs),
     dailyGoalSeconds: options.goal ?? 3_000,
+    deepUnbrokenRun: options.deepRun ?? 0,
     nowMs: options.nowMs ?? Date.parse('2025-06-30T12:00:00Z'),
     labelsOf: () => Promise.resolve([]),
   });
@@ -277,6 +283,7 @@ describe('buildInsights', () => {
       minutes,
       completedMinutes: [],
       dailyGoalSeconds: 3_000,
+      deepUnbrokenRun: 0,
       nowMs: Date.parse('2025-06-30T12:00:00Z'),
       labelsOf: (taskIds) =>
         Promise.resolve(
@@ -343,5 +350,31 @@ describe('buildInsights', () => {
     expect(result.quality.byHour[9]).toEqual({ ratedCount: 2, average: 4.5 });
     expect(result.quality.byHour[15]).toEqual({ ratedCount: 1, average: 2 });
     expect(result.quality.byHour[16]).toEqual({ ratedCount: 0, average: null });
+  });
+
+  it('sums Deep Focus sessions of the range and passes the unbroken run through (DF6)', async () => {
+    const result = await run(
+      { from: '2025-06-30', to: '2025-06-30', tz: 'UTC' },
+      [
+        minute('2025-06-30T09:00:00Z', {
+          deepCount: 2,
+          deepCompletedCount: 1,
+          deepBrokenCount: 1,
+          deepDistractionFreeCount: 1,
+          deepDistractions: 3,
+        }),
+        // The previous period is not counted.
+        minute('2025-06-29T09:00:00Z', { deepCount: 5, deepBrokenCount: 5 }),
+      ],
+      { deepRun: 4 },
+    );
+    expect(result.deepFocus).toEqual({
+      sessions: 2,
+      completed: 1,
+      broken: 1,
+      distractionFree: 1,
+      distractions: 3,
+      unbrokenRun: 4,
+    });
   });
 });

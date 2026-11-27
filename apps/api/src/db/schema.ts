@@ -265,6 +265,12 @@ export const focusSessions = pgTable(
     // RI1: the participant chose to show their task's title to the room. Room sessions with
     // a task only; the title itself is read from `tasks` when the list is built (RF14).
     shareIntention: boolean().notNull().default(false),
+    // DF1: a Deep Focus session (solo only): full screen, leaving is watched by the page.
+    deepFocus: boolean().notNull().default(false),
+    // DF3: times the user left a Deep Focus session and came back within the warning.
+    distractions: integer().notNull().default(0),
+    // DF4: pauses taken in this session; a Deep Focus session allows one.
+    pauseCount: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -299,7 +305,7 @@ export const focusSessions = pgTable(
     // E5 (solo) plus the room reasons of RF1.
     check(
       'ck_focus_sessions_abandon_reason',
-      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost')`,
+      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost', 'focus_broken')`,
     ),
     // RF1: a room session has both the room and the run, a solo one has neither.
     check(
@@ -364,6 +370,17 @@ export const focusSessions = pgTable(
       'ck_focus_sessions_check_in_quality',
       sql`${table.checkInQuality} IS NULL OR (${table.checkInOutcome} IS NOT NULL AND ${table.checkInQuality} BETWEEN 1 AND 5)`,
     ),
+    // DF1: Deep Focus is solo only, and only a Deep Focus session can be broken (DF2).
+    check(
+      'ck_focus_sessions_deep_focus_solo',
+      sql`NOT ${table.deepFocus} OR ${table.roomId} IS NULL`,
+    ),
+    check(
+      'ck_focus_sessions_focus_broken',
+      sql`${table.abandonReason} IS DISTINCT FROM 'focus_broken' OR ${table.deepFocus}`,
+    ),
+    check('ck_focus_sessions_distractions', sql`${table.distractions} BETWEEN 0 AND 1000`),
+    check('ck_focus_sessions_pause_count', sql`${table.pauseCount} >= 0`),
     // RI1.
     check(
       'ck_focus_sessions_share_intention',

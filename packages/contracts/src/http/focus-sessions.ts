@@ -36,6 +36,8 @@ export const abandonReasonSchema = z.enum([
   'reset',
   'phase_changed',
   'timer_lost',
+  // DF2: a Deep Focus session the user left for longer than the warning allowed.
+  'focus_broken',
 ]);
 export type AbandonReason = z.infer<typeof abandonReasonSchema>;
 
@@ -79,6 +81,24 @@ export const focusSessionCheckInSchema = z.object({
 });
 export type FocusSessionCheckIn = z.infer<typeof focusSessionCheckInSchema>;
 
+/** DF3: how many times a Deep Focus session may count a return within the warning. */
+export const DEEP_FOCUS_DISTRACTIONS_MAX = 1_000;
+/** DF4: a Deep Focus session allows one pause, of at most this long (the page asks after it). */
+export const DEEP_FOCUS_PAUSES_ALLOWED = 1;
+export const DEEP_FOCUS_PAUSE_SECONDS = 300;
+/** DF2: how long the user may be away before the session is broken. */
+export const DEEP_FOCUS_LEAVE_WARNING_SECONDS = 10;
+
+/**
+ * DF1: present only on a Deep Focus session. `distractions` counts the times the user left
+ * and came back within the warning (DF3); `pausesUsed` the pauses taken (DF4).
+ */
+export const focusSessionDeepFocusSchema = z.object({
+  distractions: z.number().int().min(0).max(DEEP_FOCUS_DISTRACTIONS_MAX),
+  pausesUsed: z.number().int().nonnegative(),
+});
+export type FocusSessionDeepFocus = z.infer<typeof focusSessionDeepFocusSchema>;
+
 const focusSessionViewBase = {
   id: focusSessionIdSchema,
   context: focusSessionContextSchema,
@@ -87,6 +107,8 @@ const focusSessionViewBase = {
   /** Accumulated before the current running stretch (D6); whole seconds. */
   focusedSeconds: z.number().int().nonnegative(),
   startedAt: z.iso.datetime(),
+  /** DF1: set only for a Deep Focus session; absent for every other session. */
+  deepFocus: focusSessionDeepFocusSchema.optional(),
 };
 
 /**
@@ -145,6 +167,8 @@ export type CheckInFocusSessionRequest = z.input<typeof checkInFocusSessionReque
 export const startFocusSessionRequestSchema = z.strictObject({
   plannedSeconds: plannedSecondsSchema,
   taskId: taskIdSchema.optional(),
+  /** DF1: start a Deep Focus session (full screen; leaving is watched, one pause). */
+  deepFocus: z.boolean().optional(),
 });
 export type StartFocusSessionRequest = z.infer<typeof startFocusSessionRequestSchema>;
 
@@ -165,6 +189,11 @@ export type ResumeFocusSessionResponse = FocusSessionResponse;
 export const stopFocusSessionResponseSchema = focusSessionResponseSchema;
 export type StopFocusSessionResponse = FocusSessionResponse;
 export const checkInFocusSessionResponseSchema = focusSessionResponseSchema;
+/** DF3/DF2: `POST …/distraction` and `POST …/break` answer the session too. */
+export const distractionFocusSessionResponseSchema = focusSessionResponseSchema;
+export type DistractionFocusSessionResponse = FocusSessionResponse;
+export const breakFocusSessionResponseSchema = focusSessionResponseSchema;
+export type BreakFocusSessionResponse = FocusSessionResponse;
 export type CheckInFocusSessionResponse = FocusSessionResponse;
 
 /** `GET /focus-sessions/current`: the in-progress session, or `null`. */

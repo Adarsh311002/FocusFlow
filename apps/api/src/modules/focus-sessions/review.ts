@@ -14,6 +14,7 @@ import type { Executor } from '../../db/client.js';
 import { buildInsights, previousPeriod } from './insights.js';
 import { decodeHistoryCursor, encodeHistoryCursor, invalidHistoryCursor } from './review-cursor.js';
 import {
+  countUnbrokenDeepFocusRun,
   findDailyGoalSeconds,
   findTaskLabels,
   listCompletedSessionMinutes,
@@ -135,7 +136,7 @@ export const getFocusInsights = async (
   query: FocusSessionInsightsQuery,
 ): Promise<FocusSessionInsightsResponse> => {
   const previous = previousPeriod(query);
-  const [minutes, completedMinutes, dailyGoalSeconds] = await Promise.all([
+  const [minutes, completedMinutes, dailyGoalSeconds, deepUnbrokenRun] = await Promise.all([
     sumEndedSessionsByMinuteDetailed(deps.db, userId, {
       // No session can predate 1970, whatever the previous period's dates say.
       fromMs: Math.max(0, utcMidnightMs(previous.from, -2)),
@@ -143,12 +144,14 @@ export const getFocusInsights = async (
     }),
     listCompletedSessionMinutes(deps.db, userId),
     findDailyGoalSeconds(deps.db, userId),
+    countUnbrokenDeepFocusRun(deps.db, userId),
   ]);
   return buildInsights({
     query,
     minutes,
     completedMinutes,
     dailyGoalSeconds,
+    deepUnbrokenRun,
     nowMs: (deps.now ?? Date.now)(),
     labelsOf: (taskIds) => findTaskLabels(deps.db, userId, taskIds),
   });

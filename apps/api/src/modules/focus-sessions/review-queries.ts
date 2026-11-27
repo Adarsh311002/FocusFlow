@@ -143,6 +143,12 @@ export type InsightMinute = {
   /** FQ3: the sum and number of quality ratings (FQ1) in this group. */
   readonly qualitySum: number;
   readonly qualityCount: number;
+  /** DF6: the group's Deep Focus sessions, completed, broken and distraction-free ones. */
+  readonly deepCount: number;
+  readonly deepCompletedCount: number;
+  readonly deepBrokenCount: number;
+  readonly deepDistractionFreeCount: number;
+  readonly deepDistractions: number;
 };
 
 /**
@@ -184,6 +190,23 @@ export const sumEndedSessionsByMinuteDetailed = async (
       ),
       qualitySum: sql`coalesce(sum(${focusSessions.checkInQuality}), 0)`.mapWith(Number),
       qualityCount: sql`count(${focusSessions.checkInQuality})`.mapWith(Number),
+      deepCount: sql`count(*) FILTER (WHERE ${focusSessions.deepFocus})`.mapWith(Number),
+      deepCompletedCount:
+        sql`count(*) FILTER (WHERE ${focusSessions.deepFocus} AND ${focusSessions.status} = 'completed')`.mapWith(
+          Number,
+        ),
+      deepBrokenCount:
+        sql`count(*) FILTER (WHERE ${focusSessions.abandonReason} = 'focus_broken')`.mapWith(
+          Number,
+        ),
+      deepDistractionFreeCount:
+        sql`count(*) FILTER (WHERE ${focusSessions.deepFocus} AND ${focusSessions.status} = 'completed' AND ${focusSessions.distractions} = 0)`.mapWith(
+          Number,
+        ),
+      deepDistractions:
+        sql`coalesce(sum(${focusSessions.distractions}) FILTER (WHERE ${focusSessions.deepFocus}), 0)`.mapWith(
+          Number,
+        ),
     })
     .from(focusSessions)
     .where(
@@ -213,6 +236,26 @@ export const listCompletedSessionMinutes = async (
     .where(and(eq(focusSessions.userId, userId), eq(focusSessions.status, 'completed')))
     .groupBy(minute);
   return rows.map((row) => row.minuteStartMs);
+};
+
+/** DF6: how many of the user's latest ended Deep Focus sessions in a row were not broken. */
+export const DEEP_FOCUS_RUN_SCAN = 500;
+
+export const countUnbrokenDeepFocusRun = async (db: Executor, userId: string): Promise<number> => {
+  const rows = await db
+    .select({ abandonReason: focusSessions.abandonReason })
+    .from(focusSessions)
+    .where(
+      and(
+        eq(focusSessions.userId, userId),
+        eq(focusSessions.deepFocus, true),
+        ne(focusSessions.status, 'in_progress'),
+      ),
+    )
+    .orderBy(desc(focusSessions.startedAt), desc(focusSessions.id))
+    .limit(DEEP_FOCUS_RUN_SCAN);
+  const broken = rows.findIndex((row) => row.abandonReason === 'focus_broken');
+  return broken === -1 ? rows.length : broken;
 };
 
 export type TaskLabel = { readonly id: string; readonly title: string; readonly deleted: boolean };

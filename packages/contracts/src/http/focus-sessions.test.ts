@@ -86,7 +86,7 @@ describe('statuses and abandon reasons', () => {
     expect(focusSessionStatusSchema.options).toEqual(['in_progress', 'completed', 'abandoned']);
   });
 
-  it('has the solo reasons (E5) and the room reasons added in Phase 8 (RF1)', () => {
+  it('has the solo reasons (E5), the room reasons (RF1) and the Deep Focus one (DF2)', () => {
     expect(abandonReasonSchema.options).toEqual([
       'stopped',
       'grace_expired',
@@ -97,6 +97,7 @@ describe('statuses and abandon reasons', () => {
       'reset',
       'phase_changed',
       'timer_lost',
+      'focus_broken',
     ]);
     expect(abandonReasonSchema.safeParse('crashed').success).toBe(false);
   });

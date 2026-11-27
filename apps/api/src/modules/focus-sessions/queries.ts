@@ -45,6 +45,8 @@ export type NewRunningSession = {
   readonly taskId: string | null;
   readonly plannedSeconds: number;
   readonly startedAtMs: number;
+  /** DF1. */
+  readonly deepFocus: boolean;
 };
 
 /** A new running session: `running_since = started_at`, nothing focused yet. */
@@ -64,6 +66,7 @@ export const insertRunningSession = async (
       focusedSeconds: 0,
       runningSince: startedAt,
       startedAt,
+      deepFocus: values.deepFocus,
     })
     .returning();
   if (row === undefined) {
@@ -112,7 +115,8 @@ export const findInProgressSession = async (
 export type SessionChanges = Pick<
   FocusSessionRow,
   'status' | 'abandonReason' | 'focusedSeconds' | 'runningSince' | 'endedAt'
->;
+> &
+  Partial<Pick<FocusSessionRow, 'pauseCount' | 'distractions'>>;
 
 /** Writes a transition. The row is already locked by `lockOwnedSession`. */
 export const saveSession = async (

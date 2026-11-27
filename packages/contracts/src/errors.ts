@@ -23,6 +23,9 @@ export const errorCodes = [
   'NOT_CONNECTED',
   // Session check-in (CI2)
   'SESSION_NOT_ENDED',
+  // Deep Focus (DF2–DF4)
+  'NOT_DEEP_FOCUS',
+  'PAUSE_USED',
   // Parked thoughts (PT2)
   'THOUGHTS_FULL',
   // Goals and steps (GL3, SP2)

@@ -95,10 +95,13 @@ export const focusSessionPaths = {
   resume: '/focus-sessions/:sessionId/resume',
   stop: '/focus-sessions/:sessionId/stop',
   checkIn: '/focus-sessions/:sessionId/check-in',
+  // DF2, DF3: Deep Focus only.
+  distraction: '/focus-sessions/:sessionId/distraction',
+  break: '/focus-sessions/:sessionId/break',
 } as const;
 
 export type FocusSessionPathTemplate = (typeof focusSessionPaths)[
-  'pause' | 'resume' | 'stop' | 'checkIn'];
+  'pause' | 'resume' | 'stop' | 'checkIn' | 'distraction' | 'break'];
 
 /** Builds a concrete focus-session URL path from one of the per-session templates. */
 export const focusSessionPath = (

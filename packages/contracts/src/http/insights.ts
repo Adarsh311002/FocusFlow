@@ -144,6 +144,19 @@ export const focusSessionInsightsResponseSchema = z.object({
     stuck: countSchema,
     unrecorded: countSchema,
   }),
+  /**
+   * DF6: the range's ended Deep Focus sessions. `distractionFree` completed without a single
+   * distraction; `unbrokenRun` is how many of the user's latest ended Deep Focus sessions in
+   * a row (all history) were not broken.
+   */
+  deepFocus: z.object({
+    sessions: countSchema,
+    completed: countSchema,
+    broken: countSchema,
+    distractionFree: countSchema,
+    distractions: countSchema,
+    unbrokenRun: countSchema,
+  }),
   comparison: z.object({
     previousFrom: calendarDateSchema,
     previousTo: calendarDateSchema,

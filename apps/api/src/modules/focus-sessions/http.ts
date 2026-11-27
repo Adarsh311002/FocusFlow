@@ -14,9 +14,11 @@ import { getAuthUser } from '../auth/context.js';
 import { checkInFocusSession } from './check-in.js';
 import { getFocusInsights, listFocusSessionHistory, summarizeFocusSessions } from './review.js';
 import {
+  breakFocusSession,
   type FocusSessionsDeps,
   getCurrentFocusSession,
   pauseFocusSession,
+  recordDistraction,
   resumeFocusSession,
   startFocusSession,
   stopFocusSession,
@@ -94,6 +96,8 @@ export const createFocusSessionsRouter = (deps: FocusSessionsRouterDeps): Router
   sessionAction(focusSessionPaths.pause, pauseFocusSession);
   sessionAction(focusSessionPaths.resume, resumeFocusSession);
   sessionAction(focusSessionPaths.stop, stopFocusSession);
+  sessionAction(focusSessionPaths.break, breakFocusSession);
+  sessionAction(focusSessionPaths.distraction, recordDistraction);
 
   // CI2: the user's check-in on an ended session.
   router.put(focusSessionPaths.checkIn, authenticate, (req, res, next) => {
