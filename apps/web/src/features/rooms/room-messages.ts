@@ -28,6 +28,7 @@ const BY_CODE: Partial<Record<ApiErrorCode | RoomFailureAck['error']['code'], st
   NOT_A_MEMBER: 'You are not a member of this room.',
   NOT_JOINED: 'You are not connected to this room right now. Reconnecting…',
   NOT_HOST: 'Only the host can do that.',
+  ROOM_BLOCKED: 'The host of this room has blocked you, so you cannot join it.',
   HOST_CANNOT_LEAVE: 'The host cannot leave their own room.',
   CANNOT_REMOVE_HOST: 'The host cannot be removed from the room.',
   KNOCK_REQUIRED: 'This room is private. Ask the host to let you in.',

@@ -4,7 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../features/auth/auth-context';
 import { authErrorMessage } from '../features/auth/auth-messages';
+import { DeepFocusLayer, useDeepFocusActive } from '../features/deep-focus/deep-focus-layer';
+import { ForestUnlocks } from '../features/forest/forest-unlocks';
+import { dailyGoalOf, useSetDailyGoal } from '../features/intention/intention-queries';
+import { DailyIntentionRitual } from '../features/intention/intention-ritual';
 import { useOptionalRealtimeStatus } from '../features/realtime/realtime-provider';
+import { avatarGlyph } from '../features/settings/settings-page';
+import { TogetherNotices } from '../features/together/together-notices';
+import { WeeklyReviewRitual } from '../features/weekly/weekly-ritual';
 import { AmbientBackground } from '../ui/ambient-background';
 import { JungleAttention, JungleHint } from '../ui/jungle/critters';
 import { HangingCanopy } from '../ui/jungle/foliage';
@@ -18,6 +25,12 @@ const SECTIONS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/review', label: 'Review' },
   { to: '/rooms', label: 'Rooms' },
+  { to: '/deep-focus', label: 'Deep Focus', wideOnly: true },
+  // Below lg the header has no room for more links; Deep Focus, Goals and the forest are in
+  // the account menu there (Deep Focus also linked from the start form, the forest from the
+  // dashboard card).
+  { to: '/goals', label: 'Goals', wideOnly: true },
+  { to: '/forest', label: 'Forest', wideOnly: true },
 ] as const;
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -35,7 +48,10 @@ export function AppNav() {
         {SECTIONS.map((section) => {
           const active = pathname === section.to || pathname.startsWith(`${section.to}/`);
           return (
-            <li key={section.to} className="relative">
+            <li
+              key={section.to}
+              className={'wideOnly' in section ? 'relative hidden lg:block' : 'relative'}
+            >
               {active && (
                 <motion.span
                   layoutId="app-nav-active"
@@ -46,7 +62,7 @@ export function AppNav() {
               <Link
                 to={section.to}
                 onMouseEnter={playLeafTick}
-                className="relative block rounded-full px-4 py-2 text-sm text-muted transition-colors hover:text-ink"
+                className="relative block rounded-full px-3 py-2 text-sm text-muted transition-colors hover:text-ink sm:px-4"
                 activeProps={{ 'aria-current': 'page', className: 'text-ink' }}
               >
                 {section.label}
@@ -90,7 +106,10 @@ function LiveDot() {
   );
 }
 
+/** The header's theme switch. On a phone, once signed in, it moves into the account menu so
+    the navigation fits the header. */
 function ThemeToggle() {
+  const { status } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const next = theme === 'dark' ? 'light' : 'dark';
   return (
@@ -98,9 +117,25 @@ function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
       aria-label={`Switch to ${next} theme`}
-      className="grid h-9 w-9 place-items-center rounded-full text-sm text-muted transition hover:bg-surface-strong hover:text-ink"
+      className={`${status === 'authenticated' ? 'hidden sm:grid' : 'grid'} h-9 w-9 place-items-center rounded-full text-sm text-muted transition hover:bg-surface-strong hover:text-ink`}
     >
       {theme === 'dark' ? '☀' : '☾'}
+    </button>
+  );
+}
+
+/** The theme switch inside the account menu, shown only where the header hides its own. */
+function MenuThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const next = theme === 'dark' ? 'light' : 'dark';
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={toggleTheme}
+      className={buttonClass('ghost', 'w-full sm:hidden')}
+    >
+      {`Switch to ${next} theme`}
     </button>
   );
 }
@@ -166,7 +201,7 @@ function AccountMenu() {
         }}
         className="grid h-9 w-9 place-items-center rounded-full bg-focus font-display text-lg text-focus-ink transition hover:brightness-110"
       >
-        {user.displayName.charAt(0).toUpperCase()}
+        {avatarGlyph(user)}
       </button>
       <AnimatePresence>
         {open && (
@@ -182,6 +217,58 @@ function AccountMenu() {
               <p className="font-display text-2xl">{user.displayName}</p>
               <p className="text-xs text-muted">{user.email}</p>
             </div>
+            <DailyGoalSetting />
+            <Link
+              to="/settings"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full')}
+            >
+              All settings
+            </Link>
+            <Link
+              to="/buddies"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full')}
+            >
+              Focus buddies
+            </Link>
+            <Link
+              to="/deep-focus"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
+            >
+              Deep Focus
+            </Link>
+            <Link
+              to="/forest"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
+            >
+              Your forest
+            </Link>
+            <Link
+              to="/goals"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+              }}
+              className={buttonClass('ghost', 'w-full lg:hidden')}
+            >
+              Goals
+            </Link>
+            <MenuThemeToggle />
             <button
               type="button"
               role="menuitem"
@@ -208,6 +295,8 @@ function AccountMenu() {
 /** App chrome: ambient background, a floating capsule bar and the active route. */
 export function RootLayout() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // DF5: while Deep Focus runs, the app's pop-ups and rituals wait until it ends.
+  const deepFocus = useDeepFocusActive();
   if (pathname === '/') {
     // The landing page is its own full-bleed world with its own navigation.
     return <Outlet />;
@@ -216,11 +305,12 @@ export function RootLayout() {
     <div className="ff-grain relative min-h-screen text-ink">
       <AmbientBackground />
       <HangingCanopy variant="app" />
-      <header className="sticky top-0 z-40 flex justify-center px-4 pt-4">
+      {/* DF5: under Deep Focus the page behind is out of reach (keyboard and screen readers). */}
+      <header inert={deepFocus} className="sticky top-0 z-40 flex justify-center px-4 pt-4">
         <div className="flex w-full max-w-6xl items-center justify-between gap-3 rounded-full border border-line bg-canvas-2/70 px-3 py-2 shadow-card backdrop-blur-2xl">
           <Link to="/" className="flex items-center gap-2 pl-2">
             <NeuronMark />
-            <h1 className="font-display text-xl">Focus Flow</h1>
+            <h1 className="sr-only font-display text-xl sm:not-sr-only">Focus Flow</h1>
           </Link>
           <AppNav />
           <div className="flex items-center gap-1">
@@ -230,12 +320,62 @@ export function RootLayout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl px-6 pt-10 pb-20">
+      <main inert={deepFocus} className="mx-auto w-full max-w-6xl px-6 pt-10 pb-20">
         <Outlet />
       </main>
       <ForestSoundToggle />
-      <JungleAttention />
-      <JungleHint />
+      <TogetherNotices held={deepFocus} />
+      {!deepFocus && (
+        <>
+          <ForestUnlocks />
+          <WeeklyReviewRitual />
+          <DailyIntentionRitual />
+          <JungleAttention />
+          <JungleHint />
+        </>
+      )}
+      <DeepFocusLayer />
+    </div>
+  );
+}
+
+const GOAL_HOURS: readonly number[] = [1, 2, 3, 4, 5, 6, 8];
+
+function hoursText(hours: number): string {
+  return hours === 1 ? '1 hour' : `${String(Math.round(hours * 10) / 10)} hours`;
+}
+
+/** The daily focus goal (A2), changeable any time from the account menu. */
+function DailyGoalSetting() {
+  const { user } = useAuth();
+  const setGoal = useSetDailyGoal();
+  const hours = dailyGoalOf(user) / 3600;
+  const listed = GOAL_HOURS.includes(hours);
+  return (
+    <div className="space-y-1">
+      <label htmlFor="daily-goal-setting" className="block text-xs text-muted">
+        Daily focus goal
+      </label>
+      <select
+        id="daily-goal-setting"
+        value={listed ? String(hours) : ''}
+        disabled={setGoal.isPending}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (next > 0) {
+            setGoal.mutate(next * 3600);
+          }
+        }}
+        className="w-full text-sm"
+      >
+        {!listed && <option value="">{hoursText(hours)}</option>}
+        {GOAL_HOURS.map((option) => (
+          <option key={option} value={String(option)}>
+            {hoursText(option)}
+          </option>
+        ))}
+      </select>
+      {setGoal.isError && <p className="text-xs text-danger">The goal did not save. Try again.</p>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { buttonClass } from '../../ui/primitives';
 import { ProgressRing } from '../../ui/progress-ring';
+import { ParkThought } from '../thoughts/thoughts';
 import { focusErrorMessage } from './focus-messages';
 import {
   useFocusConnection,
@@ -155,6 +156,9 @@ export function ActiveSession({ session }: { session: InProgress }) {
           automatically.
         </p>
       )}
+
+      {/* PT5: a stray thought goes here instead of breaking the session. */}
+      <ParkThought sessionId={session.id} />
 
       {confirmingStop ? (
         <div className="space-y-2">

@@ -394,6 +394,7 @@ describe('room live store: focus participants and their server version (G2)', ()
       optedInAtMs: 1,
       connected: true,
       disconnectedAtMs: null,
+      intention: null,
     });
   const ADA_P = participant(ADA, 'Ada');
   const GRACE_P = participant(GRACE, 'Grace');

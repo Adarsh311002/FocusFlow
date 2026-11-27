@@ -79,8 +79,8 @@ export const createFakeLive = (): FakeLive => {
         throw new Error('emit failed');
       }
     },
-    announceMemberRemoved: (roomId, userId, reason) => {
-      calls.push({ name: 'announceMemberRemoved', args: [roomId, userId, reason] });
+    announceMemberRemoved: (roomId, userId, reason, blocked) => {
+      calls.push({ name: 'announceMemberRemoved', args: [roomId, userId, reason, blocked] });
       return fake.failAnnouncements ? Promise.reject(new Error('emit failed')) : Promise.resolve();
     },
     announceSettingsUpdated: (roomId, timerSettings) => {

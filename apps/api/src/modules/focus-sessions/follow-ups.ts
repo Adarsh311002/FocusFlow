@@ -41,7 +41,12 @@ export const followUpChange = async (
       sessionId,
       runningSinceMs: change.runningStretch.runningSinceMs,
     });
-  } else if (change.transition !== 'started') {
+  } else if (
+    change.transition !== 'started' &&
+    change.transition !== 'checked_in' &&
+    // DF3: the session is still running; its disconnect marker must survive.
+    change.transition !== 'distraction_recorded'
+  ) {
     await deps.markers.clear(change.userId, { kind: 'session', sessionId });
   }
 };

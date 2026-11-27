@@ -22,6 +22,14 @@ const unique = (): string => Math.random().toString(36).slice(2, 8);
 
 export const PASSWORD = 'correct horse battery staple';
 
+/**
+ * Extra time each test gets for page loads. The suite runs against the Vite dev server, where
+ * every person's fresh browser context loads the app's modules one by one (about 2 s idle, up
+ * to about 10 s while Docker, the API, Vite and several browsers share the machine). The real
+ * waits a test makes (phase ends, the 60 s grace) are unchanged; only loading gets room.
+ */
+export const PAGE_LOAD_HEADROOM_MS = 60_000;
+
 /** Opens a fresh context, signs a new, uniquely named user up and lands on the dashboard. */
 export const emailOf = (name: string): string => `${name.toLowerCase()}@e2e.test`;
 
@@ -64,7 +72,21 @@ export async function signUp(
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL(/\/dashboard/);
+  await skipDailyIntention(page);
   return person;
+}
+
+/**
+ * A new user meets the full-screen daily intention ritual (IN3) right after signing up. The
+ * room suites are not about it, so each person answers "Not today", exactly as a user would;
+ * the choice is remembered in this context's localStorage, so later tabs and reloads of the
+ * same person are not asked again that day.
+ */
+async function skipDailyIntention(page: Page): Promise<void> {
+  const ritual = page.getByRole('dialog', { name: /What would make today/u });
+  await expect(ritual).toBeVisible();
+  await ritual.getByRole('button', { name: 'Not today', exact: true }).click();
+  await expect(ritual).toBeHidden();
 }
 
 export async function openRooms(person: Person): Promise<void> {

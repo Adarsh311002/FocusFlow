@@ -1,6 +1,7 @@
 import type { FocusSessionView } from '@focus-flow/contracts';
 import { Link } from '@tanstack/react-router';
 
+import { CHECK_IN_LABEL } from '../focus/session-check-in';
 import { formatDateTime, formatDuration, sessionStatusLabel } from './review-format';
 
 /** One focus session in the history: what it was for, how it ended, and how long. */
@@ -39,6 +40,13 @@ export function SessionItem({
           {session.task?.deleted === true && (
             <span className="ml-2 text-xs text-muted">(deleted)</span>
           )}
+          {session.deepFocus !== undefined && (
+            <span className="ml-2 align-middle text-xs text-focus">
+              {session.deepFocus.distractions === 0
+                ? 'Deep Focus'
+                : `Deep Focus · ${String(session.deepFocus.distractions)} left`}
+            </span>
+          )}
         </p>
         <span className="rounded-full border border-line px-3 py-1 text-[10px] tracking-[0.2em] text-muted uppercase">
           {status}
@@ -63,6 +71,25 @@ export function SessionItem({
           <span className="text-muted"> (plus the current running stretch)</span>
         )}
       </p>
+      {session.status !== 'in_progress' && session.checkIn !== null && (
+        // CI6: the user's own account of how it went, next to the server's record of time.
+        <p>
+          <span
+            className={`mr-2 rounded-full px-2.5 py-0.5 text-xs ${
+              session.checkIn.outcome === 'done'
+                ? 'bg-focus/20 text-focus'
+                : session.checkIn.outcome === 'stuck'
+                  ? 'bg-warm/20 text-warm'
+                  : 'bg-surface-strong text-ink'
+            }`}
+          >
+            {CHECK_IN_LABEL[session.checkIn.outcome]}
+          </span>
+          {session.checkIn.note !== null && (
+            <span className="text-muted italic">“{session.checkIn.note}”</span>
+          )}
+        </p>
+      )}
       <p className="text-muted">
         {'Started '}
         <time dateTime={session.startedAt}>{formatDateTime(session.startedAt, timeZone)}</time>

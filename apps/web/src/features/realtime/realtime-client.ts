@@ -1,4 +1,6 @@
 import {
+  type BuddyNudgeEvent,
+  buddyNudgeEventSchema,
   type ClientToServerEvents,
   connectErrorDataSchema,
   type FocusSessionUpdatedEvent,
@@ -70,6 +72,8 @@ export type RealtimeSocket = {
   readonly onConnectError: (listener: (error: Error) => void) => void;
   /** The raw payload; the client validates it before anyone sees it. */
   readonly onFocusSessionUpdated: (listener: (payload: unknown) => void) => void;
+  /** BD4: raw `buddy:nudge` payloads. Optional so test sockets may leave it out. */
+  readonly onBuddyNudge?: (listener: (payload: unknown) => void) => void;
   readonly timeSync: (request: TimeSyncRequest) => Promise<unknown>;
   /** Every `room:*` event the server sends: its name and raw payload, validated later. */
   readonly onRoomEvent: (listener: (name: string, payload: unknown) => void) => void;
@@ -133,6 +137,9 @@ export const createSocketIoSocket: SocketFactory = (auth) => {
     onFocusSessionUpdated: (listener) => {
       socket.on('focus:session:updated', listener);
     },
+    onBuddyNudge: (listener) => {
+      socket.on('buddy:nudge', listener);
+    },
     onRoomEvent: (listener) => {
       socket.onAny((name: string, payload: unknown) => {
         if (isRoomServerEventName(name)) {
@@ -190,6 +197,8 @@ export type RealtimeClient = {
   readonly onFocusSessionUpdated: (
     listener: (event: FocusSessionUpdatedEvent) => void,
   ) => () => void;
+  /** BD4: validated `buddy:nudge` events. Optional so test clients may leave it out. */
+  readonly onBuddyNudge?: (listener: (event: BuddyNudgeEvent) => void) => () => void;
   /** Fires on every successful (re)connect, so consumers can heal events missed meanwhile. */
   readonly onConnected: (listener: () => void) => () => void;
   /** Validated `room:*` events; malformed payloads are dropped. Survives socket re-creation. */
@@ -251,6 +260,7 @@ export const createRealtimeClient = ({
   let socket: RealtimeSocket | undefined;
   const listeners = new Set<() => void>();
   const focusListeners = new Set<(event: FocusSessionUpdatedEvent) => void>();
+  const nudgeListeners = new Set<(event: BuddyNudgeEvent) => void>();
   const connectedListeners = new Set<() => void>();
   const roomListeners = new Set<(event: RoomServerEvent) => void>();
 
@@ -334,6 +344,16 @@ export const createRealtimeClient = ({
         return;
       }
       for (const listener of focusListeners) {
+        listener(parsed.data);
+      }
+    });
+
+    created.onBuddyNudge?.((payload) => {
+      const parsed = buddyNudgeEventSchema.safeParse(payload);
+      if (!parsed.success) {
+        return;
+      }
+      for (const listener of nudgeListeners) {
         listener(parsed.data);
       }
     });
@@ -460,6 +480,12 @@ export const createRealtimeClient = ({
       focusListeners.add(listener);
       return () => {
         focusListeners.delete(listener);
+      };
+    },
+    onBuddyNudge: (listener) => {
+      nudgeListeners.add(listener);
+      return () => {
+        nudgeListeners.delete(listener);
       };
     },
     onConnected: (listener) => {

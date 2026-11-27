@@ -37,8 +37,12 @@ describe('loadConfig', () => {
       RECONCILER_INTERVAL_MS: 30_000,
       FOCUS_GRACE_MS: 60_000,
       HTTP_RATE_LIMIT: 'on',
+      SOCKET_MAX_PER_USER: 20,
       KNOCK_TTL_MS: 120_000,
       ROOM_MAX_PRESENT: 50,
+      AI_SERVICE_URL: 'http://127.0.0.1:8000',
+      AI_INTERNAL_TOKEN: 'local-dev-internal-token-change-me',
+      AI_REQUEST_TIMEOUT_MS: 60_000,
     });
   });
 
@@ -92,10 +96,19 @@ describe('loadConfig', () => {
     });
   });
 
+  it('refuses the development AI token in production', () => {
+    expect(() => loadConfig({ ...baseEnv, APP_ENV: 'production' })).toThrow(/AI_INTERNAL_TOKEN/);
+    expect(
+      loadConfig({ ...baseEnv, APP_ENV: 'production', AI_INTERNAL_TOKEN: 'a-real-secret-for-prod' })
+        .AI_INTERNAL_TOKEN,
+    ).toBe('a-real-secret-for-prod');
+  });
+
   it('keeps explicitly provided values', () => {
     const config = loadConfig({
       ...baseEnv,
       APP_ENV: 'production',
+      AI_INTERNAL_TOKEN: 'a-real-secret-for-prod',
       HOST: '0.0.0.0',
       PORT: '8080',
       LOG_LEVEL: 'debug',

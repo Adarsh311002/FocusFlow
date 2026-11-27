@@ -26,7 +26,21 @@ export const toFocusSessionView = (
     plannedSeconds: row.plannedSeconds,
     focusedSeconds: row.focusedSeconds,
     startedAt: row.startedAt.toISOString(),
+    // DF1: only a Deep Focus session carries the field.
+    ...(row.deepFocus
+      ? { deepFocus: { distractions: row.distractions, pausesUsed: row.pauseCount } }
+      : {}),
   };
+  // CI1: the CHECK constraints keep the three columns together and off in-progress rows.
+  const checkIn =
+    row.checkInOutcome === null || row.checkedInAt === null
+      ? null
+      : {
+          outcome: row.checkInOutcome,
+          quality: row.checkInQuality,
+          note: row.checkInNote,
+          recordedAt: row.checkedInAt.toISOString(),
+        };
   switch (row.status) {
     case 'in_progress':
       return focusSessionViewSchema.parse({
@@ -39,6 +53,7 @@ export const toFocusSessionView = (
         ...base,
         status: 'completed',
         endedAt: row.endedAt?.toISOString(),
+        checkIn,
       });
     default:
       return focusSessionViewSchema.parse({
@@ -46,6 +61,7 @@ export const toFocusSessionView = (
         status: row.status,
         endedAt: row.endedAt?.toISOString(),
         abandonReason: row.abandonReason,
+        checkIn,
       });
   }
 };

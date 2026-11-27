@@ -13,15 +13,18 @@ import { getRoomLiveStore, useKnockStore } from './room-live-store';
 import { isApiErrorCode } from './room-messages';
 import {
   approveKnock,
+  blockRoomMember,
   createRoom,
   getRoom,
   getRoomMembers,
   joinPublicRoom,
   leaveRoomPermanently,
   listMyRooms,
+  listRoomBlocks,
   lookupRoomByCode,
   rejectKnock,
   removeRoomMember,
+  unblockRoomMember,
   updateRoomTimerSettings,
 } from './rooms-client';
 
@@ -171,5 +174,33 @@ export function useAnswerKnock(roomId: RoomId) {
         useKnockStore.getState().knockRemoved(roomId, userId);
       }
     },
+  });
+}
+
+/** The people the host blocked from this room (B6); only fetched for the host. */
+export function useRoomBlocks(roomId: RoomId, enabled: boolean) {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: roomKeys.blocks(userId, roomId),
+    queryFn: () => listRoomBlocks(roomId),
+    enabled: enabled && userId !== NO_USER,
+  });
+}
+
+/** Remove and block (B1): the member list and the blocked list both change. */
+export function useBlockRoomMember(roomId: RoomId) {
+  const invalidate = useInvalidateRooms();
+  return useMutation({
+    mutationFn: (memberId: UserId) => blockRoomMember(roomId, memberId),
+    onSettled: () => invalidate(),
+  });
+}
+
+/** Lift a block (B5); the person may join or knock again, but is not a member. */
+export function useUnblockRoomMember(roomId: RoomId) {
+  const invalidate = useInvalidateRooms();
+  return useMutation({
+    mutationFn: (memberId: UserId) => unblockRoomMember(roomId, memberId),
+    onSettled: () => invalidate(),
   });
 }

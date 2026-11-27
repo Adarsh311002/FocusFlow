@@ -1,11 +1,8 @@
-import {
-  TASK_TITLE_MAX_LENGTH,
-  type TaskView,
-  updateTaskRequestSchema,
-} from '@focus-flow/contracts';
+import { TASK_TITLE_MAX_LENGTH, taskTitleSchema, type TaskView } from '@focus-flow/contracts';
 import { useState } from 'react';
 
 import { INVALID_TITLE, taskErrorMessage } from './task-messages';
+import { TaskMeta, TaskPlan } from './task-plan';
 import {
   useCompleteTask,
   useDeleteTask,
@@ -28,6 +25,8 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
   const [draft, setDraft] = useState(task.title);
   const [invalid, setInvalid] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // GL5, SP4, ES3: the task's plan (goal, estimate, steps), opened on demand.
+  const [planning, setPlanning] = useState(false);
 
   const rename = useRenameTask();
   const complete = useCompleteTask();
@@ -54,14 +53,14 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
   }
 
   function saveRename(): void {
-    const fields = updateTaskRequestSchema.safeParse({ title: draft });
+    const fields = taskTitleSchema.safeParse(draft);
     if (!fields.success) {
       setInvalid(true);
       return;
     }
     run(() => {
       rename.mutate(
-        { taskId: task.id, title: fields.data.title },
+        { taskId: task.id, title: fields.data },
         {
           onSuccess: () => {
             setEditing(false);
@@ -114,6 +113,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
           {isCurrent && <span className="ml-2 text-xs font-semibold uppercase">Current</span>}
         </p>
       )}
+      {!editing && <TaskMeta task={task} />}
 
       {!editing && !confirmingDelete && (
         <div className="flex flex-wrap gap-2">
@@ -171,6 +171,16 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
           </button>
           <button
             type="button"
+            aria-expanded={planning}
+            className={BUTTON}
+            onClick={() => {
+              setPlanning((open) => !open);
+            }}
+          >
+            {planning ? 'Close plan' : 'Plan'}
+          </button>
+          <button
+            type="button"
             disabled={pending}
             className={BUTTON}
             onClick={() => {
@@ -219,6 +229,7 @@ export function TaskItem({ task, isCurrent }: { task: TaskView; isCurrent: boole
           {error}
         </p>
       )}
+      {planning && !editing && <TaskPlan task={task} />}
     </li>
   );
 }

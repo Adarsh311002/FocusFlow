@@ -93,8 +93,8 @@ Known work that is deliberately outside the phase that surfaced it.
 
 | ID | Topic |
 |---|---|
-| D13 | The first AI feature |
-| D28 | How the Python AI service reads data: direct read-only PostgreSQL role vs an internal Node API |
+| D13 | The first AI feature (resolved 2026-11-26 by AI1–AI8: "Help me start" and the weekly reflection) |
+| D28 | How the Python AI service reads data (resolved 2026-11-26 by AI4: neither; Node sends a bounded context with each request) |
 | D40 | "Keep me opted in" across room focus runs |
 | D41 | Editing or deleting focus history |
 | D42 | Changing a room's privacy or name after creation |

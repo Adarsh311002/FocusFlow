@@ -1,6 +1,7 @@
 import {
   type CreateRoomRequest,
   DEFAULT_ROOM_TIMER_SETTINGS,
+  type RoomBlockView,
   type RoomListItem,
   type RoomLookupResponse,
   type RoomMembershipView,
@@ -11,26 +12,33 @@ import {
 import type { Logger } from 'pino';
 import { uuidv7 } from 'uuidv7';
 
-import type { Db } from '../../db/client.js';
+import type { Db, Tx } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/pg-errors.js';
 import { AppError, appError } from '../../platform/http/errors.js';
 import { generateRoomCode } from './code.js';
 import type { RoomFocusDepartures, RoomLive } from './ports.js';
 import {
+  deleteBlock,
   deleteMembership,
+  findBlock,
   findMember,
   findMembershipJoinedAt,
   findRoomByCode,
   findRoomById,
+  insertBlockIfAbsent,
   insertMembershipIfAbsent,
   insertRoom,
+  isBlocked,
+  listBlocks,
   listMembers,
   listRoomsOfMember,
+  lockRoom,
   type RoomRow,
   updateRoomSettings,
   userExists,
 } from './queries.js';
 import {
+  toBlockView,
   toMembershipView,
   toMemberView,
   toRoomPreview,
@@ -60,6 +68,10 @@ export const MAX_CODE_ATTEMPTS = 5;
 
 /** One answer for "no such room" and "not your room" (M4). */
 const roomNotFound = (): AppError => appError('ROOM_NOT_FOUND', 'Room not found.');
+
+/** The host removed this person and forbade a rejoin (B2). */
+const roomBlocked = (): AppError =>
+  appError('ROOM_BLOCKED', 'The host has blocked you from this room.');
 
 /** Redis-backed state is needed and unreachable: nothing was changed. */
 const liveUnavailable = (): AppError =>
@@ -195,6 +207,9 @@ export const lookupRoomByCode = async (
   const isHost = room.hostId === userId;
   const isMember = isHost || (await findMembershipJoinedAt(deps.db, room.id, userId)) !== undefined;
 
+  if (!isMember && (await isBlocked(deps.db, room.id, userId))) {
+    throw roomBlocked();
+  }
   if (!isMember && room.isPrivate) {
     // Nothing about the room beyond the preview, not even who is in it.
     return { access: 'must_knock', room: toRoomPreview(room), presentCount: null };
@@ -251,7 +266,16 @@ const ensureMembership = async (
   room: RoomRow,
   memberUserId: string,
 ): Promise<MembershipResult> => {
-  const insertedAt = await insertMembershipIfAbsent(deps.db, room.id, memberUserId);
+  // B3: the block check and the insert share one transaction that holds the room row FOR
+  // SHARE, so a block (which takes it FOR UPDATE) cannot commit in between: afterwards
+  // the blocked person is never a member.
+  const insertedAt = await deps.db.transaction(async (tx) => {
+    await lockRoom(tx, room.id, 'share');
+    if (await isBlocked(tx, room.id, memberUserId)) {
+      throw roomBlocked();
+    }
+    return insertMembershipIfAbsent(tx, room.id, memberUserId);
+  });
   if (insertedAt !== undefined) {
     return { membership: toMembershipView(room.id, memberUserId, insertedAt), created: true };
   }
@@ -281,6 +305,9 @@ export const joinRoom = async (
   if (room === undefined) {
     throw roomNotFound();
   }
+  if (room.hostId !== userId && (await isBlocked(deps.db, roomId, userId))) {
+    throw roomBlocked();
+  }
   if (room.isPrivate && room.hostId !== userId) {
     // A member of a private room "joins" again idempotently; anyone else must knock.
     if ((await findMembershipJoinedAt(deps.db, roomId, userId)) === undefined) {
@@ -304,9 +331,12 @@ const deleteMembershipAndAbandon = async (
   roomId: string,
   userId: string,
   reason: 'left_room' | 'removed',
+  /** Runs first in the same transaction (a block takes the room lock and writes the block). */
+  beforeDelete?: (tx: Tx) => Promise<void>,
 ): Promise<boolean> => {
   const departure = await deps.focus?.beginDeparture(userId, roomId, reason);
   const deleted = await deps.db.transaction(async (tx) => {
+    await beforeDelete?.(tx);
     const removed = await deleteMembership(tx, roomId, userId);
     await departure?.commit(tx);
     return removed;
@@ -327,7 +357,7 @@ export const leaveRoom = async (deps: RoomsDeps, userId: string, roomId: string)
   }
   if (await deleteMembershipAndAbandon(deps, roomId, userId, 'left_room')) {
     await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
-      deps.live.announceMemberRemoved(roomId, userId, 'left'),
+      deps.live.announceMemberRemoved(roomId, userId, 'left', false),
     );
   }
 };
@@ -344,9 +374,79 @@ export const removeMember = async (
   }
   if (await deleteMembershipAndAbandon(deps, roomId, targetUserId, 'removed')) {
     await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
-      deps.live.announceMemberRemoved(roomId, targetUserId, 'removed'),
+      deps.live.announceMemberRemoved(roomId, targetUserId, 'removed', false),
     );
   }
+};
+
+// ---- Blocks (B1–B8) -------------------------------------------------------------------
+
+/**
+ * Removes the person AND forbids a rejoin (B1). One transaction takes the room lock,
+ * records the block, abandons their room focus session and deletes the membership, so a
+ * concurrent join either finishes first (and is removed here) or sees the block (B3).
+ * Blocking someone who is not a member is allowed and only records the block; it is
+ * idempotent. The host cannot be blocked. A pending knock is rejected.
+ */
+export const blockMember = async (
+  deps: RoomsDeps,
+  hostUserId: string,
+  roomId: string,
+  targetUserId: string,
+): Promise<RoomBlockView> => {
+  const room = await requireHostRoom(deps, hostUserId, roomId);
+  if (room.hostId === targetUserId) {
+    throw appError('CANNOT_REMOVE_HOST', 'The host cannot be removed from their own room.');
+  }
+  if (!(await userExists(deps.db, targetUserId))) {
+    throw appError('NOT_FOUND', 'User not found.');
+  }
+  const wasMember = await deleteMembershipAndAbandon(
+    deps,
+    roomId,
+    targetUserId,
+    'removed',
+    async (tx) => {
+      await lockRoom(tx, roomId, 'update');
+      await insertBlockIfAbsent(tx, { id: uuidv7(), roomId, userId: targetUserId });
+    },
+  );
+  if (wasMember) {
+    await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
+      deps.live.announceMemberRemoved(roomId, targetUserId, 'removed', true),
+    );
+  }
+  // A knock from the blocked person must not stay answerable. Best effort: approving a
+  // blocked person fails at the block check anyway.
+  await afterCommit(deps, 'resolveKnock', roomId, async () => {
+    await deps.live.resolveKnock(roomId, hostUserId, targetUserId, 'rejected');
+  });
+  const block = await findBlock(deps.db, roomId, targetUserId);
+  if (block === undefined) {
+    // Unblocked again between the commit and this read: report it as the no-op it became.
+    throw roomNotFound();
+  }
+  return toBlockView(block);
+};
+
+export const listRoomBlocks = async (
+  deps: RoomsDeps,
+  hostUserId: string,
+  roomId: string,
+): Promise<RoomBlockView[]> => {
+  await requireHostRoom(deps, hostUserId, roomId);
+  return (await listBlocks(deps.db, roomId)).map(toBlockView);
+};
+
+/** Lifts a block (idempotent). It does not make the person a member again (B5). */
+export const unblockMember = async (
+  deps: RoomsDeps,
+  hostUserId: string,
+  roomId: string,
+  targetUserId: string,
+): Promise<void> => {
+  await requireHostRoom(deps, hostUserId, roomId);
+  await deleteBlock(deps.db, roomId, targetUserId);
 };
 
 // ---- Knocks ---------------------------------------------------------------------------
@@ -438,7 +538,7 @@ const approveKnockOnce = async (
       // commit and never mask the rejection.
       if (await deleteMembershipAndAbandon(deps, roomId, targetUserId, 'removed')) {
         await afterCommit(deps, 'announceMemberRemoved', roomId, () =>
-          deps.live.announceMemberRemoved(roomId, targetUserId, 'removed'),
+          deps.live.announceMemberRemoved(roomId, targetUserId, 'removed', false),
         );
       }
     } else if ((await findMembershipJoinedAt(deps.db, roomId, targetUserId)) !== undefined) {

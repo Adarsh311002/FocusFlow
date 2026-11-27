@@ -1,6 +1,8 @@
 import {
   calendarDatesFrom,
   createCalendarDateFormatter,
+  type FocusSessionInsightsQuery,
+  type FocusSessionInsightsResponse,
   type FocusSessionListResponse,
   type FocusSessionSummaryQuery,
   type FocusSessionSummaryResponse,
@@ -9,14 +11,28 @@ import {
 } from '@focus-flow/contracts';
 
 import type { Executor } from '../../db/client.js';
+import { buildInsights, previousPeriod } from './insights.js';
 import { decodeHistoryCursor, encodeHistoryCursor, invalidHistoryCursor } from './review-cursor.js';
-import { listOwnSessions, ownSessionExists, sumEndedSessionsByMinute } from './review-queries.js';
+import {
+  countUnbrokenDeepFocusRun,
+  findDailyGoalSeconds,
+  findTaskLabels,
+  listCompletedSessionMinutes,
+  listOwnSessions,
+  ownSessionExists,
+  sumEndedSessionsByMinute,
+  sumEndedSessionsByMinuteDetailed,
+} from './review-queries.js';
 import { toFocusSessionView } from './views.js';
 
 // Review: history and summary (Phase 5; docs/api/rest.md "Focus sessions", V1–V8).
 // Read-only and PostgreSQL only: no Redis, no locks, no events.
 
-export type ReviewDeps = { readonly db: Executor };
+export type ReviewDeps = {
+  readonly db: Executor;
+  /** The clock for "today" in the insights streak; defaults to `Date.now` (tests inject it). */
+  readonly now?: () => number;
+};
 
 /** One page of the user's history, newest-started first (V1, V2). */
 export const listFocusSessionHistory = async (
@@ -104,4 +120,39 @@ export const summarizeFocusSessions = async (
     totalFocusedSeconds: dayList.reduce((sum, day) => sum + day.totalFocusedSeconds, 0),
     days: dayList,
   };
+};
+
+/**
+ * The dashboard's insights for `[from, to]` in `tz` (A1–A10): the summary's rules (V3–V7)
+ * plus streaks, the daily goal, the hour heatmap, the task breakdown, the completion rate,
+ * the previous equal-length period and the solo/room split. Two aggregate reads cover the
+ * current and the previous period together (widened by two days like the summary, then
+ * decided by the calendar date of each minute through `Intl`); a third reads the minutes
+ * of every completed session for the streak.
+ */
+export const getFocusInsights = async (
+  deps: ReviewDeps,
+  userId: string,
+  query: FocusSessionInsightsQuery,
+): Promise<FocusSessionInsightsResponse> => {
+  const previous = previousPeriod(query);
+  const [minutes, completedMinutes, dailyGoalSeconds, deepUnbrokenRun] = await Promise.all([
+    sumEndedSessionsByMinuteDetailed(deps.db, userId, {
+      // No session can predate 1970, whatever the previous period's dates say.
+      fromMs: Math.max(0, utcMidnightMs(previous.from, -2)),
+      toMs: Math.min(utcMidnightMs(query.to, 3), REVIEW_MAX_INSTANT_MS),
+    }),
+    listCompletedSessionMinutes(deps.db, userId),
+    findDailyGoalSeconds(deps.db, userId),
+    countUnbrokenDeepFocusRun(deps.db, userId),
+  ]);
+  return buildInsights({
+    query,
+    minutes,
+    completedMinutes,
+    dailyGoalSeconds,
+    deepUnbrokenRun,
+    nowMs: (deps.now ?? Date.now)(),
+    labelsOf: (taskIds) => findTaskLabels(deps.db, userId, taskIds),
+  });
 };

@@ -63,6 +63,7 @@ export type FakeFocusParticipant = {
   optedInAtMs: number;
   connected: boolean;
   disconnectedAtMs: number | null;
+  intention: string | null;
 };
 
 const CODES = ['ABC234', 'DEF567', 'GHJ789', 'KMN234', 'PQR567'];
@@ -156,6 +157,7 @@ export function createFakeRoomApi() {
     optedInAtMs: Date.now(),
     connected: true,
     disconnectedAtMs: null,
+    intention: null,
     ...overrides,
   });
 
@@ -229,6 +231,7 @@ export function createFakeRoomApi() {
         status: 'abandoned',
         endedAt: new Date().toISOString(),
         abandonReason: 'opted_out',
+        checkIn: null,
       };
       Reflect.deleteProperty(ended, 'runningSince');
       focus.lastEnded = ended;

@@ -6,6 +6,9 @@ const requiredUrl = z.string().min(1, 'must be a non-empty connection string');
 /** A duration in milliseconds: 100 ms (tests) to 10 minutes. */
 const durationMs = z.coerce.number().int().min(100).max(600_000);
 
+/** The local development token (also in infra/compose.yaml); refused in production. */
+export const DEV_AI_INTERNAL_TOKEN = 'local-dev-internal-token-change-me';
+
 export type JwtSigningKey = { readonly kid: string; readonly secret: string };
 
 const MIN_JWT_SECRET_LENGTH = 32;
@@ -109,11 +112,18 @@ const configSchema = z
 
     // HTTP rate limiting (Phase 9). Always on in production; tests and the e2e stack turn it off.
     HTTP_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
+    // Live sockets per user (R4, S2): every tab and device holds one.
+    SOCKET_MAX_PER_USER: z.coerce.number().int().min(1).max(1_000).default(20),
 
     // Rooms (Phase 6, M6, M7). How long a knock waits for the host, and the safety limit
     // of people present in one room at once (D12).
     KNOCK_TTL_MS: durationMs.default(120_000),
     ROOM_MAX_PRESENT: z.coerce.number().int().min(1).max(10_000).default(50),
+
+    // AI (Wave 5, AI4): the internal Python service and the token both sides share.
+    AI_SERVICE_URL: z.url().default('http://127.0.0.1:8000'),
+    AI_INTERNAL_TOKEN: z.string().min(16).default(DEV_AI_INTERNAL_TOKEN),
+    AI_REQUEST_TIMEOUT_MS: durationMs.default(60_000),
   })
   .refine((config) => config.INSTANCE_TTL_MS >= 2 * config.INSTANCE_HEARTBEAT_MS, {
     path: ['INSTANCE_TTL_MS'],
@@ -123,6 +133,11 @@ const configSchema = z
     path: ['HTTP_RATE_LIMIT'],
     message: 'must be "on" in production',
   })
+  .refine(
+    (config) =>
+      config.APP_ENV !== 'production' || config.AI_INTERNAL_TOKEN !== DEV_AI_INTERNAL_TOKEN,
+    { path: ['AI_INTERNAL_TOKEN'], message: 'must be set to a secret in production' },
+  )
   .refine((config) => config.APP_ENV !== 'production' || config.FOCUS_GRACE_MS === 60_000, {
     path: ['FOCUS_GRACE_MS'],
     message: 'must be 60000 in production (the approved reconnect grace, D14/15/35)',

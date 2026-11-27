@@ -171,7 +171,7 @@ describe('focus_sessions: valid rows', () => {
     expect(row?.updatedAt).toBeInstanceOf(Date);
   });
 
-  it('has exactly the approved columns, the room fields added by Phase 8 (RF1)', async () => {
+  it('has exactly the approved columns: the room fields (RF1), then check-in and sharing (CI1, RI1), then Deep Focus (DF1)', async () => {
     const result = await db().execute<{ column_name: string }>(
       sql`SELECT column_name FROM information_schema.columns
           WHERE table_name = 'focus_sessions' ORDER BY ordinal_position`,
@@ -191,6 +191,14 @@ describe('focus_sessions: valid rows', () => {
       'updated_at',
       'room_id',
       'focus_run_id',
+      'check_in_outcome',
+      'check_in_note',
+      'checked_in_at',
+      'share_intention',
+      'check_in_quality',
+      'deep_focus',
+      'distractions',
+      'pause_count',
     ]);
   });
 });

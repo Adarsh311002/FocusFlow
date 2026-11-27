@@ -3,6 +3,8 @@ import {
   API_BASE_PATH,
   authPaths,
   calendarDatesFrom,
+  checkInFocusSessionRequestSchema,
+  focusSessionInsightsResponseSchema,
   focusSessionListResponseSchema,
   focusSessionPaths,
   focusSessionResponseSchema,
@@ -30,11 +32,26 @@ export type FakeSession = {
   plannedSeconds: number;
   focusedSeconds: number;
   startedAt: string;
+  /** DF1: only on a Deep Focus session. */
+  deepFocus?: { distractions: number; pausesUsed: number };
 } & (
   | { status: 'in_progress'; runningSince: string | null }
-  | { status: 'completed'; endedAt: string }
-  | { status: 'abandoned'; endedAt: string; abandonReason: AbandonReason }
+  | { status: 'completed'; endedAt: string; checkIn: FakeCheckIn | null }
+  | {
+      status: 'abandoned';
+      endedAt: string;
+      abandonReason: AbandonReason;
+      checkIn: FakeCheckIn | null;
+    }
 );
+
+/** CI1: the user's check-in on an ended session. */
+export type FakeCheckIn = {
+  outcome: 'done' | 'progress' | 'stuck';
+  note: string | null;
+  quality: number | null;
+  recordedAt: string;
+};
 
 export type FakeSummaryDay = {
   date: string;
@@ -63,11 +80,13 @@ export function fakeSession(overrides: Partial<FakeSession> = {}): FakeSession {
     startedAt: '2026-03-09T10:00:00.000Z',
     status: 'completed' as const,
     endedAt: '2026-03-09T10:25:00.000Z',
+    checkIn: null,
   };
   const session = { ...base, ...overrides } as FakeSession;
   if (session.status === 'in_progress') {
     // An in-progress session has no end yet; drop the default's.
     Reflect.deleteProperty(session, 'endedAt');
+    Reflect.deleteProperty(session, 'checkIn');
   }
   return session;
 }
@@ -79,7 +98,8 @@ export const emptySummary = (days: readonly string[] = []): FakeSummary => ({
   days: days.map((date) => ({ date, completedFocusedSeconds: 0, totalFocusedSeconds: 0 })),
 });
 
-export type FakeAction = 'start' | 'current' | 'pause' | 'resume' | 'stop' | 'history';
+export type FakeAction =
+  'start' | 'current' | 'pause' | 'resume' | 'stop' | 'history' | 'break' | 'distraction';
 
 /** What the fake needs to know about a task; the task fake's rows can be mapped onto it. */
 export type FakeTaskLookup = (
@@ -157,15 +177,20 @@ export function createFakeFocusSessionApi(
     session: InProgress,
     outcome:
       | { status: 'completed' }
-      | { status: 'abandoned'; reason: 'stopped' | 'grace_expired' | 'expired' },
+      | {
+          status: 'abandoned';
+          reason: 'stopped' | 'grace_expired' | 'expired' | 'focus_broken';
+        },
   ): FakeSession {
     const base = {
+      ...(session.deepFocus === undefined ? {} : { deepFocus: session.deepFocus }),
       id: session.id,
       context: session.context,
       task: session.task,
       plannedSeconds: session.plannedSeconds,
       startedAt: session.startedAt,
       endedAt: new Date(now()).toISOString(),
+      checkIn: null,
     };
     if (outcome.status === 'completed') {
       return replace(session, {
@@ -264,18 +289,44 @@ export function createFakeFocusSessionApi(
       startedAt,
       status: 'in_progress',
       runningSince: startedAt,
+      ...(parsed.data.deepFocus === true ? { deepFocus: { distractions: 0, pausesUsed: 0 } } : {}),
     };
     sessions.unshift(session);
     return jsonResponse(201, sessionBody(session));
   }
 
-  function transition(action: 'pause' | 'resume' | 'stop', sessionId: string): Response {
+  function transition(
+    action: 'pause' | 'resume' | 'stop' | 'break' | 'distraction',
+    sessionId: string,
+  ): Response {
     const session = sessions.find((candidate) => candidate.id === sessionId);
     if (session === undefined) {
       return errorResponse(404, 'NOT_FOUND', 'Focus session not found.');
     }
+    if ((action === 'break' || action === 'distraction') && session.deepFocus === undefined) {
+      return errorResponse(409, 'NOT_DEEP_FOCUS', 'This is not a Deep Focus session.');
+    }
     if (session.status !== 'in_progress') {
       return jsonResponse(200, sessionBody(session)); // E11: an ended session is unchanged.
+    }
+    if (action === 'break') {
+      return jsonResponse(
+        200,
+        sessionBody(ended(session, { status: 'abandoned', reason: 'focus_broken' })),
+      );
+    }
+    if (action === 'distraction' && session.deepFocus !== undefined) {
+      session.deepFocus = {
+        ...session.deepFocus,
+        distractions: session.deepFocus.distractions + 1,
+      };
+      return jsonResponse(200, sessionBody(session));
+    }
+    if (action === 'pause' && session.runningSince !== null && session.deepFocus !== undefined) {
+      if (session.deepFocus.pausesUsed >= 1) {
+        return errorResponse(409, 'PAUSE_USED', 'The one pause has been used.');
+      }
+      session.deepFocus = { ...session.deepFocus, pausesUsed: session.deepFocus.pausesUsed + 1 };
     }
     if (action === 'stop') {
       return jsonResponse(
@@ -294,6 +345,32 @@ export function createFakeFocusSessionApi(
       session.runningSince = new Date(now()).toISOString();
     }
     return jsonResponse(200, sessionBody(session));
+  }
+
+  /** CI2: records a check-in on an ended session; `done` is all the fake needs to know. */
+  function checkIn(sessionId: string, body: unknown): Response {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (session === undefined) {
+      return errorResponse(404, 'NOT_FOUND', 'Focus session not found.');
+    }
+    if (session.status === 'in_progress') {
+      return errorResponse(409, 'SESSION_NOT_ENDED', 'Not ended.');
+    }
+    const parsed = checkInFocusSessionRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return errorResponse(400, 'VALIDATION_FAILED', 'Invalid check-in.');
+    }
+    const next = {
+      ...session,
+      checkIn: {
+        outcome: parsed.data.outcome,
+        note: parsed.data.note,
+        quality: parsed.data.quality ?? null,
+        recordedAt: new Date(now()).toISOString(),
+      },
+    };
+    sessions[sessions.indexOf(session)] = next;
+    return jsonResponse(200, sessionBody(next));
   }
 
   function handle(request: RecordedRequest): Response {
@@ -317,6 +394,15 @@ export function createFakeFocusSessionApi(
     }
     if (path === mePaths.self) {
       return jsonResponse(200, { user: userBody });
+    }
+    if (root === 'focus-sessions' && action === 'check-in' && request.method === 'PUT') {
+      return checkIn(sessionId ?? '', request.body === null ? undefined : JSON.parse(request.body));
+    }
+    if (path === focusSessionPaths.insights && request.method === 'GET') {
+      // A quiet, valid answer: the dashboard and Review draw insights, but these tests are
+      // about sessions, so nothing here depends on the numbers.
+      const query = focusSessionSummaryQuerySchema.parse(Object.fromEntries(url.searchParams));
+      return jsonResponse(200, focusSessionInsightsResponseSchema.parse(emptyInsights(query)));
     }
     if (path === focusSessionPaths.summary && request.method === 'GET') {
       if (summary !== undefined) {
@@ -361,7 +447,11 @@ export function createFakeFocusSessionApi(
     if (
       root === 'focus-sessions' &&
       sessionId !== undefined &&
-      (action === 'pause' || action === 'resume' || action === 'stop') &&
+      (action === 'pause' ||
+        action === 'resume' ||
+        action === 'stop' ||
+        action === 'break' ||
+        action === 'distraction') &&
       request.method === 'POST'
     ) {
       return consume(action) ?? transition(action, sessionId);
@@ -402,5 +492,72 @@ export function createFakeFocusSessionApi(
     abandonCurrent: (reason: 'grace_expired' | 'expired') =>
       endCurrent({ status: 'abandoned', reason }),
     current: inProgress,
+  };
+}
+
+/** An insights response with no activity, shaped exactly like the API's (A1–A10). */
+export function emptyInsights(query: { from: string; to: string; tz: string }) {
+  const dates = calendarDatesFrom(query.from, query.to);
+  const totals = {
+    sessionCount: 0,
+    completedCount: 0,
+    abandonedCount: 0,
+    completionRate: null,
+    completedFocusedSeconds: 0,
+    totalFocusedSeconds: 0,
+  };
+  const bucket = { sessionCount: 0, completedCount: 0, totalFocusedSeconds: 0 };
+  return {
+    range: { ...query, dayCount: dates.length },
+    dailyGoalSeconds: 7200,
+    totals,
+    days: dates.map((date) => ({
+      date,
+      sessionCount: 0,
+      completedCount: 0,
+      completedFocusedSeconds: 0,
+      totalFocusedSeconds: 0,
+      goalProgress: 0,
+      goalMet: false,
+    })),
+    goalDaysMet: 0,
+    streak: { current: 0, longest: 0, today: query.to, todayCompleted: false },
+    heatmap: Array.from({ length: 168 }, (_, index) => ({
+      weekday: Math.floor(index / 24),
+      hour: index % 24,
+      sessionCount: 0,
+      totalFocusedSeconds: 0,
+    })),
+    tasks: [],
+    otherTasks: { ...bucket, taskCount: 0 },
+    noTask: bucket,
+    split: { solo: bucket, room: bucket },
+    quality: {
+      ratedCount: 0,
+      average: null,
+      byHour: Array.from({ length: 24 }, () => ({ ratedCount: 0, average: null })),
+    },
+    checkIns: { withIntention: 0, done: 0, progress: 0, stuck: 0, unrecorded: 0 },
+    deepFocus: {
+      sessions: 0,
+      completed: 0,
+      broken: 0,
+      distractionFree: 0,
+      distractions: 0,
+      unbrokenRun: 0,
+    },
+    comparison: {
+      previousFrom: query.from,
+      previousTo: query.to,
+      previous: totals,
+      delta: {
+        sessionCount: 0,
+        completedCount: 0,
+        completedFocusedSeconds: 0,
+        totalFocusedSeconds: 0,
+        totalFocusedSecondsChange: null,
+        completionRate: null,
+      },
+    },
   };
 }

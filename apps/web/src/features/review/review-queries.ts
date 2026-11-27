@@ -1,7 +1,11 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../auth/auth-context';
-import { getFocusSessionSummary, listFocusSessions } from './review-client';
+import {
+  getFocusSessionInsights,
+  getFocusSessionSummary,
+  listFocusSessions,
+} from './review-client';
 import type { ReviewRange } from './review-range';
 
 // Server state for the Review page lives in TanStack Query, keyed by user id like the
@@ -18,6 +22,8 @@ export const focusSessionKeys = {
   history: (userId: string) => ['focus-sessions', userId, 'history'] as const,
   summary: (userId: string, range: ReviewRange) =>
     ['focus-sessions', userId, 'summary', range.from, range.to, range.tz] as const,
+  insights: (userId: string, range: ReviewRange) =>
+    ['focus-sessions', userId, 'insights', range.from, range.to, range.tz] as const,
 };
 
 const FRESHNESS = { staleTime: 0, refetchOnMount: 'always' } as const;
@@ -44,6 +50,20 @@ export function useFocusSessionSummary(range: ReviewRange) {
   return useQuery({
     queryKey: focusSessionKeys.summary(userId, range),
     queryFn: () => getFocusSessionSummary(range),
+    enabled: userId !== NO_USER,
+    ...FRESHNESS,
+  });
+}
+
+/**
+ * Dashboard insights for a range (A1–A10). Keyed under the user's focus-session queries, so
+ * every focus-session event and every daily-goal change refreshes it too.
+ */
+export function useFocusSessionInsights(range: ReviewRange) {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: focusSessionKeys.insights(userId, range),
+    queryFn: () => getFocusSessionInsights(range),
     enabled: userId !== NO_USER,
     ...FRESHNESS,
   });

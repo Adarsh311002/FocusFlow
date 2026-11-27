@@ -29,13 +29,55 @@ export const mePaths = {
   currentTask: '/me/current-task',
 } as const;
 
+/** Grow your forest (GF5). */
+export const forestPaths = { self: '/forest' } as const;
+
+/** Weekly priorities (WR2). */
+export const weeklyPriorityPaths = { collection: '/weekly-priorities' } as const;
+
+/** Parked thoughts (PT2). */
+export const parkedThoughtPaths = {
+  collection: '/parked-thoughts',
+  item: '/parked-thoughts/:thoughtId',
+  toTask: '/parked-thoughts/:thoughtId/task',
+} as const;
+
+/** Builds a concrete parked-thought URL path. */
+export const parkedThoughtPath = (
+  template: (typeof parkedThoughtPaths)['item' | 'toTask'],
+  thoughtId: string,
+): string => template.replace(':thoughtId', encodeURIComponent(thoughtId));
+
 /** Express-style templates; the web app fills in `:taskId` with `taskPath`. */
 export const taskPaths = {
   collection: '/tasks',
   item: '/tasks/:taskId',
   complete: '/tasks/:taskId/complete',
   reopen: '/tasks/:taskId/reopen',
+  /** SP2. */
+  steps: '/tasks/:taskId/steps',
 } as const;
+
+/** Steps of one task (SP2). */
+export const taskStepPath = (taskId: string, stepId?: string): string =>
+  `/tasks/${encodeURIComponent(taskId)}/steps${stepId === undefined ? '' : `/${encodeURIComponent(stepId)}`}`;
+
+/** Wave 4: buddies (BD3), room schedules (SC2), upcoming sessions (SC3), room recap (RR1). */
+export const togetherPaths = {
+  buddies: '/buddies',
+  buddy: '/buddies/:userId',
+  acceptBuddy: '/buddies/:userId/accept',
+  nudgeBuddy: '/buddies/:userId/nudge',
+  schedules: '/rooms/:roomId/schedules',
+  schedule: '/rooms/:roomId/schedules/:scheduleId',
+  upcoming: '/me/upcoming-sessions',
+  recap: '/rooms/:roomId/recap',
+} as const;
+
+/** Goals (GL3). */
+export const goalPaths = { collection: '/goals', item: '/goals/:goalId' } as const;
+
+export const goalPath = (goalId: string): string => `/goals/${encodeURIComponent(goalId)}`;
 
 export type TaskPathTemplate = Exclude<(typeof taskPaths)[keyof typeof taskPaths], '/tasks'>;
 
@@ -48,12 +90,18 @@ export const focusSessionPaths = {
   collection: '/focus-sessions',
   current: '/focus-sessions/current',
   summary: '/focus-sessions/summary',
+  insights: '/focus-sessions/insights',
   pause: '/focus-sessions/:sessionId/pause',
   resume: '/focus-sessions/:sessionId/resume',
   stop: '/focus-sessions/:sessionId/stop',
+  checkIn: '/focus-sessions/:sessionId/check-in',
+  // DF2, DF3: Deep Focus only.
+  distraction: '/focus-sessions/:sessionId/distraction',
+  break: '/focus-sessions/:sessionId/break',
 } as const;
 
-export type FocusSessionPathTemplate = (typeof focusSessionPaths)['pause' | 'resume' | 'stop'];
+export type FocusSessionPathTemplate = (typeof focusSessionPaths)[
+  'pause' | 'resume' | 'stop' | 'checkIn' | 'distraction' | 'break'];
 
 /** Builds a concrete focus-session URL path from one of the per-session templates. */
 export const focusSessionPath = (
@@ -79,6 +127,8 @@ export const roomPaths = {
   members: '/rooms/:roomId/members',
   member: '/rooms/:roomId/members/:userId',
   membership: '/rooms/:roomId/membership',
+  blocks: '/rooms/:roomId/blocks',
+  block: '/rooms/:roomId/blocks/:userId',
   approveKnock: '/rooms/:roomId/knocks/:userId/approve',
   rejectKnock: '/rooms/:roomId/knocks/:userId/reject',
 } as const;
@@ -99,3 +149,12 @@ export const roomPath = (
 
 export const roomByCodePath = (code: string): string =>
   roomPaths.byCode.replace(':code', encodeURIComponent(code));
+
+/** Wave 5: AI features (AI2). */
+export const aiPaths = {
+  firstStep: '/ai/first-step',
+  weeklyReflection: '/ai/weekly-reflection',
+  job: '/ai/jobs/:jobId',
+} as const;
+
+export const aiJobPath = (jobId: string): string => `/ai/jobs/${encodeURIComponent(jobId)}`;

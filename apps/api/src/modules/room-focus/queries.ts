@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 
 import type { Executor, Tx } from '../../db/client.js';
-import { focusSessions, roomMembers, rooms, users } from '../../db/schema.js';
+import { focusSessions, roomMembers, rooms, tasks, users } from '../../db/schema.js';
 import type { FocusSessionRow } from '../focus-sessions/queries.js';
 
 // PostgreSQL access of room focus sessions (Phase 8; RF1, RF4, RF6). Every query that
@@ -14,6 +14,8 @@ export type NewRoomSession = {
   readonly id: string;
   readonly userId: string;
   readonly taskId: string | null;
+  /** RI1: show the task's title to the room (needs a task, CHECK). */
+  readonly shareIntention: boolean;
   readonly roomId: string;
   readonly focusRunId: string;
   readonly plannedSeconds: number;
@@ -31,6 +33,7 @@ export const insertRoomSession = async (
       id: values.id,
       userId: values.userId,
       taskId: values.taskId,
+      shareIntention: values.shareIntention,
       status: 'in_progress',
       plannedSeconds: values.plannedSeconds,
       focusedSeconds: 0,
@@ -270,4 +273,33 @@ export const findInProgressRoomSessionForUpdate = async (
     .limit(1)
     .for('update');
   return row;
+};
+
+/**
+ * RI2: the titles participants chose to share (RI1), by session id. Only a session that
+ * shares, whose task is still its owner's and not deleted, yields a title (the composite key
+ * keeps the task the owner's own). Titles are never copied into Redis (RF14).
+ */
+export const findSharedIntentions = async (
+  db: Executor,
+  sessionIds: readonly string[],
+): Promise<Map<string, string>> => {
+  if (sessionIds.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ sessionId: focusSessions.id, title: tasks.title })
+    .from(focusSessions)
+    .innerJoin(
+      tasks,
+      and(eq(tasks.id, focusSessions.taskId), eq(tasks.userId, focusSessions.userId)),
+    )
+    .where(
+      and(
+        inArray(focusSessions.id, [...sessionIds]),
+        eq(focusSessions.shareIntention, true),
+        isNull(tasks.deletedAt),
+      ),
+    );
+  return new Map(rows.map((row) => [row.sessionId, row.title]));
 };

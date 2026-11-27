@@ -2,12 +2,15 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   type PgTableExtraConfigValue,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
@@ -37,6 +40,14 @@ export const users = pgTable(
     // by modules/tasks/service.ts (docs/domain/model.md, "Rules the database cannot
     // enforce alone").
     currentTaskId: uuid(),
+    // A1: the user's daily focus goal in whole seconds (dashboard progress, streak views).
+    dailyGoalSeconds: integer().notNull().default(7200),
+    // ST2: a forest-animal avatar chosen in settings (NULL: the initial).
+    avatarPreset: text(),
+    // ST3: the session length the start form opens with.
+    defaultSessionSeconds: integer().notNull().default(1500),
+    // BD1: the personal code others enter to ask to be focus buddies; made on first use.
+    buddyCode: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -61,6 +72,59 @@ export const users = pgTable(
     uniqueIndex('uq_users_email').on(table.email),
     check('ck_users_email_lowercase', sql`${table.email} = lower(${table.email})`),
     check('ck_users_display_name_length', sql`char_length(${table.displayName}) BETWEEN 1 AND 50`),
+    check('ck_users_daily_goal_seconds', sql`${table.dailyGoalSeconds} BETWEEN 300 AND 43200`),
+    uniqueIndex('uq_users_buddy_code').on(table.buddyCode),
+    check(
+      'ck_users_avatar_preset',
+      sql`${table.avatarPreset} IN ('monkey', 'sloth', 'toucan', 'frog', 'owl', 'butterfly', 'jaguar')`,
+    ),
+    check(
+      'ck_users_default_session_seconds',
+      sql`${table.defaultSessionSeconds} BETWEEN 60 AND 14400`,
+    ),
+  ],
+);
+
+// Goals (GL1): what a set of tasks is for ("Ship the beta", "Learn Spanish"). Never deleted;
+// a goal is completed or archived. Deleting the user removes their goals (cascade).
+export const goals = pgTable(
+  'goals',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    title: text().notNull(),
+    why: text(),
+    targetDate: date({ mode: 'string' }),
+    color: text().notNull().default('leaf'),
+    completedAt: timestamp({ withTimezone: true }),
+    archivedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_goals', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_goals_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // Target of tasks.goal_id's composite key: a task's goal is the same user's.
+    unique('uq_goals_id_user_id').on(table.id, table.userId),
+    check('ck_goals_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 80`),
+    check(
+      'ck_goals_why_length',
+      sql`${table.why} IS NULL OR char_length(${table.why}) BETWEEN 1 AND 280`,
+    ),
+    check(
+      'ck_goals_color',
+      sql`${table.color} IN ('leaf', 'moss', 'fern', 'amber', 'berry', 'sky')`,
+    ),
+    // A goal is active, completed or archived, never completed and archived at once.
+    check('ck_goals_one_end', sql`${table.completedAt} IS NULL OR ${table.archivedAt} IS NULL`),
+    index('ix_goals_user_id_id').on(table.userId, table.id.desc()),
   ],
 );
 
@@ -75,6 +139,10 @@ export const tasks = pgTable(
     // D38: soft delete. A deleted task is hidden from every normal read but its row stays,
     // so history that references it keeps its meaning.
     deletedAt: timestamp({ withTimezone: true }),
+    // GL2: the goal it serves, the same user's (composite key); no ON DELETE action (P1).
+    goalId: uuid(),
+    // ES1: "I think this takes N sessions".
+    estimatedSessions: smallint(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -83,6 +151,17 @@ export const tasks = pgTable(
   },
   (table) => [
     primaryKey({ name: 'pk_tasks', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_tasks_goal_id',
+      columns: [table.goalId, table.userId],
+      foreignColumns: [goals.id, goals.userId],
+    }),
+    check(
+      'ck_tasks_estimated_sessions',
+      sql`${table.estimatedSessions} IS NULL OR ${table.estimatedSessions} BETWEEN 1 AND 20`,
+    ),
+    // A goal's tasks.
+    index('ix_tasks_goal_id').on(table.goalId),
     foreignKey({
       name: 'fk_tasks_user_id',
       columns: [table.userId],
@@ -176,6 +255,22 @@ export const focusSessions = pgTable(
     runningSince: timestamp({ withTimezone: true }),
     startedAt: timestamp({ withTimezone: true }).notNull(),
     endedAt: timestamp({ withTimezone: true }),
+    // CI1: the user's own account of an ended session ("did you finish it?"), all three set
+    // together; the note is optional. Never part of the focus-time arithmetic.
+    checkInOutcome: text(),
+    checkInNote: text(),
+    checkedInAt: timestamp({ withTimezone: true }),
+    // FQ1: "how deep was it?", 1–5, optional part of the check-in.
+    checkInQuality: smallint(),
+    // RI1: the participant chose to show their task's title to the room. Room sessions with
+    // a task only; the title itself is read from `tasks` when the list is built (RF14).
+    shareIntention: boolean().notNull().default(false),
+    // DF1: a Deep Focus session (solo only): full screen, leaving is watched by the page.
+    deepFocus: boolean().notNull().default(false),
+    // DF3: times the user left a Deep Focus session and came back within the warning.
+    distractions: integer().notNull().default(0),
+    // DF4: pauses taken in this session; a Deep Focus session allows one.
+    pauseCount: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -210,7 +305,7 @@ export const focusSessions = pgTable(
     // E5 (solo) plus the room reasons of RF1.
     check(
       'ck_focus_sessions_abandon_reason',
-      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost')`,
+      sql`${table.abandonReason} IN ('stopped', 'grace_expired', 'expired', 'opted_out', 'left_room', 'removed', 'reset', 'phase_changed', 'timer_lost', 'focus_broken')`,
     ),
     // RF1: a room session has both the room and the run, a solo one has neither.
     check(
@@ -252,6 +347,44 @@ export const focusSessions = pgTable(
     check(
       'ck_focus_sessions_completed_focused',
       sql`${table.status} <> 'completed' OR ${table.focusedSeconds} = ${table.plannedSeconds}`,
+    ),
+    // CI1.
+    check(
+      'ck_focus_sessions_check_in_outcome',
+      sql`${table.checkInOutcome} IN ('done', 'progress', 'stuck')`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_presence',
+      sql`(${table.checkInOutcome} IS NULL) = (${table.checkedInAt} IS NULL)`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_note',
+      sql`${table.checkInNote} IS NULL OR (${table.checkInOutcome} IS NOT NULL AND char_length(${table.checkInNote}) BETWEEN 1 AND 280)`,
+    ),
+    check(
+      'ck_focus_sessions_check_in_ended',
+      sql`${table.checkInOutcome} IS NULL OR ${table.status} <> 'in_progress'`,
+    ),
+    // FQ1.
+    check(
+      'ck_focus_sessions_check_in_quality',
+      sql`${table.checkInQuality} IS NULL OR (${table.checkInOutcome} IS NOT NULL AND ${table.checkInQuality} BETWEEN 1 AND 5)`,
+    ),
+    // DF1: Deep Focus is solo only, and only a Deep Focus session can be broken (DF2).
+    check(
+      'ck_focus_sessions_deep_focus_solo',
+      sql`NOT ${table.deepFocus} OR ${table.roomId} IS NULL`,
+    ),
+    check(
+      'ck_focus_sessions_focus_broken',
+      sql`${table.abandonReason} IS DISTINCT FROM 'focus_broken' OR ${table.deepFocus}`,
+    ),
+    check('ck_focus_sessions_distractions', sql`${table.distractions} BETWEEN 0 AND 1000`),
+    check('ck_focus_sessions_pause_count', sql`${table.pauseCount} >= 0`),
+    // RI1.
+    check(
+      'ck_focus_sessions_share_intention',
+      sql`NOT ${table.shareIntention} OR (${table.roomId} IS NOT NULL AND ${table.taskId} IS NOT NULL)`,
     ),
     // At most one in-progress session per user. It also serves every scan of in-progress
     // sessions (the reconciler sweep, stale cleanup), since it holds only those rows.
@@ -332,5 +465,276 @@ export const roomMembers = pgTable(
     }).onDelete('cascade'),
     // "My Rooms": a user's rooms, most recently joined first, and the users cascade.
     index('ix_room_members_user_id_joined_at').on(table.userId, table.joinedAt.desc()),
+  ],
+);
+
+// Room blocks (B1–B8): a durable per-room list of people the host removed AND forbade to
+// return. Separate from `room_members` (membership is deleted on removal; a block is what
+// survives it). Deleting the room or the user removes their blocks (cascade); blocks are
+// host-managed and carry no other history.
+export const roomBlocks = pgTable(
+  'room_blocks',
+  {
+    id: uuid().notNull(),
+    roomId: uuid().notNull(),
+    userId: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_blocks', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_room_blocks_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_blocks_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    // One block per person per room; also the join/knock check and the host's list.
+    uniqueIndex('uq_room_blocks_room_id_user_id').on(table.roomId, table.userId),
+    // The users ON DELETE CASCADE.
+    index('ix_room_blocks_user_id').on(table.userId),
+  ],
+);
+
+// Parked thoughts (PT1): a distraction noted during a session ("email Ravi") so it does not
+// break the focus. Kept until the user turns it into a task or lets it go, so it is durable
+// user data (PostgreSQL). The session it came from is optional; deleting the user removes
+// their thoughts (cascade). No ON DELETE action on the session (P1): sessions are never
+// deleted on their own.
+export const parkedThoughts = pgTable(
+  'parked_thoughts',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    sessionId: uuid(),
+    body: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_parked_thoughts', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_parked_thoughts_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_parked_thoughts_session_id',
+      columns: [table.sessionId],
+      foreignColumns: [focusSessions.id],
+    }),
+    // The same limit as a task title, so every thought can become a task unchanged.
+    check('ck_parked_thoughts_body_length', sql`char_length(${table.body}) BETWEEN 1 AND 200`),
+    // The user's list, newest first (UUIDv7 ids sort by creation), and the cascade.
+    index('ix_parked_thoughts_user_id_id').on(table.userId, table.id.desc()),
+  ],
+);
+
+// Weekly priorities (WR1): the user's top three tasks for one week, chosen in the weekly
+// review. `week_start` is the Monday of the user's local week (the client's time zone, WR3).
+// The task must be the user's own (composite key); no ON DELETE action (P1: tasks are
+// soft-deleted and disappear only with their user, whose rows cascade away first here).
+export const weeklyPriorities = pgTable(
+  'weekly_priorities',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    weekStart: date({ mode: 'string' }).notNull(),
+    position: smallint().notNull(),
+    taskId: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_weekly_priorities', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_weekly_priorities_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_weekly_priorities_task_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }),
+    check('ck_weekly_priorities_position', sql`${table.position} BETWEEN 1 AND 3`),
+    check(
+      'ck_weekly_priorities_week_start_monday',
+      sql`extract(isodow from ${table.weekStart}) = 1`,
+    ),
+    // One task per slot and each task once per week; the first also serves the reads.
+    uniqueIndex('uq_weekly_priorities_user_week_position').on(
+      table.userId,
+      table.weekStart,
+      table.position,
+    ),
+    uniqueIndex('uq_weekly_priorities_user_week_task').on(
+      table.userId,
+      table.weekStart,
+      table.taskId,
+    ),
+  ],
+);
+
+// Steps (SP1): a small checklist inside a task. The task is the same user's (composite key);
+// steps go with the task's user (cascade) and are hidden with a soft-deleted task.
+export const taskSteps = pgTable(
+  'task_steps',
+  {
+    id: uuid().notNull(),
+    taskId: uuid().notNull(),
+    userId: uuid().notNull(),
+    title: text().notNull(),
+    doneAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_task_steps', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_task_steps_task_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_task_steps_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_task_steps_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 200`),
+    // A task's steps in creation order (UUIDv7).
+    index('ix_task_steps_task_id_id').on(table.taskId, table.id),
+  ],
+);
+
+// Focus buddies (BD1): a request from one user to another, accepted or still pending. One
+// row per pair whichever way it was asked (the unique index on the ordered pair); deleting
+// either user removes it.
+export const buddyLinks = pgTable(
+  'buddy_links',
+  {
+    id: uuid().notNull(),
+    requesterId: uuid().notNull(),
+    addresseeId: uuid().notNull(),
+    acceptedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_buddy_links', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_buddy_links_requester_id',
+      columns: [table.requesterId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_buddy_links_addressee_id',
+      columns: [table.addresseeId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_buddy_links_not_self', sql`${table.requesterId} <> ${table.addresseeId}`),
+    uniqueIndex('uq_buddy_links_pair').using(
+      'btree',
+      sql`least(${table.requesterId}, ${table.addresseeId})`,
+      sql`greatest(${table.requesterId}, ${table.addresseeId})`,
+    ),
+    index('ix_buddy_links_addressee_id').on(table.addresseeId),
+    index('ix_buddy_links_requester_id').on(table.requesterId),
+  ],
+);
+
+// Scheduled room sessions (SC1): a time the host plans for the room to focus together, once
+// or every week. Removed with the room (cascade); the creator is kept for history.
+export const roomSchedules = pgTable(
+  'room_schedules',
+  {
+    id: uuid().notNull(),
+    roomId: uuid().notNull(),
+    createdBy: uuid().notNull(),
+    title: text().notNull(),
+    startsAt: timestamp({ withTimezone: true }).notNull(),
+    durationMinutes: smallint().notNull(),
+    repeatsWeekly: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_room_schedules', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_room_schedules_room_id',
+      columns: [table.roomId],
+      foreignColumns: [rooms.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_room_schedules_created_by',
+      columns: [table.createdBy],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    check('ck_room_schedules_title_length', sql`char_length(${table.title}) BETWEEN 1 AND 60`),
+    check('ck_room_schedules_duration', sql`${table.durationMinutes} BETWEEN 5 AND 240`),
+    index('ix_room_schedules_room_id').on(table.roomId),
+  ],
+);
+
+// AI jobs (Wave 5, AI1): one row per "Help me start" or weekly reflection request. Node
+// writes every row; the worker moves it from queued to running to succeeded or failed. At
+// most one job of each kind is under way per user (the partial unique index, AI3).
+export const aiJobs = pgTable(
+  'ai_jobs',
+  {
+    id: uuid().notNull(),
+    userId: uuid().notNull(),
+    kind: text().notNull(),
+    status: text().notNull().default('queued'),
+    taskId: uuid(),
+    weekStart: date({ mode: 'string' }),
+    /** The request's options (for a reflection: the time zone). */
+    input: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb().$type<Record<string, unknown>>(),
+    source: text(),
+    failure: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ name: 'pk_ai_jobs', columns: [table.id] }),
+    foreignKey({
+      name: 'fk_ai_jobs_user_id',
+      columns: [table.userId],
+      foreignColumns: [users.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'fk_ai_jobs_task_id_user_id',
+      columns: [table.taskId, table.userId],
+      foreignColumns: [tasks.id, tasks.userId],
+    }),
+    check('ck_ai_jobs_kind', sql`${table.kind} IN ('first_step', 'weekly_reflection')`),
+    check(
+      'ck_ai_jobs_status',
+      sql`${table.status} IN ('queued', 'running', 'succeeded', 'failed')`,
+    ),
+    check(
+      'ck_ai_jobs_subject',
+      sql`(${table.kind} = 'first_step' AND ${table.taskId} IS NOT NULL AND ${table.weekStart} IS NULL) OR (${table.kind} = 'weekly_reflection' AND ${table.weekStart} IS NOT NULL AND ${table.taskId} IS NULL)`,
+    ),
+    check(
+      'ck_ai_jobs_outcome',
+      sql`(${table.status} = 'succeeded') = (${table.result} IS NOT NULL AND ${table.source} IS NOT NULL) AND (${table.status} = 'failed') = (${table.failure} IS NOT NULL)`,
+    ),
+    check(
+      'ck_ai_jobs_source',
+      sql`${table.source} IS NULL OR ${table.source} IN ('model', 'mock')`,
+    ),
+    check(
+      'ck_ai_jobs_failure',
+      sql`${table.failure} IS NULL OR ${table.failure} IN ('unavailable', 'declined', 'invalid_output', 'timed_out')`,
+    ),
+    uniqueIndex('uq_ai_jobs_user_id_kind_active')
+      .on(table.userId, table.kind)
+      .where(sql`${table.status} IN ('queued', 'running')`),
+    index('ix_ai_jobs_user_id_kind_created_at').on(
+      table.userId,
+      table.kind,
+      table.createdAt.desc(),
+    ),
   ],
 );

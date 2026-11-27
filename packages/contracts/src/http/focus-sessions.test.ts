@@ -4,6 +4,7 @@ import { errorCodeSchema } from '../errors';
 import { focusSessionIdSchema } from '../ids';
 import {
   abandonReasonSchema,
+  checkInFocusSessionRequestSchema,
   currentFocusSessionResponseSchema,
   FOCUS_SESSION_LIST_DEFAULT_LIMIT,
   FOCUS_SESSION_LIST_MAX_LIMIT,
@@ -85,7 +86,7 @@ describe('statuses and abandon reasons', () => {
     expect(focusSessionStatusSchema.options).toEqual(['in_progress', 'completed', 'abandoned']);
   });
 
-  it('has the solo reasons (E5) and the room reasons added in Phase 8 (RF1)', () => {
+  it('has the solo reasons (E5), the room reasons (RF1) and the Deep Focus one (DF2)', () => {
     expect(abandonReasonSchema.options).toEqual([
       'stopped',
       'grace_expired',
@@ -96,6 +97,7 @@ describe('statuses and abandon reasons', () => {
       'reset',
       'phase_changed',
       'timer_lost',
+      'focus_broken',
     ]);
     expect(abandonReasonSchema.safeParse('crashed').success).toBe(false);
   });
@@ -121,6 +123,7 @@ describe('focusSessionViewSchema', () => {
         status: 'completed',
         focusedSeconds: 1_500,
         endedAt: LATER,
+        checkIn: { outcome: 'done', note: 'Shipped it', quality: 4, recordedAt: LATER },
       }).success,
     ).toBe(true);
     expect(
@@ -130,6 +133,7 @@ describe('focusSessionViewSchema', () => {
         endedAt: LATER,
         abandonReason: 'grace_expired',
         task: { id: TASK_ID, title: 'Write report', deleted: true },
+        checkIn: null,
       }).success,
     ).toBe(true);
   });
@@ -153,6 +157,7 @@ describe('focusSessionViewSchema', () => {
         status: 'abandoned',
         endedAt: LATER,
         abandonReason: 'timer_lost',
+        checkIn: null,
       }).success,
     ).toBe(true);
     expect(
@@ -162,6 +167,43 @@ describe('focusSessionViewSchema', () => {
         status: 'in_progress',
         runningSince: null,
       }).success,
+    ).toBe(false);
+  });
+
+  it('requires a check-in field on an ended session, outcome in its set (CI1)', () => {
+    const ended = { ...base, status: 'completed', focusedSeconds: 1_500, endedAt: LATER };
+    expect(focusSessionViewSchema.safeParse(ended).success).toBe(false);
+    expect(
+      focusSessionViewSchema.safeParse({
+        ...ended,
+        checkIn: { outcome: 'great', note: null, recordedAt: LATER },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('trims a check-in note, treats a blank one as none and refuses unknown keys', () => {
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'stuck', note: '  hm  ' })).toEqual({
+      outcome: 'stuck',
+      note: 'hm',
+    });
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'done', note: '   ' })).toEqual({
+      outcome: 'done',
+      note: null,
+    });
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'progress' }).note).toBeNull();
+    // FQ1: an optional whole rating from 1 to 5.
+    expect(checkInFocusSessionRequestSchema.parse({ outcome: 'done', quality: 5 }).quality).toBe(5);
+    for (const quality of [0, 6, 2.5]) {
+      expect(checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', quality }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', note: 'x'.repeat(281) })
+        .success,
+    ).toBe(false);
+    expect(
+      checkInFocusSessionRequestSchema.safeParse({ outcome: 'done', taskId: TASK_ID }).success,
     ).toBe(false);
   });
 

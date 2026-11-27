@@ -1,4 +1,5 @@
 import {
+  type CheckInFocusSessionRequest,
   currentFocusSessionResponseSchema,
   type FocusSessionId,
   focusSessionPath,
@@ -46,6 +47,28 @@ export function resumeFocusSession(id: FocusSessionId): Promise<FocusSessionView
 
 export function stopFocusSession(id: FocusSessionId): Promise<FocusSessionView> {
   return sessionRequest(focusSessionPath(focusSessionPaths.stop, id), { method: 'POST' });
+}
+
+/** DF2: the user stayed away from a Deep Focus session past the warning. */
+export function breakFocusSession(id: FocusSessionId): Promise<FocusSessionView> {
+  return sessionRequest(focusSessionPath(focusSessionPaths.break, id), { method: 'POST' });
+}
+
+/** DF3: the user left a Deep Focus session and came back within the warning. */
+export function recordFocusDistraction(id: FocusSessionId): Promise<FocusSessionView> {
+  return sessionRequest(focusSessionPath(focusSessionPaths.distraction, id), { method: 'POST' });
+}
+
+/** `PUT /focus-sessions/:sessionId/check-in` (CI2): how an ended session went. */
+export function checkInFocusSession(
+  id: FocusSessionId,
+  request: CheckInFocusSessionRequest,
+): Promise<FocusSessionView> {
+  return sessionRequest(focusSessionPath(focusSessionPaths.checkIn, id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
 }
 
 /**

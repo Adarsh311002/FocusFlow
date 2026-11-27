@@ -99,11 +99,14 @@ export type RoomMemberJoinedEvent = z.infer<typeof roomMemberJoinedEventSchema>;
 /**
  * Sent to the room and to `user:{userId}`; the server also takes that user's sockets out of
  * the room. `reason` tells the person why: removed by the host, or left on purpose.
+ * `blocked` is true only when the host removed them AND forbade a rejoin (B4); it is always
+ * false for a person who left on purpose.
  */
 export const roomMemberRemovedEventSchema = z.object({
   roomId: roomIdSchema,
   userId: userIdSchema,
   reason: z.enum(['removed', 'left']),
+  blocked: z.boolean().default(false),
 });
 export type RoomMemberRemovedEvent = z.infer<typeof roomMemberRemovedEventSchema>;
 

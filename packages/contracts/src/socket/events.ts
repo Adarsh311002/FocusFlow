@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
 import { focusSessionViewSchema } from '../http/focus-sessions';
+import type { BuddyNudgeEvent } from '../http/together';
 import type { AuthSessionId, UserId } from '../ids';
 import { type Ack, type AckError, ackErrorSchema } from './ack';
-import type { RoomFocusParticipantsEvent } from './room-focus';
+import type { RoomFocusCheckInEvent, RoomFocusParticipantsEvent } from './room-focus';
 import type {
   RoomTimerCommandRequest,
   RoomTimerCommandResult,
@@ -82,6 +83,8 @@ export type FocusSessionUpdatedEvent = z.infer<typeof focusSessionUpdatedEventSc
 /** Names are `area:action` and payloads never carry the receiver's own identity. */
 export type ServerToClientEvents = {
   'focus:session:updated': (event: FocusSessionUpdatedEvent) => void;
+  /** BD4: a buddy nudged you. */
+  'buddy:nudge': (event: BuddyNudgeEvent) => void;
   'room:presence:joined': (event: RoomPresenceJoinedEvent) => void;
   'room:presence:left': (event: RoomPresenceLeftEvent) => void;
   'room:member:joined': (event: RoomMemberJoinedEvent) => void;
@@ -94,6 +97,7 @@ export type ServerToClientEvents = {
   'room:resync': (event: RoomResyncEvent) => void;
   'room:timer:state': (event: RoomTimerStateEvent) => void;
   'room:focus:participants': (event: RoomFocusParticipantsEvent) => void;
+  'room:focus:check-in': (event: RoomFocusCheckInEvent) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

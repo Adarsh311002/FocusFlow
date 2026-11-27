@@ -124,7 +124,17 @@ room_members                                        (D9)
   joined_at
   PRIMARY KEY (room_id, user_id)
   INDEX (user_id, joined_at DESC)                       ("My Rooms" and the users cascade)
+
+room_blocks                                         (B1–B8)
+  id                  PK (UUIDv7)
+  room_id             FK → rooms, ON DELETE CASCADE
+  user_id             FK → users, ON DELETE CASCADE
+  created_at
+  UNIQUE (room_id, user_id)                             (uq_room_blocks_room_id_user_id)
+  INDEX (user_id)                                       (the users cascade)
 ```
+
+`users.daily_goal_seconds` (A2): `NOT NULL DEFAULT 7200`, `CHECK 300–43,200` (`ck_users_daily_goal_seconds`).
 
 ### Rules the database cannot enforce alone
 

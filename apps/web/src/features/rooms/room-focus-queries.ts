@@ -45,7 +45,8 @@ export type RoomFocusActions = {
   readonly pending: boolean;
   readonly error: unknown;
   readonly clearError: () => void;
-  readonly join: (taskId: TaskId | null) => Promise<boolean>;
+  /** RI1: `shareIntention` shows the task's title to the room; ignored without a task. */
+  readonly join: (taskId: TaskId | null, shareIntention?: boolean) => Promise<boolean>;
   readonly leave: () => Promise<boolean>;
 };
 
@@ -61,9 +62,16 @@ export function useRoomFocusActions(roomId: RoomId, onStale: () => void): RoomFo
   const inFlight = useRef(false);
 
   const mutation = useMutation({
-    mutationFn: (request: { kind: 'join'; taskId: TaskId | null } | { kind: 'leave' }) =>
+    mutationFn: (
+      request: { kind: 'join'; taskId: TaskId | null; shareIntention: boolean } | { kind: 'leave' },
+    ) =>
       request.kind === 'join'
-        ? optInRoomFocus(roomId, request.taskId === null ? {} : { taskId: request.taskId })
+        ? optInRoomFocus(
+            roomId,
+            request.taskId === null
+              ? {}
+              : { taskId: request.taskId, shareIntention: request.shareIntention },
+          )
         : optOutRoomFocus(roomId),
     onSuccess: (session: FocusSessionView) => {
       // An opt-out answers with the ended session: show what happened right away.
@@ -83,7 +91,9 @@ export function useRoomFocusActions(roomId: RoomId, onStale: () => void): RoomFo
   });
 
   const run = useCallback(
-    async (request: { kind: 'join'; taskId: TaskId | null } | { kind: 'leave' }) => {
+    async (
+      request: { kind: 'join'; taskId: TaskId | null; shareIntention: boolean } | { kind: 'leave' },
+    ) => {
       if (inFlight.current) {
         return false;
       }
@@ -109,7 +119,7 @@ export function useRoomFocusActions(roomId: RoomId, onStale: () => void): RoomFo
         mutation.reset();
       }
     },
-    join: (taskId) => run({ kind: 'join', taskId }),
+    join: (taskId, shareIntention = false) => run({ kind: 'join', taskId, shareIntention }),
     leave: () => run({ kind: 'leave' }),
   };
 }

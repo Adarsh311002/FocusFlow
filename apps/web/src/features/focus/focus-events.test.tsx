@@ -154,6 +154,7 @@ describe('server-driven outcomes', () => {
         status: 'completed',
         focusedSeconds: running.plannedSeconds,
         endedAt: new Date().toISOString(),
+        checkIn: null,
       }),
     );
     await waitFor(() => {
@@ -360,6 +361,7 @@ describe('lifecycle answers that arrive late', () => {
       ...old,
       status: 'abandoned',
       endedAt: new Date().toISOString(),
+      checkIn: null,
       abandonReason: 'expired',
     };
     seedRunning(world, { plannedSeconds: 3_000 });

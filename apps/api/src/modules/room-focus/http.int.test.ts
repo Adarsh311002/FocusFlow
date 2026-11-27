@@ -6,6 +6,7 @@ import {
   roomFocusSessionResponseSchema,
   roomFocusStateResponseSchema,
 } from '@focus-flow/contracts';
+import { eq } from 'drizzle-orm';
 import express from 'express';
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -153,6 +154,38 @@ describe('focus participation routes', () => {
     const again = await api(member, 'DELETE', pathOf(roomId));
     expect(again.status).toBe(200);
     expect(roomFocusSessionResponseSchema.parse(again.body).session.id).toBe(session.id);
+  });
+
+  it('shows a shared intention to the room, and only a shared one (RI1, RI2)', async () => {
+    const { roomId, host, member } = await makeRoom();
+    const db = requireHarness().db;
+    const sharedTask = uuidv7();
+    const privateTask = uuidv7();
+    await db.insert(tasks).values([
+      { id: sharedTask, userId: member.userId, title: 'Chapter 3 draft' },
+      { id: privateTask, userId: host.userId, title: 'Secret plans' },
+    ]);
+
+    // Sharing needs a task.
+    const refused = await api(host, 'POST', pathOf(roomId), { shareIntention: true });
+    expect([refused.status, errorCode(refused)]).toEqual([400, 'VALIDATION_FAILED']);
+
+    expect(
+      (await api(member, 'POST', pathOf(roomId), { taskId: sharedTask, shareIntention: true }))
+        .status,
+    ).toBe(201);
+    expect((await api(host, 'POST', pathOf(roomId), { taskId: privateTask })).status).toBe(201);
+
+    const state = roomFocusStateResponseSchema.parse((await api(host, 'GET', pathOf(roomId))).body);
+    const intentions = Object.fromEntries(
+      state.participants.map((participant) => [participant.userId, participant.intention]),
+    );
+    expect(intentions).toEqual({ [member.userId]: 'Chapter 3 draft', [host.userId]: null });
+
+    // A deleted task stops being shown.
+    await db.update(tasks).set({ deletedAt: new Date() }).where(eq(tasks.id, sharedTask));
+    const after = roomFocusStateResponseSchema.parse((await api(host, 'GET', pathOf(roomId))).body);
+    expect(after.participants.find((p) => p.userId === member.userId)?.intention).toBeNull();
   });
 
   it('shows each caller only their own session in the state', async () => {

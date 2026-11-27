@@ -1,5 +1,8 @@
 import {
   type CreateRoomRequest,
+  roomBlockResponseSchema,
+  roomBlocksResponseSchema,
+  type RoomBlockView,
   roomByCodePath,
   type RoomId,
   type RoomListItem,
@@ -106,4 +109,30 @@ export function rejectKnock(roomId: RoomId, userId: UserId): Promise<void> {
   return authedApiRequestNoContent(roomPath(roomPaths.rejectKnock, { roomId, userId }), {
     method: 'POST',
   });
+}
+
+/** `PUT /rooms/:roomId/blocks/:userId` (B1): removes the member and bars them from rejoining. */
+export async function blockRoomMember(roomId: RoomId, userId: UserId): Promise<RoomBlockView> {
+  const body = await authedApiRequest(
+    roomPath(roomPaths.block, { roomId, userId }),
+    roomBlockResponseSchema,
+    { method: 'PUT' },
+  );
+  return body.block;
+}
+
+/** `DELETE /rooms/:roomId/blocks/:userId` (B5): lifts the block; they are not a member again. */
+export function unblockRoomMember(roomId: RoomId, userId: UserId): Promise<void> {
+  return authedApiRequestNoContent(roomPath(roomPaths.block, { roomId, userId }), {
+    method: 'DELETE',
+  });
+}
+
+/** `GET /rooms/:roomId/blocks` (B6), host only, newest first. */
+export async function listRoomBlocks(roomId: RoomId): Promise<RoomBlockView[]> {
+  const body = await authedApiRequest(
+    roomPath(roomPaths.blocks, { roomId }),
+    roomBlocksResponseSchema,
+  );
+  return body.blocks;
 }

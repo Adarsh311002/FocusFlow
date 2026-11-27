@@ -4,11 +4,16 @@ import { LoginPage } from '../features/auth/login-page';
 import { RequireAuth } from '../features/auth/require-auth';
 import { SignupPage } from '../features/auth/signup-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
+import { DeepFocusPage } from '../features/deep-focus/deep-focus-page';
+import { ForestPage } from '../features/forest/forest-page';
+import { GoalsPage } from '../features/goals/goals-page';
 import { LandingPage } from '../features/landing/landing-page';
 import { ReviewPage } from '../features/review/review-page';
 import { RoomPage } from '../features/rooms/room-page';
 import { RoomsPage } from '../features/rooms/rooms-page';
+import { SettingsPage } from '../features/settings/settings-page';
 import { SystemStatus } from '../features/system/system-status';
+import { BuddiesPage } from '../features/together/buddies-page';
 import { RootLayout } from './root-layout';
 
 const rootRoute = createRootRoute({ component: RootLayout });
@@ -100,6 +105,81 @@ const roomRoute = createRoute({
   component: ProtectedRoom,
 });
 
+/** Settings (ST4): profile, focus defaults and this device. */
+function ProtectedSettings() {
+  return (
+    <RequireAuth>
+      <SettingsPage />
+    </RequireAuth>
+  );
+}
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: ProtectedSettings,
+});
+
+/** Deep Focus (DF1–DF5): its own tab. */
+function ProtectedDeepFocus() {
+  return (
+    <RequireAuth>
+      <DeepFocusPage />
+    </RequireAuth>
+  );
+}
+
+const deepFocusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/deep-focus',
+  component: ProtectedDeepFocus,
+});
+
+/** Grow your forest (GF6). */
+function ProtectedForest() {
+  return (
+    <RequireAuth>
+      <ForestPage />
+    </RequireAuth>
+  );
+}
+
+const forestRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/forest',
+  component: ProtectedForest,
+});
+
+/** Goals (GL5). */
+function ProtectedGoals() {
+  return (
+    <RequireAuth>
+      <GoalsPage />
+    </RequireAuth>
+  );
+}
+
+const goalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/goals',
+  component: ProtectedGoals,
+});
+
+/** Focus buddies (BD5). */
+function ProtectedBuddies() {
+  return (
+    <RequireAuth>
+      <BuddiesPage />
+    </RequireAuth>
+  );
+}
+
+const buddiesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/buddies',
+  component: ProtectedBuddies,
+});
+
 // Code-based route tree: no file-based routing and no generated route file (plan I4).
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -110,6 +190,11 @@ const routeTree = rootRoute.addChildren([
   reviewRoute,
   roomsRoute,
   roomRoute,
+  settingsRoute,
+  deepFocusRoute,
+  forestRoute,
+  goalsRoute,
+  buddiesRoute,
 ]);
 
 export const router = createRouter({ routeTree });

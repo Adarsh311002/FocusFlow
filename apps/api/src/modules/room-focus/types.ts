@@ -179,6 +179,8 @@ export type RoomFocusService = {
     userId: string,
     roomId: string,
     taskId: string | undefined,
+    /** RI1: show the task's title to the room; ignored without a task. Off by default. */
+    shareIntention?: boolean,
   ) => Promise<{ readonly session: FocusSessionView; readonly created: boolean }>;
   /** `DELETE /rooms/:roomId/focus-participation`: the ended session; throws ROOM_NOT_FOUND for non-members. Idempotent. */
   readonly optOut: (

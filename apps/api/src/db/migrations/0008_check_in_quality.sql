@@ -1,0 +1,2 @@
+ALTER TABLE "focus_sessions" ADD COLUMN "check_in_quality" smallint;--> statement-breakpoint
+ALTER TABLE "focus_sessions" ADD CONSTRAINT "ck_focus_sessions_check_in_quality" CHECK ("focus_sessions"."check_in_quality" IS NULL OR ("focus_sessions"."check_in_outcome" IS NOT NULL AND "focus_sessions"."check_in_quality" BETWEEN 1 AND 5));

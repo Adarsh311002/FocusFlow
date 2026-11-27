@@ -17,7 +17,13 @@ export type FocusSessionTransition =
   | 'completed'
   // Settled by the server (lifecycle jobs): abandoned with that reason.
   | 'grace_expired'
-  | 'expired';
+  | 'expired'
+  // CI4: the user checked in on an ended session; nothing about its time changed.
+  | 'checked_in'
+  // DF3: a Deep Focus session counted a distraction; its time did not change.
+  | 'distraction_recorded'
+  // DF2: the user left a Deep Focus session longer than the warning: abandoned(focus_broken).
+  | 'broken';
 
 export type FocusSessionChange = {
   readonly userId: string;

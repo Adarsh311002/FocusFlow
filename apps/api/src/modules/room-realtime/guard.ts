@@ -63,6 +63,7 @@ export const dropNonMemberSockets = async (deps: {
       roomId: roomIdSchema.parse(roomId),
       userId: userIdSchema.parse(userId),
       reason: 'removed',
+      blocked: false,
     });
     removed += 1;
   }

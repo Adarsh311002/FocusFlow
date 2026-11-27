@@ -13,7 +13,7 @@ Status: **Architecture**, implementing F5, F6, F7, D9, D10, D11, D16, D17, D19. 
 - **Revocation:** logout or refresh-token reuse disconnects all sockets in `session:{sid}`.
 - **Disconnect:** handled per user and per room as described in the timing protocol. A plain disconnect never abandons a session immediately; `room:leave` does.
 - **Transports:** Socket.IO defaults, polling upgraded to WebSocket (R5). Multiple API instances with polling need sticky sessions. Messages are limited to 16 KB.
-- **Handshake refusals** (`connect_error`, `err.data.code`): `UNAUTHENTICATED`, `SESSION_REVOKED`, `INTERNAL`.
+- **Handshake refusals** (`connect_error`, `err.data.code`): `UNAUTHENTICATED`, `SESSION_REVOKED`, `INTERNAL`, and since Phase 9 `RATE_LIMITED` (more than 60 connection attempts per minute from one client address, checked before the token, S1) and `TOO_MANY_CONNECTIONS` (the user already holds `SOCKET_MAX_PER_USER` live sockets, default 20, checked after the token, S2, R4). Both counts fail open when Redis cannot answer (the token check still runs) and are approximate by design; the web client retries both with backoff.
 - **Implemented in Phase 6:** `room:join`, `room:leave`, `room:knock`, `room:knock:cancel`, `room:chat:send` and the presence, member, settings, knock, chat and resync events (M4–M10). **Implemented in Phase 8:** `room:focus:participants` and the snapshot's `focus` (RF12). `room:join` by a user who becomes present calls the run service (reconnect within grace); the last socket leaving a room starts the 60 s grace (RF7); `room:leave` by the last socket abandons with `left_room` first (RF8).
 - **Implemented in Phase 7:** `room:timer:command`, `room:timer:state` and the snapshot's `timer` (RT1–RT13). Clients treat the join snapshot as authoritative and apply a `room:timer:state` only when its `version` is greater than the one they hold (RT2). `VERSION_CONFLICT` and `INVALID_TRANSITION` acknowledgements carry `error.details = { timer, serverNowMs }` (RT6).
 - **Implemented in Phase 3:** the handshake, the `user:`/`session:` rooms, token-expiry and revocation disconnects, and `time:sync` (answered with Redis TIME, R2). Phase 4B adds the first server → client product event, `focus:session:updated` (R8, E6; see "Server → client").
@@ -30,7 +30,7 @@ Status: **Architecture**, implementing F5, F6, F7, D9, D10, D11, D16, D17, D19. 
 | `room:chat:send` | `{ roomId, clientMessageId (UUID), body }` (body trimmed, 1–1000 chars) | `{ messageId, sentAtMs }` | The socket is in the room (`NOT_JOINED`); at most 10 per 10 s per user (`RATE_LIMITED`) | De-duplication key (60 s) only (D7, M8) | `room:chat:message` to the room, including the sender. A repeat of a `clientMessageId` is answered with the original ids and not delivered again |
 | `time:sync` | `{ clientSentAtMs }` | `{ serverNowMs }` | Authenticated | — | — |
 
-Error codes returned through acknowledgements include `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `VERSION_CONFLICT` (with the current timer), `INVALID_TRANSITION`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `RATE_LIMITED`, `VALIDATION_FAILED`, `INTERNAL`.
+Error codes returned through acknowledgements include `ROOM_BLOCKED` (`room:join` and `room:knock` by a person the host blocked, B2), `NOT_A_MEMBER`, `NOT_JOINED`, `NOT_HOST`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `VERSION_CONFLICT` (with the current timer), `INVALID_TRANSITION`, `NOT_PRIVATE`, `ALREADY_MEMBER`, `HOST_OFFLINE`, `RATE_LIMITED`, `VALIDATION_FAILED`, `INTERNAL`.
 
 A socket may act in a room only while it is in that room's Socket.IO room (`room:{roomId}`): joining puts it there; `room:leave`, a disconnect and removal from the membership take it out (M5, M9).
 
@@ -64,11 +64,13 @@ The socket joins the Socket.IO room before the presence list is read, so no even
 | `room:timer:state` | `{ roomId, timer: TimerView, serverNowMs }` | Room |
 | `room:settings:updated` | `{ roomId, timerSettings, effectiveFrom: "next_phase" }` | Room |
 | `room:focus:participants` | `{ roomId, focusRunId, participants: Participant[], participantsVersion }` (a client applies it only for the same `focusRunId` and a higher `participantsVersion`, G2) | Room |
+| `room:focus:check-in` | `{ roomId, focusRunId, userId, outcome }` (RI3: a participant of one of the room's runs checked in; outcome only, the note stays private; a hint, nothing stored) | Room |
+| `buddy:nudge` | `{ fromUserId, displayName }` (BD4: an accepted buddy nudged you; at most once an hour per pair) | User |
 | `room:knock:received` | `{ roomId, requester: { userId, displayName, avatarUrl }, expiresAtMs }` | `user:{hostId}` |
 | `room:knock:removed` | `{ roomId, userId, reason: "approved" \| "rejected" \| "cancelled" }` | `user:{hostId}` |
 | `room:knock:resolved` | `{ roomId, outcome: "approved" \| "rejected" }` | `user:{requesterId}` only |
 | `room:chat:message` | `{ roomId, messageId, clientMessageId, sender: { userId, displayName }, body, sentAtMs }` | Room |
-| `room:member:removed` | `{ roomId, userId, reason: "removed" \| "left" }` | Room and `user:{userId}`; the server also removes that user's sockets from the room |
+| `room:member:removed` | `{ roomId, userId, reason: "removed" \| "left", blocked }` (`blocked` is `true` only when the host also forbade a rejoin, B4) | Room and `user:{userId}`; the server also removes that user's sockets from the room |
 | `room:resync` | `{ roomId }` | Room. Clients respond with `room:join` to get a fresh snapshot (used after Redis state loss) |
 | `focus:session:updated` | `{ session: FocusSessionView }` | `user:{userId}` (every tab). Sent after every committed session transition: start, pause, resume, stop, completion and abandonment, whether caused by a request, a job or the reconciler (E6). The first product event (R8). Clients apply the payload and then refetch `GET /focus-sessions/current`, so a duplicate, late or missed event heals itself; they also refetch after reconnecting |
 

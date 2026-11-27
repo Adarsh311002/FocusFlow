@@ -19,7 +19,14 @@ import {
   sessionOf,
   watchSocketEvents,
 } from '../support/focus';
-import { closeAll, expectNoErrors, member, type Person, signUp } from '../support/people';
+import {
+  closeAll,
+  expectNoErrors,
+  member,
+  PAGE_LOAD_HEADROOM_MS,
+  type Person,
+  signUp,
+} from '../support/people';
 import {
   createTimerRoom,
   expectTimer,
@@ -72,7 +79,7 @@ async function enterRoom(host: Person, guests: readonly Person[], focusMinutes =
 test('journey: presence alone records nothing; two people opt in (one with a personal task), one leaves, the other completes at the real phase end', async ({
   browser,
 }, testInfo) => {
-  test.setTimeout(240_000);
+  test.setTimeout(240_000 + PAGE_LOAD_HEADROOM_MS);
   const host = await signUp(browser, 'Host');
   const guest = await signUp(browser, 'Guest', MOBILE);
   try {
@@ -156,7 +163,7 @@ test('journey: presence alone records nothing; two people opt in (one with a per
 test('host reset and phase switch end every opted-in run with the visible reason', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guests } = await roomWith(browser, ['Guest']);
   const guest = guests[0] as Person;
   try {
@@ -204,7 +211,7 @@ test('grace: a participant back within 60 s completes although the phase ended w
   browser,
 }, testInfo) => {
   // Real time: ~25 s until the server sees the cut, the 60 s phase end, then the 60 s grace.
-  test.setTimeout(300_000);
+  test.setTimeout(300_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guests } = await roomWith(browser, ['Back', 'Gone']);
   const back = guests[0] as Person;
   const gone = guests[1] as Person;
@@ -264,7 +271,7 @@ test('grace: a participant back within 60 s completes although the phase ended w
 test('two tabs: closing one tab of a participant does not disconnect them; closing the last does', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guests, room } = await roomWith(browser, ['Guest']);
   const guest = guests[0] as Person;
   try {
@@ -299,7 +306,7 @@ test('two tabs: closing one tab of a participant does not disconnect them; closi
 test('unauthorized and invalid focus participation is refused over crafted REST calls', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const host = await signUp(browser, 'Host');
   const guest = await signUp(browser, 'Guest');
   const drifter = await signUp(browser, 'Drifter');
@@ -388,7 +395,7 @@ test('Redis data loss: clients resync, the timer is idle again, room sessions en
   browser,
 }, testInfo) => {
   // Recovery (resync, the reconciler's sweep) can take up to ~90 s after the flush.
-  test.setTimeout(420_000);
+  test.setTimeout(420_000 + PAGE_LOAD_HEADROOM_MS);
   const host = await signUp(browser, 'Host');
   const guest = await signUp(browser, 'Guest', MOBILE);
   const solo = await signUp(browser, 'Solo');
@@ -492,7 +499,7 @@ test('reconnect within the grace while the phase still runs keeps the same sessi
   browser,
 }) => {
   // A 2-minute phase: detection of the cut (~25 s) and the reconnect both fit well inside it.
-  test.setTimeout(420_000);
+  test.setTimeout(420_000 + PAGE_LOAD_HEADROOM_MS);
   const host = await signUp(browser, 'Host');
   const back = await signUp(browser, 'Back');
   const watcher = await signUp(browser, 'Watcher');
@@ -560,7 +567,7 @@ test('reconnect within the grace while the phase still runs keeps the same sessi
 test('leaving the room, leaving permanently and opting out each end the session with their own reason', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const host = await signUp(browser, 'Host');
   const leaver = await signUp(browser, 'Leaver');
   const quitter = await signUp(browser, 'Quitter');
@@ -633,7 +640,7 @@ test('leaving the room, leaving permanently and opting out each end the session 
 test('removing an opted-in member ends their session as removed and leaves the others focusing', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guests, room } = await roomWith(browser, ['Removed', 'Stays']);
   const removed = guests[0] as Person;
   const stays = guests[1] as Person;
@@ -678,7 +685,7 @@ test('removing an opted-in member ends their session as removed and leaves the o
 test('cross-room isolation: a run in room A never shows in room B, and one person cannot focus in both', async ({
   browser,
 }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(150_000 + PAGE_LOAD_HEADROOM_MS);
   const hostA = await signUp(browser, 'HostA');
   const hostB = await signUp(browser, 'HostB');
   const x = await signUp(browser, 'X');
@@ -748,7 +755,7 @@ test('cross-room isolation: a run in room A never shows in room B, and one perso
 test('a phase change from a running or a paused focus phase, and a reset from a paused one, each end every opted-in session', async ({
   browser,
 }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(240_000 + PAGE_LOAD_HEADROOM_MS);
   const { host, guests, room } = await roomWith(browser, ['Guest']);
   const guest = guests[0] as Person;
   const people = [host, guest];

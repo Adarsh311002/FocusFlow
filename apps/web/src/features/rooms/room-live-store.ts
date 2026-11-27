@@ -3,6 +3,7 @@ import type {
   KnockView,
   PresenceUser,
   RoomChatMessageEvent,
+  RoomFocusCheckInEvent,
   RoomFocusParticipantsEvent,
   RoomFocusSnapshot,
   RoomId,
@@ -21,6 +22,9 @@ import { create, createStore, type StoreApi, useStore } from 'zustand';
 
 /** Messages kept in memory per room; older ones scroll away for good (chat is temporary, D7). */
 export const MAX_CHAT_MESSAGES = 200;
+
+/** Room check-ins kept in memory per room (RI3). */
+export const MAX_FOCUS_CHECK_INS = 100;
 
 /**
  * Who opted into the room's current focus run (Phase 8, RF12). Fed only by the join snapshot
@@ -61,6 +65,12 @@ export type RoomLiveState = {
   readonly focus: RoomFocusLive | null;
   /** Set when this user's membership ended (removed by the host, or left elsewhere). */
   readonly removed: RoomMemberRemovedEvent['reason'] | null;
+  /**
+   * RI3: check-ins of the room's runs heard on this page (outcome only), newest last, one
+   * per person and run. Temporary like chat: a reload starts empty.
+   */
+  readonly focusCheckIns: readonly RoomFocusCheckInEvent[];
+  readonly focusCheckInReceived: (event: RoomFocusCheckInEvent) => void;
   readonly joining: () => void;
   readonly joined: (snapshot: RoomSnapshot) => void;
   readonly joinFailed: (status: 'not_member' | 'failed', message: string) => void;
@@ -126,6 +136,7 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
     timer: null,
     focus: null,
     removed: null,
+    focusCheckIns: [],
   } as const;
 
   // Presence events applied between a join request and its answer. The answer's snapshot may
@@ -299,6 +310,19 @@ export function createRoomLiveStore(roomId: RoomId): StoreApi<RoomLiveState> {
           },
         };
       });
+    },
+    focusCheckInReceived: (event) => {
+      if (event.roomId !== roomId) {
+        return;
+      }
+      set((state) => ({
+        focusCheckIns: [
+          ...state.focusCheckIns.filter(
+            (entry) => entry.focusRunId !== event.focusRunId || entry.userId !== event.userId,
+          ),
+          event,
+        ].slice(-MAX_FOCUS_CHECK_INS),
+      }));
     },
     chatPending: (entry) => {
       set((state) =>

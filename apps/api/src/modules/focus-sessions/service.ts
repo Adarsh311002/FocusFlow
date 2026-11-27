@@ -1,4 +1,9 @@
-import type { FocusSessionView, StartFocusSessionRequest } from '@focus-flow/contracts';
+import {
+  DEEP_FOCUS_DISTRACTIONS_MAX,
+  DEEP_FOCUS_PAUSES_ALLOWED,
+  type FocusSessionView,
+  type StartFocusSessionRequest,
+} from '@focus-flow/contracts';
 import { uuidv7 } from 'uuidv7';
 
 import type { Db, Executor, Tx } from '../../db/client.js';
@@ -85,6 +90,12 @@ const notSoloSession = (): AppError =>
     409,
     'This session belongs to a room focus run. Opt out of the run to end it.',
   );
+
+const notDeepFocus = (): AppError =>
+  new AppError('NOT_DEEP_FOCUS', 409, 'This is not a Deep Focus session.');
+
+const pauseUsed = (): AppError =>
+  new AppError('PAUSE_USED', 409, 'A Deep Focus session allows one pause, and it has been used.');
 
 const presenceUnavailable = (): AppError =>
   new AppError('INTERNAL', 503, 'Presence is temporarily unavailable. Try again shortly.');
@@ -178,11 +189,15 @@ const commitTransition = async (
   row: FocusSessionRow,
   transition: Transition,
   name: FocusSessionTransition,
+  extra: Partial<Pick<FocusSessionRow, 'pauseCount'>> = {},
 ): Promise<Committed> => {
   if (transition.outcome !== 'changed') {
     return { view: await loadView(tx, row), transition: null, runningStretch: null };
   }
-  const saved = await saveSession(tx, row.id, toSessionChanges(transition.session));
+  const saved = await saveSession(tx, row.id, {
+    ...toSessionChanges(transition.session),
+    ...extra,
+  });
   return {
     view: await loadView(tx, saved),
     transition: name,
@@ -228,6 +243,7 @@ export const startFocusSession = async (
           taskId,
           plannedSeconds: session.plannedSeconds,
           startedAtMs: session.startedAtMs,
+          deepFocus: request.deepFocus ?? false,
         });
         return {
           view: await loadView(tx, row),
@@ -324,7 +340,7 @@ const pauseOrStop = async (
   deps: FocusSessionsDeps,
   userId: string,
   sessionId: string,
-  action: 'pause' | 'stop',
+  action: 'pause' | 'stop' | 'break',
 ): Promise<FocusSessionView> => {
   const committed = await deps.db.transaction(async (tx): Promise<Committed> => {
     const row = await lockOwnedSession(tx, userId, sessionId);
@@ -333,6 +349,9 @@ const pauseOrStop = async (
     }
     if (row.roomId !== null) {
       throw notSoloSession();
+    }
+    if (action === 'break' && !row.deepFocus) {
+      throw notDeepFocus();
     }
     const session = toSoloSession(row);
     const nowMs = await databaseNowMs(tx);
@@ -354,9 +373,20 @@ const pauseOrStop = async (
     if (settlement?.kind === 'expired') {
       return commitTransition(tx, row, expire(session, nowMs), 'expired');
     }
-    return action === 'pause'
-      ? commitTransition(tx, row, pause(session, nowMs), 'paused')
-      : commitTransition(tx, row, stop(session, nowMs), 'stopped');
+    switch (action) {
+      case 'pause':
+        // DF4: one pause per Deep Focus session (a repeat while paused stays a no-op, E11).
+        if (row.deepFocus && isRunning(session) && row.pauseCount >= DEEP_FOCUS_PAUSES_ALLOWED) {
+          throw pauseUsed();
+        }
+        return commitTransition(tx, row, pause(session, nowMs), 'paused', {
+          pauseCount: row.pauseCount + 1,
+        });
+      case 'stop':
+        return commitTransition(tx, row, stop(session, nowMs), 'stopped');
+      case 'break':
+        return commitTransition(tx, row, stop(session, nowMs, 'focus_broken'), 'broken');
+    }
   });
   return publishCommitted(deps, userId, committed);
 };
@@ -374,6 +404,55 @@ export const stopFocusSession = (
   userId: string,
   sessionId: string,
 ): Promise<FocusSessionView> => pauseOrStop(deps, userId, sessionId, 'stop');
+
+/**
+ * DF2 `POST /focus-sessions/:id/break`: the page saw the user stay away from a Deep Focus
+ * session past the warning → `abandoned(focus_broken)`, focused time kept. At or after the
+ * planned end the completion decision runs first, as for a stop (E7). Ended → `200`
+ * unchanged (E11).
+ */
+export const breakFocusSession = (
+  deps: FocusSessionsDeps,
+  userId: string,
+  sessionId: string,
+): Promise<FocusSessionView> => pauseOrStop(deps, userId, sessionId, 'break');
+
+/**
+ * DF3 `POST /focus-sessions/:id/distraction`: the user left a Deep Focus session and came
+ * back within the warning. Counts one (capped); time and status never change. Ended →
+ * `200` unchanged.
+ */
+export const recordDistraction = async (
+  deps: FocusSessionsDeps,
+  userId: string,
+  sessionId: string,
+): Promise<FocusSessionView> => {
+  const committed = await deps.db.transaction(async (tx): Promise<Committed> => {
+    const row = await lockOwnedSession(tx, userId, sessionId);
+    if (row === undefined) {
+      throw sessionNotFound();
+    }
+    if (row.roomId !== null) {
+      throw notSoloSession();
+    }
+    if (!row.deepFocus) {
+      throw notDeepFocus();
+    }
+    if (row.status !== 'in_progress' || row.distractions >= DEEP_FOCUS_DISTRACTIONS_MAX) {
+      return { view: await loadView(tx, row), transition: null, runningStretch: null };
+    }
+    const saved = await saveSession(tx, row.id, {
+      ...toSessionChanges(toSoloSession(row)),
+      distractions: row.distractions + 1,
+    });
+    return {
+      view: await loadView(tx, saved),
+      transition: 'distraction_recorded',
+      runningStretch: null,
+    };
+  });
+  return publishCommitted(deps, userId, committed);
+};
 
 /**
  * `POST /focus-sessions/:id/resume`. Running or ended → `200` unchanged (E11); a paused

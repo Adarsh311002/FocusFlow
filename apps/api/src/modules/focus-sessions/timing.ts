@@ -211,7 +211,12 @@ export const resume = (session: SoloSession, nowMs: number): Transition => {
  * `ended_at := now`. At or after `T_end` the caller runs the completion decision first
  * (E7).
  */
-export const stop = (session: SoloSession, nowMs: number): Transition => {
+export const stop = (
+  session: SoloSession,
+  nowMs: number,
+  // DF2: a broken Deep Focus session ends the same way, with its own reason.
+  reason: 'stopped' | 'focus_broken' = 'stopped',
+): Transition => {
   if (isEnded(session)) {
     return unchanged(session);
   }
@@ -220,7 +225,7 @@ export const stop = (session: SoloSession, nowMs: number): Transition => {
     session.runningSinceMs === null ? 0 : wholeSecondsBetween(session.runningSinceMs, now);
   return changed({
     status: 'abandoned',
-    abandonReason: 'stopped',
+    abandonReason: reason,
     plannedSeconds: session.plannedSeconds,
     startedAtMs: session.startedAtMs,
     focusedSeconds: Math.min(session.plannedSeconds, session.focusedSeconds + stretch),

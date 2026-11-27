@@ -35,7 +35,7 @@ Focus Flow helps people do focused work, alone or together. The core loop is: **
 | `worker` | BullMQ consumers: room phase ends, solo session ends, grace expiry, run settlement, reconciler. Same codebase as `api` (`apps/api`) with its own entry point/role; runs inside the `api` process initially and can become a separate deployment later. Sends socket events through the Socket.IO Redis emitter. | Approved (I7) |
 | PostgreSQL 18 | Users, auth identities and sessions, tasks, focus sessions, rooms, memberships. Accessed through Drizzle ORM. | Approved (F1, I6) |
 | Redis | Presence, room timer state (including the active phase's duration; the saved settings live in PostgreSQL, RT8), focus run ledger, knocks, queues, Socket.IO adapter, rate limits, revocation markers (a shortcut only; PostgreSQL decides revocation). | Approved (F2) |
-| Python AI service | AI orchestration and LLM calls. Not part of the MVP. | Later (F4) |
+| Python AI service | AI orchestration and LLM calls (`services/ai`): LangGraph workflow, mock provider or Claude. Internal only. | Implemented in Wave 5 (AI1) |
 
 ## Communication rules
 
@@ -45,14 +45,14 @@ Focus Flow helps people do focused work, alone or together. The core loop is: **
 - **Server authority** for shared room state (F6): clients render the room timer from server timestamps.
 - **Clocks:** room timer arithmetic uses Redis server time (read with `TIME` before each change is computed, I8); stored timestamps and solo session arithmetic use the PostgreSQL clock (`clock_timestamp()`, sampled after the session row lock is held, E9). API servers never use their own clocks for these. All hosts run NTP.
 
-## Node ↔ Python boundary (later phase)
+## Node ↔ Python boundary (implemented in Wave 5, AI1–AI8)
 
 - **Node owns:** authentication and authorization, public APIs and sockets, the PostgreSQL schema and migrations, creating AI jobs, quotas and rate limits, notifying the user.
 - **Python owns:** LangGraph workflows, LangChain components, prompts, LLM provider selection, validating LLM output (Pydantic), retrying LLM calls inside a job.
-- **What crosses:** a queue job `{ jobId, type, schemaVersion, userId, correlationId, input }`, where `input` holds IDs and options, not bulk data. Python fetches what it needs when the job runs (how is open, D28).
-- **Results:** written to an `ai_jobs` table; Node learns of completion (BullMQ events or Redis pub/sub) and emits to the user's socket channel; the client fetches the result over REST.
-- **Contracts:** job payload and result schemas are defined with Zod in `packages/contracts`, exported to JSON Schema, and generated into Pydantic models. See `contracts.md`.
-- When AI jobs arrive, "insert `ai_jobs` row + enqueue" should use an outbox or polling dispatcher, because it writes to two systems.
+- **What crosses:** Node's worker takes an `ai_jobs` row from the `ai` queue, assembles a small, bounded context from PostgreSQL and sends it to the Python service over internal HTTP with a shared token (AI4, resolving D28). Python has no database access.
+- **Results:** Python answers the call; Node checks the answer against the Zod contract and writes it to the `ai_jobs` row. The client polls the job over REST while it runs (AI8; no socket event for now).
+- **Contracts:** request and result schemas are defined with Zod in `packages/contracts` (`http/ai.ts`); the Pydantic models in `services/ai` mirror them by hand for now (JSON Schema generation is deferred).
+- "Insert the `ai_jobs` row, then enqueue" writes two systems without an outbox: every read of a job repairs it instead (a row queued for 20 s is enqueued again, one under way for 5 minutes fails `timed_out`, AI3).
 
 ## Deployment (Architecture)
 
@@ -66,7 +66,7 @@ Focus Flow helps people do focused work, alone or together. The core loop is: **
 
 ## Local development (Approved, I9)
 
-- PostgreSQL 18 and Redis run in Docker via `infra/compose.yaml`. Root scripts always invoke `docker compose -f infra/compose.yaml …`; the legacy root `docker-compose.yml` stays untouched. MinIO and the AI service are added only in the phases that need them.
+- PostgreSQL 18 and Redis run in Docker via `infra/compose.yaml`. Root scripts always invoke `docker compose -f infra/compose.yaml …`; the legacy root `docker-compose.yml` stays untouched. The Python AI service runs there too (AI1), so Python is not needed on the host; MinIO is added only when needed.
 - The web app and API run natively on Windows with pnpm, for fast reloads and working debuggers.
 - The Vite dev server (port 5173) proxies `/api` and `/socket.io` to the API (port 3000), so local development is same-origin like production.
 - Every service validates its environment variables at startup (Zod) and ships a `.env.example`.

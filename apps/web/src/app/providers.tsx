@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { AuthProvider } from '../features/auth/auth-context';
 import { useFocusSessionEvents } from '../features/focus/focus-queries';
+import { IntentionPromptProvider } from '../features/intention/intention-ritual';
 import { RealtimeProvider } from '../features/realtime/realtime-provider';
 import { ThemeProvider } from '../ui/theme';
 
@@ -37,7 +38,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <AuthProvider>
           <RealtimeProvider>
             <FocusSessionEvents />
-            {children}
+            <IntentionPromptProvider>{children}</IntentionPromptProvider>
           </RealtimeProvider>
         </AuthProvider>
       </QueryClientProvider>

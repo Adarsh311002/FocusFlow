@@ -128,7 +128,8 @@ describe('Focus together: the panel', () => {
     fireEvent.click(panel().getByRole('button', { name: 'Join focus' }));
 
     expect(await panel().findByRole('button', { name: 'Leave focus' })).not.toBeNull();
-    expect(parsedBody(firstWrite(world))).toEqual({ taskId: task.id });
+    // RI1: a chosen task is shared with the room unless the person says otherwise.
+    expect(parsedBody(firstWrite(world))).toEqual({ taskId: task.id, shareIntention: true });
     expect(panel().getByText(/on “Write the report”/)).not.toBeNull();
   });
 
@@ -354,6 +355,73 @@ describe('Focus together: participants', () => {
       world.client.push('room:resync', { roomId: room.id });
     });
     expect(await panel().findByText('No one has joined this focus run yet.')).not.toBeNull();
+  });
+});
+
+describe('Focus together: intentions and who finished (RI1–RI4)', () => {
+  it('keeps the task private when "Show what I am working on" is unticked', async () => {
+    const world = prepareRooms();
+    const task = world.api.addTask('Private plan');
+    const room = world.api.addRoom({ hostId: GRACE_ID, code: 'ABC234' });
+    world.client.joinRoom.mockImplementation(() => Promise.resolve(joinOk(room, [ME])));
+    world.render(`/rooms/${room.id}`);
+    await screen.findByText('You are in the room.');
+
+    const select = await panel().findByLabelText<HTMLSelectElement>(
+      'Your task for this run (optional)',
+    );
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(2);
+    });
+    expect(panel().queryByLabelText('Show what I am working on to the room')).toBeNull();
+    fireEvent.change(select, { target: { value: task.id } });
+    fireEvent.click(panel().getByLabelText('Show what I am working on to the room'));
+    fireEvent.click(panel().getByRole('button', { name: 'Join focus' }));
+
+    expect(await panel().findByRole('button', { name: 'Leave focus' })).not.toBeNull();
+    expect(parsedBody(firstWrite(world))).toEqual({ taskId: task.id, shareIntention: false });
+  });
+
+  it('shows what each participant shared they are working on', async () => {
+    await openRoom({
+      focus: {
+        participants: [
+          focusParticipant(GRACE_ID, { intention: 'Compiler notes' }),
+          focusParticipant(ME),
+        ],
+      },
+    });
+    const list = panel().getByRole('list', { name: '2 people focusing together' });
+    expect(within(list).getByText('working on “Compiler notes”')).not.toBeNull();
+    expect(within(list).getAllByText(/working on/)).toHaveLength(1);
+  });
+
+  it('shows how the last run went as people check in', async () => {
+    const { world, room } = await openRoom({
+      focus: {
+        participants: [
+          focusParticipant(GRACE_ID, { intention: 'Compiler notes' }),
+          focusParticipant(ME),
+        ],
+      },
+    });
+    expect(panel().queryByText('How the last run went')).toBeNull();
+
+    // The run ends: a break has no run.
+    pushParticipants(world, room, null, []);
+    const summary = await panel().findByRole('list', { name: 'How the last run went' });
+    expect(within(summary).getAllByText('not checked in yet')).toHaveLength(2);
+
+    act(() => {
+      world.client.push('room:focus:check-in', {
+        roomId: room.id,
+        focusRunId: RUN_ID,
+        userId: GRACE_ID,
+        outcome: 'done',
+      });
+    });
+    expect(await within(summary).findByText('Done ✓')).not.toBeNull();
+    expect(within(summary).getAllByText('not checked in yet')).toHaveLength(1);
   });
 });
 

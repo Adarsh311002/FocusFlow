@@ -9,12 +9,24 @@ import type { TaskRow } from './queries.js';
  * read path) is a server bug and surfaces as a 500. `deletedAt` and `userId` never leave
  * the API.
  */
-export const toTaskView = (row: TaskRow): TaskView => {
+/** What a task's view adds from other tables (ES2, SP3); read in one batch for a page. */
+export type TaskExtras = {
+  readonly sessionsSpent: number;
+  readonly steps: { readonly total: number; readonly done: number };
+};
+
+const NO_EXTRAS: TaskExtras = { sessionsSpent: 0, steps: { total: 0, done: 0 } };
+
+export const toTaskView = (row: TaskRow, extras: TaskExtras = NO_EXTRAS): TaskView => {
   const base = {
     id: row.id,
     title: row.title,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    goalId: row.goalId,
+    estimatedSessions: row.estimatedSessions,
+    sessionsSpent: extras.sessionsSpent,
+    steps: extras.steps,
   };
   return taskViewSchema.parse(
     row.completedAt === null

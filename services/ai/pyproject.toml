@@ -1,0 +1,35 @@
+[project]
+name = "focus-flow-ai"
+version = "0.1.0"
+description = "Focus Flow AI service: LangGraph workflows and LLM calls behind the Node API."
+requires-python = ">=3.13"
+dependencies = [
+  "anthropic>=1.0",
+  "fastapi>=0.115",
+  "langgraph>=0.4",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "structlog>=25.1",
+  "uvicorn>=0.34",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28",
+  "pytest>=8.3",
+  "ruff>=0.9",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]

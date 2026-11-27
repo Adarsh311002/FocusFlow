@@ -19,8 +19,10 @@ import { useRealtimeClient, useRealtimeStatus } from '../realtime/realtime-provi
 import { listFocusSessions } from '../review/review-client';
 import { focusSessionKeys } from '../review/review-queries';
 import {
+  breakFocusSession,
   getCurrentFocusSession,
   pauseFocusSession,
+  recordFocusDistraction,
   resumeFocusSession,
   sessionInProgressFrom,
   startFocusSession,
@@ -226,6 +228,25 @@ export function useLastEndedFocusSession(): FocusSessionView | null {
   return data ?? null;
 }
 
+/**
+ * Replaces the remembered ended session with a newer view of the SAME session (a check-in
+ * answer), so the notice shows it. A different or no remembered session is left alone.
+ */
+export function useReplaceLastEnded(): (session: FocusSessionView) => void {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const userId = user?.id ?? NO_USER;
+  return useCallback(
+    (session: FocusSessionView) => {
+      const shown = queryClient.getQueryData<FocusSessionView | null>(lastEndedKey(userId));
+      if (shown?.id === session.id) {
+        queryClient.setQueryData(lastEndedKey(userId), session);
+      }
+    },
+    [queryClient, userId],
+  );
+}
+
 export function useDismissLastEnded(): () => void {
   const queryClient = useQueryClient();
   const userId = useUserId();
@@ -370,7 +391,8 @@ export function useStartFocusSession() {
         return existing;
       }
     },
-    (request) => `${String(request.plannedSeconds)}:${request.taskId ?? ''}`,
+    (request) =>
+      `${String(request.plannedSeconds)}:${request.taskId ?? ''}:${request.deepFocus === true ? 'deep' : ''}`,
     true,
   );
 }
@@ -392,6 +414,22 @@ export function useResumeFocusSession() {
 export function useStopFocusSession() {
   return useFocusMutation(
     (id: FocusSessionId) => stopFocusSession(id),
+    (id) => id,
+  );
+}
+
+/** DF2: ends a Deep Focus session the user left for longer than the warning. */
+export function useBreakFocusSession() {
+  return useFocusMutation(
+    (id: FocusSessionId) => breakFocusSession(id),
+    (id) => id,
+  );
+}
+
+/** DF3: counts one return within the warning. */
+export function useRecordFocusDistraction() {
+  return useFocusMutation(
+    (id: FocusSessionId) => recordFocusDistraction(id),
     (id) => id,
   );
 }

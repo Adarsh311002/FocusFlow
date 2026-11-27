@@ -8,6 +8,7 @@ import { Critter, SlothArt } from '../../ui/jungle/critters';
 import { useAuth } from '../auth/auth-context';
 import { ConnectionStatus } from '../realtime/connection-status';
 import { useRealtimeClient, useRealtimeStatus } from '../realtime/realtime-provider';
+import { RoomRecap, RoomSchedule } from '../together/room-together';
 import { ChatPanel } from './chat-panel';
 import { KnockList } from './knock-list';
 import { MemberList } from './member-list';
@@ -256,6 +257,9 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
           <div className={CARD}>
             <RoomFocusPanel roomId={room.id} currentUserId={user.id} refresh={refresh} />
           </div>
+          <div className={CARD}>
+            <RoomSchedule roomId={room.id} isHost={isHost} />
+          </div>
           {isHost && (
             <div className={CARD}>
               <TimerSettingsForm
@@ -269,6 +273,9 @@ function RoomContent({ room, onLeaving }: { room: RoomView; onLeaving: () => voi
         <aside className="space-y-6 lg:sticky lg:top-28 lg:col-span-4">
           <div className={CARD}>
             <MemberList roomId={room.id} isHost={isHost} currentUserId={user.id} />
+          </div>
+          <div className={CARD}>
+            <RoomRecap roomId={room.id} />
           </div>
           {isHost && room.isPrivate && (
             <div className={CARD}>

@@ -60,6 +60,7 @@ const participant = (): RoomFocusParticipant =>
     optedInAtMs: 5,
     connected: true,
     disconnectedAtMs: null,
+    intention: null,
   }) as RoomFocusParticipant;
 
 describe('timer follow-ups with focus runs', () => {

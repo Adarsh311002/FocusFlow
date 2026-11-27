@@ -1,6 +1,8 @@
 import { useState } from 'react';
 
 import { Critter, OwlArt } from '../../ui/jungle/critters';
+import { WeeklyReflection } from '../ai/weekly-reflection';
+import { InsightsPanel } from './insights-panel';
 import { currentReviewRange } from './review-range';
 import { SessionHistory } from './session-history';
 import { SummaryPanel } from './summary-panel';
@@ -31,6 +33,12 @@ export function ReviewPage() {
       </div>
       <div className="rounded-[2.5rem] border border-line bg-surface p-6 shadow-card backdrop-blur-xl md:p-10">
         <SummaryPanel range={range} />
+      </div>
+      <div className="rounded-[2.5rem] border border-line bg-surface p-6 shadow-card backdrop-blur-xl md:p-10">
+        <InsightsPanel />
+      </div>
+      <div className="rounded-[2.5rem] border border-line bg-surface p-6 shadow-card backdrop-blur-xl md:p-10">
+        <WeeklyReflection />
       </div>
       <div className="grid gap-10 lg:grid-cols-12">
         <div className="lg:col-span-4">

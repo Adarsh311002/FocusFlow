@@ -9,15 +9,16 @@ import { type RequestHandler, Router } from 'express';
 
 import { parseRequestInput } from '../../platform/http/errors.js';
 import { getAuthUser } from '../auth/context.js';
+import { findTaskExtras, type TaskRow } from './queries.js';
 import {
   completeTask,
   createTask,
   deleteTask,
   getTask,
   listTasks,
-  renameTask,
   reopenTask,
   type TasksDeps,
+  updateTask,
 } from './service.js';
 import { toTaskView } from './views.js';
 
@@ -39,21 +40,35 @@ export const createTasksRouter = (deps: TasksRouterDeps): Router => {
   const router = Router();
   const { authenticate } = deps;
 
+  /** ES2 and SP3 are read in one batch for whatever the route returns. */
+  const views = async (userId: string, rows: readonly TaskRow[]) => {
+    const extras = await findTaskExtras(
+      deps.db,
+      userId,
+      rows.map((row) => row.id),
+    );
+    return rows.map((row) => toTaskView(row, extras.get(row.id)));
+  };
+  const view = async (userId: string, row: TaskRow) => (await views(userId, [row]))[0];
+
   router.get(taskPaths.collection, authenticate, (req, res, next) => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const query = parseRequestInput(listTasksQuerySchema, req.query);
       const page = await listTasks(deps, userId, query);
-      res.status(200).json({ tasks: page.tasks.map(toTaskView), nextCursor: page.nextCursor });
+      res.status(200).json({ tasks: await views(userId, page.tasks), nextCursor: page.nextCursor });
     })().catch(next);
   });
 
   router.post(taskPaths.collection, authenticate, (req, res, next) => {
     void (async () => {
       const { userId } = getAuthUser(req);
-      const { title } = parseRequestInput(createTaskRequestSchema, req.body);
-      const task = await createTask(deps, userId, title);
-      res.status(201).json({ task: toTaskView(task) });
+      const { title, goalId, estimatedSessions } = parseRequestInput(
+        createTaskRequestSchema,
+        req.body,
+      );
+      const task = await createTask(deps, userId, title, { goalId, estimatedSessions });
+      res.status(201).json({ task: await view(userId, task) });
     })().catch(next);
   });
 
@@ -61,7 +76,7 @@ export const createTasksRouter = (deps: TasksRouterDeps): Router => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const { taskId } = parseRequestInput(taskParamsSchema, req.params);
-      res.status(200).json({ task: toTaskView(await getTask(deps, userId, taskId)) });
+      res.status(200).json({ task: await view(userId, await getTask(deps, userId, taskId)) });
     })().catch(next);
   });
 
@@ -69,8 +84,10 @@ export const createTasksRouter = (deps: TasksRouterDeps): Router => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const { taskId } = parseRequestInput(taskParamsSchema, req.params);
-      const { title } = parseRequestInput(updateTaskRequestSchema, req.body);
-      res.status(200).json({ task: toTaskView(await renameTask(deps, userId, taskId, title)) });
+      const changes = parseRequestInput(updateTaskRequestSchema, req.body);
+      res
+        .status(200)
+        .json({ task: await view(userId, await updateTask(deps, userId, taskId, changes)) });
     })().catch(next);
   });
 
@@ -78,7 +95,7 @@ export const createTasksRouter = (deps: TasksRouterDeps): Router => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const { taskId } = parseRequestInput(taskParamsSchema, req.params);
-      res.status(200).json({ task: toTaskView(await completeTask(deps, userId, taskId)) });
+      res.status(200).json({ task: await view(userId, await completeTask(deps, userId, taskId)) });
     })().catch(next);
   });
 
@@ -86,7 +103,7 @@ export const createTasksRouter = (deps: TasksRouterDeps): Router => {
     void (async () => {
       const { userId } = getAuthUser(req);
       const { taskId } = parseRequestInput(taskParamsSchema, req.params);
-      res.status(200).json({ task: toTaskView(await reopenTask(deps, userId, taskId)) });
+      res.status(200).json({ task: await view(userId, await reopenTask(deps, userId, taskId)) });
     })().catch(next);
   });
 

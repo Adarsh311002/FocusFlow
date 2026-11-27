@@ -1,4 +1,6 @@
 import {
+  type FocusSessionInsightsResponse,
+  focusSessionInsightsResponseSchema,
   type FocusSessionListResponse,
   focusSessionListResponseSchema,
   focusSessionPaths,
@@ -43,5 +45,17 @@ export function getFocusSessionSummary(range: ReviewRange): Promise<FocusSession
   return authedApiRequest<FocusSessionSummaryResponse>(
     `${focusSessionPaths.summary}?${query.toString()}`,
     focusSessionSummaryResponseSchema,
+  );
+}
+
+/**
+ * `GET /focus-sessions/insights` (A1–A10): streaks, the daily goal, the hour heatmap, the
+ * task breakdown, the previous-period comparison and the solo/room split, for one range.
+ */
+export function getFocusSessionInsights(range: ReviewRange): Promise<FocusSessionInsightsResponse> {
+  const query = new URLSearchParams({ from: range.from, to: range.to, tz: range.tz });
+  return authedApiRequest<FocusSessionInsightsResponse>(
+    `${focusSessionPaths.insights}?${query.toString()}`,
+    focusSessionInsightsResponseSchema,
   );
 }

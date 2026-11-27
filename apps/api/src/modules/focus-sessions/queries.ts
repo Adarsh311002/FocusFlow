@@ -45,6 +45,8 @@ export type NewRunningSession = {
   readonly taskId: string | null;
   readonly plannedSeconds: number;
   readonly startedAtMs: number;
+  /** DF1. */
+  readonly deepFocus: boolean;
 };
 
 /** A new running session: `running_since = started_at`, nothing focused yet. */
@@ -64,6 +66,7 @@ export const insertRunningSession = async (
       focusedSeconds: 0,
       runningSince: startedAt,
       startedAt,
+      deepFocus: values.deepFocus,
     })
     .returning();
   if (row === undefined) {
@@ -112,7 +115,8 @@ export const findInProgressSession = async (
 export type SessionChanges = Pick<
   FocusSessionRow,
   'status' | 'abandonReason' | 'focusedSeconds' | 'runningSince' | 'endedAt'
->;
+> &
+  Partial<Pick<FocusSessionRow, 'pauseCount' | 'distractions'>>;
 
 /** Writes a transition. The row is already locked by `lockOwnedSession`. */
 export const saveSession = async (
@@ -127,6 +131,35 @@ export const saveSession = async (
     .returning();
   if (row === undefined) {
     throw new Error('saveSession: update returned no row');
+  }
+  return row;
+};
+
+/**
+ * CI2: records the user's check-in on an ended session (the row is locked by
+ * `lockOwnedSession`). `checked_in_at` is the database clock, like every stored instant (E9).
+ */
+export const saveCheckIn = async (
+  tx: Tx,
+  sessionId: string,
+  checkIn: {
+    readonly outcome: string;
+    readonly note: string | null;
+    readonly quality: number | null;
+  },
+): Promise<FocusSessionRow> => {
+  const [row] = await tx
+    .update(focusSessions)
+    .set({
+      checkInOutcome: checkIn.outcome,
+      checkInNote: checkIn.note,
+      checkInQuality: checkIn.quality,
+      checkedInAt: sql`date_trunc('milliseconds', clock_timestamp())`,
+    })
+    .where(eq(focusSessions.id, sessionId))
+    .returning();
+  if (row === undefined) {
+    throw new Error('saveCheckIn: update returned no row');
   }
   return row;
 };

@@ -21,6 +21,26 @@ export const errorCodes = [
   // Focus sessions (Phase 4B, docs/api/rest.md)
   'SESSION_IN_PROGRESS',
   'NOT_CONNECTED',
+  // Session check-in (CI2)
+  'SESSION_NOT_ENDED',
+  // Deep Focus (DF2–DF4)
+  'NOT_DEEP_FOCUS',
+  'PAUSE_USED',
+  // Parked thoughts (PT2)
+  'THOUGHTS_FULL',
+  // Goals and steps (GL3, SP2)
+  'GOAL_NOT_FOUND',
+  'GOAL_NOT_ACTIVE',
+  'GOALS_FULL',
+  'STEPS_FULL',
+  // Wave 4 (BD3, SC2)
+  'BUDDY_CODE_UNKNOWN',
+  'BUDDIES_FULL',
+  'NOT_BUDDIES',
+  'SCHEDULES_FULL',
+  // AI features (AI2)
+  'AI_JOB_NOT_FOUND',
+  'AI_JOB_BUSY',
   // Rooms (Phase 6, docs/api/rest.md and docs/api/socket-events.md)
   'ROOM_NOT_FOUND',
   'NOT_A_MEMBER',
@@ -35,6 +55,8 @@ export const errorCodes = [
   'HOST_OFFLINE',
   'ROOM_FULL',
   'RATE_LIMITED',
+  // Room blocks (B1–B8): the host removed the person and forbade a rejoin
+  'ROOM_BLOCKED',
   // Room timer (Phase 7, docs/api/socket-events.md)
   'VERSION_CONFLICT',
   'INVALID_TRANSITION',

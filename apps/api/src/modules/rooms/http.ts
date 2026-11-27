@@ -14,22 +14,26 @@ import { parseRequestInput } from '../../platform/http/errors.js';
 import { getAuthUser } from '../auth/context.js';
 import {
   type RateRule,
+  ROOM_BLOCK_RATE,
   ROOM_CREATE_RATE,
   ROOM_JOIN_HTTP_RATE,
   ROOM_LOOKUP_RATE,
 } from '../room-realtime/limiter.js';
 import {
   approveKnock,
+  blockMember,
   createRoom,
   getRoom,
   joinRoom,
   leaveRoom,
   listMyRooms,
+  listRoomBlocks,
   listRoomMembers,
   lookupRoomByCode,
   rejectKnock,
   removeMember,
   type RoomsDeps,
+  unblockMember,
   updateTimerSettings,
 } from './service.js';
 
@@ -133,6 +137,36 @@ export const createRoomsRouter = (deps: RoomsRouterDeps): Router => {
       const { userId } = getAuthUser(req);
       const params = parseRequestInput(roomMemberParamsSchema, req.params);
       await removeMember(deps, userId, params.roomId, params.userId);
+      res.status(204).end();
+    })().catch(next);
+  });
+
+  // Blocks (B1–B8): host-only. PUT removes the person (if a member) and forbids a rejoin;
+  // DELETE lifts the block without making them a member again.
+  router.get(roomPaths.blocks, authenticate, (req, res, next) => {
+    void (async () => {
+      const { userId } = getAuthUser(req);
+      const { roomId } = parseRequestInput(roomParamsSchema, req.params);
+      res.status(200).json({ blocks: await listRoomBlocks(deps, userId, roomId) });
+    })().catch(next);
+  });
+
+  router.put(roomPaths.block, authenticate, (req, res, next) => {
+    void (async () => {
+      const { userId } = getAuthUser(req);
+      const params = parseRequestInput(roomMemberParamsSchema, req.params);
+      await deps.limit?.(ROOM_BLOCK_RATE, userId, res);
+      res
+        .status(200)
+        .json({ block: await blockMember(deps, userId, params.roomId, params.userId) });
+    })().catch(next);
+  });
+
+  router.delete(roomPaths.block, authenticate, (req, res, next) => {
+    void (async () => {
+      const { userId } = getAuthUser(req);
+      const params = parseRequestInput(roomMemberParamsSchema, req.params);
+      await unblockMember(deps, userId, params.roomId, params.userId);
       res.status(204).end();
     })().catch(next);
   });

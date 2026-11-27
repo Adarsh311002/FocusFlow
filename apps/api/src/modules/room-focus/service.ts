@@ -234,6 +234,7 @@ export const createRoomFocusService = (deps: RoomFocusServiceDeps): RoomFocusSer
     userId: string,
     roomId: string,
     taskId: string | undefined,
+    shareIntention: boolean,
     settledRuns: Set<string>,
   ): Promise<{ session: FocusSessionView; created: boolean } | 'retry'> => {
     await requireMember(userId, roomId);
@@ -302,6 +303,7 @@ export const createRoomFocusService = (deps: RoomFocusServiceDeps): RoomFocusSer
             id: uuidv7(),
             userId,
             taskId: taskId ?? null,
+            shareIntention: shareIntention && taskId !== undefined,
             roomId,
             focusRunId: runId,
             plannedSeconds: planned.plannedSeconds,
@@ -367,10 +369,10 @@ export const createRoomFocusService = (deps: RoomFocusServiceDeps): RoomFocusSer
     return { session: view, created };
   };
 
-  const optIn: RoomFocusService['optIn'] = async (userId, roomId, taskId) => {
+  const optIn: RoomFocusService['optIn'] = async (userId, roomId, taskId, shareIntention) => {
     const settledRuns = new Set<string>();
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const result = await optInOnce(userId, roomId, taskId, settledRuns);
+      const result = await optInOnce(userId, roomId, taskId, shareIntention ?? false, settledRuns);
       if (result !== 'retry') {
         return result;
       }

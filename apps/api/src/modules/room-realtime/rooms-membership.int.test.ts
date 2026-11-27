@@ -351,7 +351,7 @@ describe('a lost eviction (F1)', () => {
     await eventually(async () => (await kit.redisEntries(roomId, guest.userId)).length === 0);
     expect(await h.redis.hexists(redisKeys.roomPresence(roomId), guest.userId)).toBe(0);
     await eventually(() => told.length === 1);
-    expect(told[0]).toEqual({ roomId, userId: guest.userId, reason: 'removed' });
+    expect(told[0]).toEqual({ roomId, userId: guest.userId, reason: 'removed', blocked: false });
     expect(await kit.send(hostSocket, roomId, 'control')).toMatchObject({ ok: true });
     await eventually(() => hostHeard.length === 1);
     await sleep(200);
